@@ -6,14 +6,23 @@
     "node": ">=20.9.0"
   },
   "scripts": {
-    "dev": "next dev -p 4028",
+    "dev": "next dev -p ${PORT:-4028}",
     "build": "next build",
     "typecheck": "next typegen && tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "lint:changed": "node scripts/lane.mjs lint-changed",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,md,json}\"",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "lane": "node scripts/lane.mjs",
+    "db:start": "node scripts/lane.mjs start",
+    "db:stop": "node scripts/lane.mjs stop",
+    "db:reset": "node scripts/lane.mjs reset",
+    "db:test": "node scripts/lane.mjs test",
+    "db:test:2": "node scripts/lane.mjs test2",
+    "db:check": "bash scripts/check-migrations.sh",
+    "verify": "node scripts/lane.mjs verify"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
@@ -33,6 +42,7 @@
   "devDependencies": {
     "@playwright/test": "^1.64.0",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/qrcode": "^1.5.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
@@ -41,9 +51,10 @@
     "eslint-config-next": "16.4.0",
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-prettier": "^5.2.6",
+    "pg": "^8.23.1",
     "postcss": "8.4.8",
     "prettier": "^3.5.3",
-    "supabase": "^2.120.0",
+    "supabase": "2.120.0",
     "tailwindcss": "3.4.6",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5",
