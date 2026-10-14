@@ -1,6 +1,6 @@
 # Tasks: P1 foundation and money (the JewelVault backend)
 
-Generated on 2026-10-14 from `_build/p1-plan/plan_data.py` by `build_plan.py`, which also checks every requirement and test of `spec.md` (813 lines) against these tasks, that each test can pass in the task that introduces it, and that every existing file path exists. Days are Claude-days, plus or minus 30 percent (plan section 4). `[P]` marks a task that can run beside the one before it in its lane. "Tests" are spec tests first written (and seen failing) in that task; "extends" are spec tests that task completes a part of; "plan tests" are checks the plan adds because the spec has no test ID for them.
+Generated on 2026-10-14 from `_build/p1-plan/plan_data.py` by `build_plan.py`, which also checks every requirement and test of `spec.md` (824 lines) against these tasks, that each test can pass in the task that introduces it, and that every existing file path exists. Days are Claude-days, plus or minus 30 percent (plan section 4). `[P]` marks a task that can run beside the one before it in its lane. "Tests" are spec tests first written (and seen failing) in that task; "extends" are spec tests that task completes a part of; "plan tests" are checks the plan adds because the spec has no test ID for them.
 
 ## Database
 
@@ -363,7 +363,7 @@ Generated on 2026-10-14 from `_build/p1-plan/plan_data.py` by `build_plan.py`, w
 ### FE01 Integer pricing copy and the shared selectors
 
 - **Agent:** B   **PLAN.md task:** P2-T1/P2-T2   **Days:** 1.0   **Depends on:** -
-- **Spec lines:** C12
+- **Spec lines:** C12, R1, R2, R3, R4, R5, R6, R7, R8, R13
 - **Tests first written here:** -   **Extends:** T-A02, T-A03, T-A14   **Plan tests:** PT-F1 unit tests of pricing.ts and selectors.ts
 - **Do:** `src/lib/pricing.ts` (money in paise, weight in milligrams, BigInt for products so 100,000 g times a rate of 100,000,000 cannot overflow) and `src/lib/selectors.ts` (sales, outstanding, evening figures, customer card, one function per figure) with unit tests, including the screen-side labour-rate defaults of R1 (Wholesale and Semi-Wholesale chains: the UNIT half of T-A02 and T-A03). The parity test against the database runs in DB08.
 - **Files:** +src/lib/pricing.ts, +src/lib/selectors.ts, +tests/unit/pricing.test.ts, +tests/unit/selectors.test.ts
