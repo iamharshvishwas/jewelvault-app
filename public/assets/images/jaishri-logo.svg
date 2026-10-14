@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Jaishri Gold Palace Pvt Ltd</title>
+  <desc id="desc">Premium monogram logo for Jaishri Gold Palace Pvt Ltd.</desc>
+  <defs>
+    <linearGradient id="gold" x1="42" x2="214" y1="30" y2="226" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f7d978"/>
+      <stop offset=".5" stop-color="#c3912e"/>
+      <stop offset="1" stop-color="#7b4f12"/>
+    </linearGradient>
+    <linearGradient id="wine" x1="38" x2="218" y1="218" y2="38" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2b1118"/>
+      <stop offset="1" stop-color="#5b1d2a"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="54" fill="url(#wine)"/>
+  <path d="M128 27 218 79v98l-90 52-90-52V79z" fill="none" stroke="url(#gold)" stroke-width="7"/>
+  <path d="M81 83h94v24h-31v66c0 23-15 38-39 38-15 0-28-6-37-17l17-18c5 7 11 10 18 10 9 0 14-6 14-17v-62H81z" fill="url(#gold)"/>
+  <path d="M154 117c11-12 31-9 39 6 6 11 3 26-8 36l-31 29-31-29c-11-10-14-25-8-36 8-15 28-18 39-6z" fill="none" stroke="#f7d978" stroke-width="7" stroke-linejoin="round"/>
+  <circle cx="128" cy="64" r="7" fill="#f7d978"/>
+</svg>
