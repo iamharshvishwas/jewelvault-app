@@ -76,6 +76,7 @@ The spec defines 103 tests (section 15). A test is **introduced** in the task wh
 | Task | Title | Tests introduced | Extends | Plan tests |
 |---|---|---|---|---|
 | DB01 | Test harness: per-agent local stacks, helpers, fixtures, one verify command | T-F04 | - | PT-H1 harness smoke (pgTAP and two-connection) |
+| DB01b | Test hook: one gate per session, a polling wait, both release orders | - | T-C09, T-C10, T-C11, T-C12, T-C13, T-C14 | PT-H1 hook machinery: one gate per session, both release orders, a gate left closed is not a lock timeout |
 | DB02 | Privileges, schemas, profiles and roles | T-D01, T-D02, T-D06, T-D10, T-D11, T-D13, T-D15, T-D16, T-D17, T-D20, T-E09 | - | - |
 | DB03 | Reference and stock tables with their access rules | T-C07, T-D05, T-D19, T-D22, T-F02, T-F05 | - | - |
 | DB04 | Customers, bills, receipts and allocations: tables and access rules | T-B01, T-B06, T-C02, T-D07, T-D08 | T-F02 | - |
@@ -127,6 +128,7 @@ The full text of each task is in `tasks.md`; this is the list. **The unit.** A C
 | Task | Agent | Title | Depends on | Days | PLAN.md task |
 |---|---|---|---|---|---|
 | DB01 | A | Test harness: per-agent local stacks, helpers, fixtures, one verify command | - | 1.1 | P1-T4 (start), P0-T2 leftovers |
+| DB01b [P] | C | Test hook: one gate per session, a polling wait, both release orders | DB01 | 0.4 | P1-T4 (start) |
 | DB02 | A | Privileges, schemas, profiles and roles | DB01 | 1.0 | P1-T4 |
 | DB03 | A | Reference and stock tables with their access rules | DB02 | 1.2 | P1-T4 (slice 1) |
 | DB04 | A | Customers, bills, receipts and allocations: tables and access rules | DB03 | 1.0 | P1-T4 (slice 2) |
@@ -137,7 +139,7 @@ The full text of each task is in `tasks.md`; this is the list. **The unit.** A C
 | DB09a | A | The write prologue and create_customer | DB05, DB02 | 0.6 | P2-T1 |
 | DB09b | A | create_bill core without payments (private.create_bill_core) | DB09a, DB08 | 1.2 | P2-T1 |
 | DB10a | A | private.rebalance for money and silver | DB09b | 0.9 | P2-T1 |
-| DB10b | A | record_payment | DB10a | 1.0 | P2-T1 |
+| DB10b | A | record_payment | DB10a, DB01b | 1.0 | P2-T1 |
 | DB16 | C | Views V1 to V4 | DB04, DB05 | 1.2 | P2-T1 |
 | DB11 | C | Cash limit and PAN rules, and the payment rows of a bill (the private helpers only) | DB10b | 0.7 | P2-T1 |
 | DB12 [P] | C | settle_fine | DB11, DB16 | 0.7 | P2-T1 |
@@ -178,18 +180,18 @@ The full text of each task is in `tasks.md`; this is the list. **The unit.** A C
 | PL03 [P] | Harsh | Harsh and Siddhi: business answers, her data, devices, a runbook tester | - | 0.4 | P0-T1, P0-T5 |
 | PL04 [P] | Harsh | Harsh, at go-live: the production database password for one session, and his go | - | 0.1 | P3-T8 |
 
-**Totals:** 23.3 days of database work, 2.8 platform, 13.4 front end, 2.2 reviews and close-out: **41.7 Claude-days** in 48 tasks, against about 17.5 for the same scope in `PLAN.md`. 12 of the 43 implementer tasks are over one day (none over 1.5). The growth over `PLAN.md` comes from what the reviews added: eleven writing functions instead of six, 103 tests instead of about 40, two-session and mutation tests, refunds, re-issue, opening balances, the import path, the dashboard line, per-agent stacks and a proper harness.
+**Totals:** 23.7 days of database work, 2.8 platform, 13.4 front end, 2.2 reviews and close-out: **42.1 Claude-days** in 49 tasks, against about 17.5 for the same scope in `PLAN.md`. 12 of the 44 implementer tasks are over one day (none over 1.5). The growth over `PLAN.md` comes from what the reviews added: eleven writing functions instead of six, 103 tests instead of about 40, two-session and mutation tests, refunds, re-issue, opening balances, the import path, the dashboard line, per-agent stacks and a proper harness.
 
 ## 5. Order, agents and the schedule
 
 ```
 Agent A (database)      : DB01 > DB02 > DB03 > DB04 > DB05 > DB09a > DB09b > DB10a > DB10b > DB13 > DB14a > DB17a > DB17b > DB18a > DB18c > RV2 > RV3 > CL
 Agent B (front end)     : FE01 > FE02 > DB08 > FE03 > FE04 > FE05 > FE10b > FE04b > FE07a > FE07b > FE08 > FE09 > FE10a > FE11
-Agent C (side, reviews) : DB07 > DB06 > DB16 > FE06 > RV1 > DB21a > DB11 > DB12 > DB14b > DB15 > DB20a > DB18b > DB19 > DB20b > DB21
+Agent C (side, reviews) : DB01b > DB07 > DB06 > DB16 > FE06 > RV1 > DB21a > DB11 > DB12 > DB14b > DB15 > DB20a > DB18b > DB19 > DB20b > DB21
 Harsh                   : PL01, PL02, PL03 (none blocks DB01 to DB05; assumed done by working day 6)
 ```
 
-If every task had its own agent, the longest chain of dependencies would be **15.4 Claude-days** (DB01 > DB02 > DB03 > DB04 > DB05 > DB09a > DB09b > DB10a > DB10b > FE04b > FE07a > FE07b > FE08 > FE09 > FE11 > RV3 > CL). With three agents and the order above, the last task (CL) finishes on working day **17.3**; agent A is busy 16.1 days, agent B 14.0 and agent C 11.6. Counting Monday to Saturday with Tuesday 20 October (Dussehra) off, one Claude-day per working day, starting Thursday 15 October (the two dates are: Sundays off / Sundays 18 Oct, 25 Oct and 1 Nov worked):
+If every task had its own agent, the longest chain of dependencies would be **15.4 Claude-days** (DB01 > DB02 > DB03 > DB04 > DB05 > DB09a > DB09b > DB10a > DB10b > FE04b > FE07a > FE07b > FE08 > FE09 > FE11 > RV3 > CL). With three agents and the order above, the last task (CL) finishes on working day **17.3**; agent A is busy 16.1 days, agent B 14.0 and agent C 12.0. Counting Monday to Saturday with Tuesday 20 October (Dussehra) off, one Claude-day per working day, starting Thursday 15 October (the two dates are: Sundays off / Sundays 18 Oct, 25 Oct and 1 Nov worked):
 
 | Task | Title | Finishes (working day) | Date |
 |---|---|---|---|
@@ -219,7 +221,7 @@ If every task had its own agent, the longest chain of dependencies would be **15
 
 **Two tripwires.** (1) DB05 (counters, audit, touch triggers) is planned to finish on working day 5.3, Thu 22 Oct / Wed 21 Oct: DB01 to DB05 are the first real measurement of the unit, but they are mostly configuration, so a fast result there proves little. (2) DB10b (`record_payment`) is planned to finish on working day 9.0, Mon 26 Oct / Sat 24 Oct: DB09a to DB10b are 3.8 planned days of real money functions with two-session tests, and that is the measurement to trust. If either took more than 20 percent longer than planned, the orchestrator tells Harsh that go-live moves; if the second took far less, the schedule above is pessimistic.
 
-**What the schedule does not include.** After RV3 `PLAN.md` still needs regression, acceptance by Siddhi's two staff, training and drill 2 (P3-T5 to P3-T8, about 2.7 days) and the fix loop; P3-T1 to P3-T3 (print, rate card, hide screens) and DB19's real data run in the lanes of agents B and C when they are idle (14.0 and 11.6 busy days out of 17.3) but are not scheduled here. `PLAN.md` rule 4 (no change between Thu 29 Oct and Wed 11 Nov) has to be re-cut: this plan's money gate lands around working day 14, after that date. **The honest reading for Harsh:** a go-live on 12 to 16 November is possible only if Sundays are worked, no task slips by more than about 20 percent, and Harsh's own tasks are done by about 21 October; it has no slack. If the tripwire shows a slip, the date to give Siddhi is the week of 16 to 20 November.
+**What the schedule does not include.** After RV3 `PLAN.md` still needs regression, acceptance by Siddhi's two staff, training and drill 2 (P3-T5 to P3-T8, about 2.7 days) and the fix loop; P3-T1 to P3-T3 (print, rate card, hide screens) and DB19's real data run in the lanes of agents B and C when they are idle (14.0 and 12.0 busy days out of 17.3) but are not scheduled here. `PLAN.md` rule 4 (no change between Thu 29 Oct and Wed 11 Nov) has to be re-cut: this plan's money gate lands around working day 14, after that date. **The honest reading for Harsh:** a go-live on 12 to 16 November is possible only if Sundays are worked, no task slips by more than about 20 percent, and Harsh's own tasks are done by about 21 October; it has no slack. If the tripwire shows a slip, the date to give Siddhi is the week of 16 to 20 November.
 
 ## 6. Budget and cut line
 
@@ -458,7 +460,7 @@ Every one of the 172 requirement IDs of the spec that a task can build is cited 
 | SF1 | DB12 |
 | SF2 | DB12 |
 | SF3 | DB12 |
-| X0 | DB09a, DB09b, DB18a |
+| X0 | DB01b, DB09a, DB09b, DB18a |
 | X1 | DB09b |
 | X2 | DB10b |
 | X3 | DB12 |
