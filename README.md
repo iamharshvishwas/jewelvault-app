@@ -11,7 +11,7 @@ Node.js 20.9 or newer.
 ```bash
 npm install          # install dependencies (no browser is downloaded)
 npm run dev          # dev server on http://localhost:4028
-npm test             # unit tests (Vitest) - NOT wired yet, see "Known gaps"
+npm test             # unit tests (Vitest 3.2)
 npm run typecheck    # next typegen + tsc --noEmit
 npm run lint         # ESLint (flat config)
 npm run build        # static export: every route becomes HTML in out/
@@ -31,10 +31,10 @@ npm run build        # static export: every route becomes HTML in out/
 - `public/` - static assets (logo, favicon)
 - `supabase/` - `migrations/` and `tests/` for the database; the CLI runs with `npx supabase`. Nothing is started or linked yet.
 - `specs/` - written specs, one folder per phase (`specs/p1-foundation-and-money/`)
-- `tests/` - `e2e/` for Playwright tests (config in `playwright.config.ts`); `unit/` for Vitest tests will be added with the unit-test setup
+- `tests/` - `e2e/` for Playwright tests (config in `playwright.config.ts`); `unit/` for Vitest tests (config in `vitest.config.ts`)
 
 ## Known gaps
 
-- Vitest is not installed yet: npm 10.9.8 crashes while resolving it, so `npm test` does not exist.
+- Vitest 4 and 5 could not be used: npm 10.9.8 crashes while resolving Vitest 4's peer packages, and Vitest 5 needs Node 22.12 or newer and `@types/node` 22. Vitest 3.2.7 is used instead. Revisit when the Node version is raised.
 - The prototype still has demo logins hard-coded in `src/lib/authStore.ts` and `src/components/LoginScreen.tsx`, so they are visible in the built JavaScript. They are removed in a later phase.
 - `npm run lint` runs but reports many findings that came with the prototype (almost all Prettier formatting). Lint is not part of the build.
