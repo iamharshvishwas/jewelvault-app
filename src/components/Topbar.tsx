@@ -3,16 +3,15 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import AppLogo from '@/components/ui/AppLogo';
 import { Search, Bell, LogOut, Menu, Plus } from 'lucide-react';
-import { BUSINESS_OWNER_INITIALS, BUSINESS_SHORT_NAME } from '@/lib/businessConfig';
-import { signOut, type AuthSession } from '@/lib/authStore';
+import { BUSINESS_SHORT_NAME } from '@/lib/businessConfig';
+import { canAccessPath, initialsOf, signOut, type AuthSession } from '@/lib/authStore';
 
 interface TopbarProps {
   onMenuClick: () => void;
   session: AuthSession;
-  onSessionChange: (session: AuthSession | null) => void;
 }
 
-export default function Topbar({ onMenuClick, session, onSessionChange }: TopbarProps) {
+export default function Topbar({ onMenuClick, session }: TopbarProps) {
   const [searchQuery, setSearchQuery] = useState('');
 
   return (
@@ -31,7 +30,10 @@ export default function Topbar({ onMenuClick, session, onSessionChange }: Topbar
       {/* Search */}
       <div className="flex-1 max-w-lg hidden sm:block">
         <div className="relative">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Search
+            size={15}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+          />
           <input
             type="text"
             placeholder="Search Design, SKU, Barcode, Customer or Mobile..."
@@ -44,13 +46,15 @@ export default function Topbar({ onMenuClick, session, onSessionChange }: Topbar
 
       <div className="ml-auto flex items-center gap-2">
         {/* Quick Add */}
-        <Link href="/add-design" className="btn-primary hidden sm:flex py-2">
-          <Plus size={15} />
-          <span>Add Design</span>
-        </Link>
+        {canAccessPath(session.role, '/add-design') && (
+          <Link href="/add-design" className="btn-primary hidden sm:flex py-2">
+            <Plus size={15} />
+            <span>Add Design</span>
+          </Link>
+        )}
 
         {/* New Sale */}
-        {session.role === 'Admin' && (
+        {canAccessPath(session.role, '/billing-pos') && (
           <Link href="/billing-pos" className="btn-secondary hidden md:flex py-2">
             <span>New Sale</span>
           </Link>
@@ -65,21 +69,15 @@ export default function Topbar({ onMenuClick, session, onSessionChange }: Topbar
         {/* Avatar */}
         <button
           type="button"
-          onClick={() => {
-            signOut();
-            onSessionChange(null);
-          }}
+          onClick={() => void signOut()}
           className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center"
           title={`Logout ${session.displayName}`}
         >
-          <span className="text-xs font-bold text-primary">{session.role === 'Admin' ? BUSINESS_OWNER_INITIALS : 'ST'}</span>
+          <span className="text-xs font-bold text-primary">{initialsOf(session.displayName)}</span>
         </button>
         <button
           type="button"
-          onClick={() => {
-            signOut();
-            onSessionChange(null);
-          }}
+          onClick={() => void signOut()}
           className="btn-ghost p-2 hidden sm:inline-flex"
           title="Logout"
         >
