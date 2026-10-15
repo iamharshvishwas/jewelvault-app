@@ -115,26 +115,84 @@ is the first to run its builder for real: if a builder no longer fits the schema
 - A test that commits cleans up after itself (`tests.reset_business_data()`, or drop what it made) and uses names that cannot
   meet a real row. Waits use these helpers or the lock timeout, never a fixed sleep.
 
-`tests/db/hook.ts` is the test hook of X0 item 8 and the negative control behind T-C09 to T-C14:
+`tests/db/hook.ts` is the test hook of X0 item 8 and the negative control behind T-C09 to T-C14. Every money function calls
+`private.test_pause('<function>.after_read')` after it has read the customer's state and before it allocates (in production
+that function is empty). A two-session test holds each session at the point with a gate of its own, and lets them go in either
+order. `a` and `b` are `connect('a')` and `connect('b')`, `admin` is the controlling session (it holds the gates):
 
 ```ts
-const gate = await createGate(admin, 'record_payment.after_read'); // replaces private.test_pause, committed
-await gate.hold(); // callers of that point now wait
-const first = a.query('select ...');
-await gate.waitForWaiters(admin, 1); // first caller is at the point
-const second = b.query('select ...');
-await waitUntilBlocked(admin, await backendPid(b)); // second waits for the customer lock
-expect((await waitEvent(admin, await backendPid(b))).event).not.toBe('advisory'); // and is not at the point
-await gate.release();
-await gate.dispose();
-// the same test with the lock cut out must fail:
-await withMutation(admin, 'public.record_payment(...)', dropClause(/for update/gi), async () => {
-  /* both callers reach the point */
+import { RELEASE_ORDERS, dropClause, inReleaseOrder, withHook, withMutation } from './hook';
+import type { ReleaseOrder } from './hook';
+
+async function twoPayments(order: ReleaseOrder) {
+  // withHook replaces private.test_pause once, committed; the original is back when the block ends, whatever happens
+  await withHook(admin, async (hook) => {
+    const g1 = await hook.gate('record_payment.after_read', a); // the gate of session 1 at this point
+    const g2 = await hook.gate('record_payment.after_read', b); // the gate of session 2
+    await g1.hold();
+    await g2.hold();
+    const first = hook.track(a.query('select ...')); // tracked: dispose waits for it, a failure is never "unhandled"
+    await g1.waitUntilWaiting(admin); // session 1 is at the point, and holds the customer lock
+    const second = hook.track(b.query('select ...'));
+    // session 2 has to wait for the customer lock, not for its gate. Without the lock it is at its gate: this fails.
+    expect(
+      await g2.waitUntilHeldUp(admin),
+      'session 2 must be held back by the customer lock, not by its own gate'
+    ).toEqual({ by: 'lock', blockedBy: [g1.pid] });
+
+    const [releasedFirst, releasedSecond] = inReleaseOrder(order, g1, g2);
+    await releasedFirst.release();
+    if (releasedFirst === g1) {
+      await first; // session 1 finishes, and only then can session 2 reach the point
+      await g2.waitUntilWaiting(admin); // where its own gate still holds it
+    }
+    await releasedSecond.release();
+    await Promise.all([first, second]);
+    /* assert the results, then tests.assert_i10 ... */
+  });
+}
+
+describe.each(RELEASE_ORDERS)('T-C09 two payments (%s)', (order) => {
+  it('with the customer lock', () => twoPayments(order));
+  it('with the lock cut out the same test fails', async () => {
+    await expect(
+      withMutation(admin, 'public.record_payment(...)', dropClause(/for update/gi), () =>
+        twoPayments(order)
+      )
+    ).rejects.toThrow(/customer lock/);
+  });
 });
 ```
 
+- **One gate per session.** The replacement of `private.test_pause` is generic and is made once by `withHook` (or
+  `installHook`, with `hook.dispose()` in a `finally`). It finds the caller's own gate by the point and the caller's
+  `application_name` (`jv-test:<label>`), so two sessions held at one point are released independently
+  (`g1.release()`, `g2.release()`), a session without a gate, or with an open one, passes straight through, and making more
+  gates never touches the function. Give each session its own label; the controlling session cannot be gated. Make the gates
+  before the sessions start their calls. A call over HTTP is never held: PostgREST connects under another name.
+- **A polling wait under 5 seconds.** The writing functions run under `lock_timeout = '5s'`, which cuts a plain advisory wait
+  with 55P03 (`JV_BUSY` in a money function). The replacement polls `pg_try_advisory_lock` for at most `HOOK_MAX_WAIT_MS`
+  (4 s; the `maxWaitMs` option takes less, never 5000 or more) and then lets the call carry on, with a NOTICE. A gate left
+  closed is therefore never a lock timeout, and neither is the wait of the session behind the one that is held.
+- **Seeing who waits.** A polling session is not in a lock wait, so wait events show nothing. While it waits at a closed
+  gate it holds a shared advisory lock of its own (a marker in `pg_locks`), which `gate.isWaiting(observer)`,
+  `gate.waitUntilWaiting(observer)`, `hook.waiters(observer, point)` and `hook.waitForWaiters(observer, point, count)` read.
+  `gate.waitUntilHeldUp(observer)` says where a session has come to rest: `{ by: 'gate' }`, or `{ by: 'lock', blockedBy: pids }`.
+  The hook owns the advisory lock classes 71000 and 71001.
+- **Both release orders.** `RELEASE_ORDERS` is `'session 1 first'` and `'session 2 first'`; `inReleaseOrder(order, x1, x2)`
+  returns `[first, second]`. Write the scenario as a function of `order` and run it with `describe.each(RELEASE_ORDERS)`, the
+  negative control included: with the lock removed, one order alone can pass (RM3-2).
+- **Cleaning up.** `withHook` and `hook.dispose()` open every gate, wait for the calls registered with `hook.track(...)`, and put
+  the original function back, also when the test fails. Finish your own open transactions (`beginAs`) before the block ends, or
+  the tracked calls behind them keep `dispose` waiting. A replacement that was left behind (a run stopped half way) is refused
+  by the next install with a message; `LANE=<lane> npm run db:reset` clears it.
+- `createGate(controller, point, options)` of DB01 is gone. It replaced the function once per gate, so a second gate overwrote
+  the first and every session at a point shared one lock; it is `installHook` / `withHook` plus `hook.gate(point, session)` now.
+
 `mutateFunction` commits a changed copy of a function and returns the way back; it refuses a change that changes nothing, so a
-negative control cannot pass for the wrong reason. `tests/db/hook.test.ts` proves the machinery on a toy with the same shape.
+negative control cannot pass for the wrong reason. `withMutation` does it for the length of a function, restoring whatever
+happens. `tests/db/hook.test.ts` proves the machinery on a toy with the same shape as a writing function (a row lock, the hook
+after the read, then the write, under `lock_timeout = '5s'`) and is the model for DB18a.
 
 `tests/db/rpc.ts` makes a real login through the Auth admin API (`createLogin({ appRole })`, a random password that lives only
 in memory) and calls functions over HTTP (`rpc(login, 'name', args)`), through the gateway, the JWT check, PostgREST and the
