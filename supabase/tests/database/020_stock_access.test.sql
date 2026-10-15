@@ -18,7 +18,7 @@
 -- The helpers in pg_temp catch an error and report it, so a missing table makes the assertions fail one by one instead of
 -- stopping the file; they are granted to public so that they can be called while a role is impersonated.
 begin;
-select plan(368);
+select plan(369);
 
 -- ---------------------------------------------------------------- helpers
 -- 'ok <rows>' when the statement ran, 'err <sqlstate>' when it did not. Row-level security that hides a row from an update
@@ -77,7 +77,9 @@ grant execute on function pg_temp.try(text), pg_temp.cnt(text, text), pg_temp.fx
 -- ---- T-F02: the tables of this task, and the caps. DB04 and DB05 add their tables and columns to these two lists.
 create function pg_temp.f02_tables() returns text[] language sql as $f$
   select array['settings', 'daily_rates', 'categories', 'subcategories', 'designs', 'skus', 'sku_private',
-               'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations']
+               'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations',
+               -- DB05: the audit log and the two run logs (the owner reads them, nobody writes them through the API)
+               'audit_log', 'check_runs', 'backup_runs']
 $f$;
 
 -- Which column carries which cap of S4 (the name is the row of private.limits). Money amounts, rates and weights only.
@@ -116,6 +118,7 @@ create function pg_temp.expected_caps() returns table (tbl text, col text, limit
     ('receipts', 'silver_rate', 'max_rate'),
     ('receipt_allocations', 'amount', 'max_amount'),
     ('receipt_allocations', 'fine_grams', 'max_weight')
+    -- DB05: audit_log, check_runs and backup_runs hold no money, weight or rate, so none of their columns has a cap
 $f$;
 
 -- Every "<column> <= <number>" in a CHECK of the tables, read from the catalogue: the cap literals as they are stored.
@@ -181,7 +184,7 @@ select is(
   (select array_agg(relname::text order by relname) from pg_class
     where relnamespace = 'public'::regnamespace and relname = any (pg_temp.f02_tables()) and relrowsecurity),
   (select array_agg(t order by t) from unnest(pg_temp.f02_tables()) t),
-  'A1, S9: row-level security is on for all twelve tables (the seven of DB03 and the five of DB04)');
+  'A1, S9: row-level security is on for all fifteen tables (the seven of DB03, the five of DB04 and the three logs of DB05)');
 select is(
   (select array_agg(c.relname || '.' || a.attname order by c.relname, a.attname)
      from pg_attribute a join pg_class c on c.oid = a.attrelid
@@ -192,10 +195,16 @@ select is(
   (select array_agg(c.relname::text order by c.relname)
      from pg_class c
     where c.relnamespace = 'public'::regnamespace and c.relname = any (pg_temp.f02_tables())
+      and exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'updated_at' and a.attnum > 0 and not a.attisdropped)
       and (select count(*) from pg_trigger t where t.tgrelid = c.oid and not t.tgisinternal
-              and t.tgfoid = 'private.set_updated_at'::regproc) = 1),
-  (select array_agg(t order by t) from unnest(pg_temp.f02_tables()) t),
-  'S6: every one of the twelve tables has the set_updated_at trigger once');
+              and t.tgfoid = 'private.set_updated_at'::regproc) <> 1),
+  null, 'S6: every one of the fifteen tables that has an updated_at column has the set_updated_at trigger once (the three logs of DB05 have a time of their own: at, ran_at)');
+select is(
+  (select array_agg(c.relname::text order by c.relname)
+     from pg_class c
+    where c.relnamespace = 'public'::regnamespace and c.relname = any (pg_temp.f02_tables())
+      and not exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'updated_at' and a.attnum > 0 and not a.attisdropped)),
+  array['audit_log', 'backup_runs', 'check_runs'], 'S6, D16, D17: and only the three append-only logs have no updated_at');
 
 -- ---------------------------------------------------------------- 2. the fixtures
 do $mk$
@@ -430,7 +439,7 @@ select is(
     where c.contype = 'f' and cl.relnamespace = 'public'::regnamespace and cl.relname = any (pg_temp.f02_tables())
       and not exists (select 1 from pg_index i where i.indrelid = c.conrelid and i.indisvalid
                         and (i.indkey::smallint[])[0:cardinality(c.conkey) - 1] @> c.conkey)),
-  '{}'::text[], 'T-D11, D19: every foreign key of the twelve tables has an index that starts with its columns');
+  '{}'::text[], 'T-D11, D19: every foreign key of the fifteen tables has an index that starts with its columns');
 
 -- ---------------------------------------------------------------- 4. T-F02: the caps of S4 equal private.limits
 select is(pg_temp.cap_drift(), '{}'::text[], 'T-F02, S4: every cap literal in a CHECK equals its row in private.limits, and none is unlisted');
@@ -559,15 +568,15 @@ select is(
   (select array_agg(t order by t) from unnest(pg_temp.f02_tables()) t
     where has_table_privilege('anon', 'public.' || t, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
        or has_any_column_privilege('anon', 'public.' || t, 'SELECT, INSERT, UPDATE, REFERENCES')),
-  null, 'T-D02, A4: anon has no right of any kind on the twelve tables');
+  null, 'T-D02, A4: anon has no right of any kind on the fifteen tables');
 select is(
   (select array_agg(t order by t) from unnest(pg_temp.f02_tables()) t
     where has_table_privilege('authenticated', 'public.' || t, 'DELETE, TRUNCATE, REFERENCES, TRIGGER')),
-  null, 'T-D07, S7: authenticated has no delete, truncate, references or trigger right on the twelve tables');
+  null, 'T-D07, S7: authenticated has no delete, truncate, references or trigger right on the fifteen tables');
 select is(
   (select array_agg(t order by t) from unnest(pg_temp.f02_tables()) t
     where not has_table_privilege('authenticated', 'public.' || t, 'SELECT')),
-  null, 'A4: authenticated can select from all twelve (the row rules decide who sees what)');
+  null, 'A4: authenticated can select from all fifteen (the row rules decide who sees what)');
 select is(
   (select array_agg(t order by t) from unnest(pg_temp.f02_tables()) t
     where has_table_privilege('authenticated', 'public.' || t, 'INSERT') or has_table_privilege('authenticated', 'public.' || t, 'UPDATE')),
@@ -596,8 +605,10 @@ select is(
   (select array_agg(c.relname || '.' || p.polname || ':' || p.polcmd::text order by c.relname, p.polname)
      from pg_policy p join pg_class c on c.oid = p.polrelid
     where c.relnamespace = 'public'::regnamespace and c.relname = any (pg_temp.f02_tables())),
-  array['bill_items.bill_items_select:r', 'bills.bills_select:r',
+  array['audit_log.audit_log_select:r', 'backup_runs.backup_runs_select:r',
+        'bill_items.bill_items_select:r', 'bills.bills_select:r',
         'categories.categories_insert:a', 'categories.categories_select:r', 'categories.categories_update:w',
+        'check_runs.check_runs_select:r',
         'customers.customers_select:r', 'customers.customers_update:w',
         'daily_rates.daily_rates_insert:a', 'daily_rates.daily_rates_select:r', 'daily_rates.daily_rates_update:w',
         'designs.designs_select:r', 'designs.designs_update:w',
@@ -606,7 +617,7 @@ select is(
         'sku_private.sku_private_insert:a', 'sku_private.sku_private_select:r', 'sku_private.sku_private_update:w',
         'skus.skus_select:r', 'skus.skus_update:w',
         'subcategories.subcategories_insert:a', 'subcategories.subcategories_select:r', 'subcategories.subcategories_update:w'],
-  'A7, lint 0006: one policy per command on each table; none for insert on designs, skus and customers, none at all on the four money tables beyond select, or for delete anywhere');
+  'A7, lint 0006: one policy per command on each table; none for insert on designs, skus and customers, none at all on the four money tables and the three logs beyond select, or for delete anywhere');
 
 -- ---------------------------------------------------------------- 8. anon: nothing (A4)
 select tests.as_anon();

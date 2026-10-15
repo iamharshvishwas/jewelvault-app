@@ -400,8 +400,8 @@ select is(pg_temp.profile_of(current_setting('jv.n_blank')::uuid), 'staff/true/B
 -- ---------------------------------------------------------------- 9. the trigger on profiles (A8)
 select is(
   (select array_agg(t.tgname::text order by t.tgname) from pg_trigger t
-    where t.tgrelid = to_regclass('public.profiles') and not t.tgisinternal and t.tgname::text !~ 'set_updated_at'),
-  array['profiles_protect_own_role'], 'A8: a trigger on profiles guards the role and active (profiles_protect_own_role)');
+    where t.tgrelid = to_regclass('public.profiles') and not t.tgisinternal and t.tgname::text !~ 'set_updated_at|_audit$'),
+  array['profiles_protect_own_role'], 'A8: a trigger on profiles guards the role and active (profiles_protect_own_role); the stamp and the audit trigger (DB05, L1) are left out');
 select is(
   (select (t.tgtype & 1) = 1 and (t.tgtype & 2) = 2 and (t.tgtype & 16) = 16 and (t.tgtype & 4) = 0 and (t.tgtype & 8) = 0
      from pg_trigger t where t.tgrelid = to_regclass('public.profiles') and t.tgname = 'profiles_protect_own_role'),
