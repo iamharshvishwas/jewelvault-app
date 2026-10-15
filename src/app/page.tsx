@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useSyncExternalStore } from 'react';
 import AppLayout from '@/components/AppLayout';
 import DashboardKpiGrid from './components/DashboardKpiGrid';
 import DashboardCharts from './components/DashboardCharts';
@@ -8,19 +8,26 @@ import DashboardActivityPanels from './components/DashboardActivityPanels';
 import DashboardQuickActions from './components/DashboardQuickActions';
 import DashboardRateCard from './components/DashboardRateCard';
 import { BUSINESS_LOCATION, BUSINESS_NAME } from '@/lib/businessConfig';
-import { getSession, type AuthSession } from '@/lib/authStore';
+import { useSession } from '@/lib/authStore';
+
+const noSubscription = () => () => {};
+
+function todayLabel() {
+  return new Date().toLocaleDateString('en-IN', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+}
 
 export default function HomePage() {
-  const [dateLabel, setDateLabel] = useState('');
-  const [session, setSession] = useState<AuthSession | null>(null);
-
-  useEffect(() => {
-    const d = new Date();
-    setDateLabel(
-      d?.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-    );
-    setSession(getSession());
-  }, []);
+  // The date is empty in the static HTML (it would be the day of the build) and today's on the screen.
+  const dateLabel = useSyncExternalStore(noSubscription, todayLabel, () => '');
+  // U7: the role comes from the one session of the application, never from a read of the page's own. Until it is known
+  // (and AppLayout shows nothing of the page until then) the page asks for the least.
+  const { role: signedInRole } = useSession();
+  const role = signedInRole ?? 'staff';
 
   return (
     <AppLayout>
@@ -36,22 +43,22 @@ export default function HomePage() {
         </div>
 
         {/* Quick Actions */}
-        <DashboardQuickActions role={session?.role ?? 'Admin'} />
+        <DashboardQuickActions role={role} />
 
         {/* Daily Rates */}
-        {session?.role === 'Admin' && <DashboardRateCard />}
+        {role === 'owner' && <DashboardRateCard />}
 
         {/* KPI Grid */}
-        <DashboardKpiGrid role={session?.role ?? 'Admin'} />
+        <DashboardKpiGrid role={role} />
 
         {/* Charts */}
-        {session?.role === 'Admin' && <DashboardCharts />}
+        {role === 'owner' && <DashboardCharts />}
 
         {/* Recent Designs */}
         <RecentDesignsGrid />
 
         {/* Activity Panels */}
-        {session?.role === 'Admin' && <DashboardActivityPanels />}
+        {role === 'owner' && <DashboardActivityPanels />}
       </div>
     </AppLayout>
   );

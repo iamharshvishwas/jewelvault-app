@@ -3,12 +3,8 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import AppLogo from '@/components/ui/AppLogo';
-import {
-  BUSINESS_OWNER_INITIALS,
-  BUSINESS_OWNER_NAME,
-  BUSINESS_SHORT_NAME,
-} from '@/lib/businessConfig';
-import { signOut, type AuthSession } from '@/lib/authStore';
+import { BUSINESS_SHORT_NAME } from '@/lib/businessConfig';
+import { ROLE_LABEL, canAccessPath, initialsOf, signOut, type AuthSession } from '@/lib/authStore';
 import {
   LayoutDashboard,
   Package,
@@ -57,12 +53,37 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Inventory',
     icon: <Package size={18} />,
     children: [
-      { id: 'nav-designs', label: 'Designs', href: '/inventory-management', icon: <Gem size={15} /> },
-      { id: 'nav-catalogue', label: 'Customer Catalogue', href: '/catalogue', icon: <ShoppingCart size={15} /> },
-      { id: 'nav-all-skus', label: 'All SKUs', href: '/inventory-management', icon: <Tag size={15} /> },
-      { id: 'nav-categories', label: 'Categories', href: '/settings?tab=categories', icon: <Layers size={15} /> },
+      {
+        id: 'nav-designs',
+        label: 'Designs',
+        href: '/inventory-management',
+        icon: <Gem size={15} />,
+      },
+      {
+        id: 'nav-catalogue',
+        label: 'Customer Catalogue',
+        href: '/catalogue',
+        icon: <ShoppingCart size={15} />,
+      },
+      {
+        id: 'nav-all-skus',
+        label: 'All SKUs',
+        href: '/inventory-management',
+        icon: <Tag size={15} />,
+      },
+      {
+        id: 'nav-categories',
+        label: 'Categories',
+        href: '/settings?tab=categories',
+        icon: <Layers size={15} />,
+      },
       { id: 'nav-add-design', label: 'Add Design', href: '/add-design', icon: <Plus size={15} /> },
-      { id: 'nav-print-tags', label: 'Print Tags', href: '/print-tags', icon: <Printer size={15} /> },
+      {
+        id: 'nav-print-tags',
+        label: 'Print Tags',
+        href: '/print-tags',
+        icon: <Printer size={15} />,
+      },
     ],
   },
   {
@@ -77,8 +98,18 @@ const NAV_ITEMS: NavItem[] = [
     icon: <ShoppingCart size={18} />,
     children: [
       { id: 'nav-new-sale', label: 'New Estimate', href: '/billing-pos', icon: <Plus size={15} /> },
-      { id: 'nav-order-book', label: 'Order Book', href: '/order-book', icon: <FileText size={15} /> },
-      { id: 'nav-invoices', label: 'Saved Estimates', href: '/estimate', icon: <ReceiptText size={15} /> },
+      {
+        id: 'nav-order-book',
+        label: 'Order Book',
+        href: '/order-book',
+        icon: <FileText size={15} />,
+      },
+      {
+        id: 'nav-invoices',
+        label: 'Saved Estimates',
+        href: '/estimate',
+        icon: <ReceiptText size={15} />,
+      },
     ],
   },
   {
@@ -86,8 +117,18 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Customers',
     icon: <Users size={18} />,
     children: [
-      { id: 'nav-cust-list', label: 'Customers & Ledger', href: '/customer-ledger', icon: <UserCircle size={15} /> },
-      { id: 'nav-payments', label: 'Receive Payment', href: '/customer-ledger', icon: <CreditCard size={15} /> },
+      {
+        id: 'nav-cust-list',
+        label: 'Customers & Ledger',
+        href: '/customer-ledger',
+        icon: <UserCircle size={15} />,
+      },
+      {
+        id: 'nav-payments',
+        label: 'Receive Payment',
+        href: '/customer-ledger',
+        icon: <CreditCard size={15} />,
+      },
     ],
   },
   {
@@ -95,9 +136,24 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Stock',
     icon: <Warehouse size={18} />,
     children: [
-      { id: 'nav-stock-list', label: 'Stock List', href: '/inventory-management', icon: <Package size={15} /> },
-      { id: 'nav-edit-stock', label: 'Edit Stock', href: '/edit-stock', icon: <SlidersHorizontal size={15} /> },
-      { id: 'nav-stock-tags', label: 'Print Tags', href: '/print-tags', icon: <Printer size={15} /> },
+      {
+        id: 'nav-stock-list',
+        label: 'Stock List',
+        href: '/inventory-management',
+        icon: <Package size={15} />,
+      },
+      {
+        id: 'nav-edit-stock',
+        label: 'Edit Stock',
+        href: '/edit-stock',
+        icon: <SlidersHorizontal size={15} />,
+      },
+      {
+        id: 'nav-stock-tags',
+        label: 'Print Tags',
+        href: '/print-tags',
+        icon: <Printer size={15} />,
+      },
     ],
   },
   {
@@ -111,15 +167,55 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Settings',
     icon: <Settings size={18} />,
     children: [
-      { id: 'nav-materials', label: 'Materials & Purities', href: '/settings?tab=materials', icon: <Gem size={15} /> },
-      { id: 'nav-cat-settings', label: 'Categories', href: '/settings?tab=categories', icon: <Layers size={15} /> },
-      { id: 'nav-custom-fields', label: 'Custom Fields', href: '/settings?tab=custom-fields', icon: <SlidersHorizontal size={15} /> },
-      { id: 'nav-tag-templates', label: 'Tag Templates', href: '/settings?tab=tag-templates', icon: <Printer size={15} /> },
-      { id: 'nav-invoice-settings', label: 'Estimate Settings', href: '/settings?tab=invoice-settings', icon: <FileText size={15} /> },
+      {
+        id: 'nav-materials',
+        label: 'Materials & Purities',
+        href: '/settings?tab=materials',
+        icon: <Gem size={15} />,
+      },
+      {
+        id: 'nav-cat-settings',
+        label: 'Categories',
+        href: '/settings?tab=categories',
+        icon: <Layers size={15} />,
+      },
+      {
+        id: 'nav-custom-fields',
+        label: 'Custom Fields',
+        href: '/settings?tab=custom-fields',
+        icon: <SlidersHorizontal size={15} />,
+      },
+      {
+        id: 'nav-tag-templates',
+        label: 'Tag Templates',
+        href: '/settings?tab=tag-templates',
+        icon: <Printer size={15} />,
+      },
+      {
+        id: 'nav-invoice-settings',
+        label: 'Estimate Settings',
+        href: '/settings?tab=invoice-settings',
+        icon: <FileText size={15} />,
+      },
       { id: 'nav-taxes', label: 'Taxes', href: '/settings?tab=taxes', icon: <Hash size={15} /> },
-      { id: 'nav-users', label: 'Users & Permissions', href: '/settings?tab=users', icon: <Shield size={15} /> },
-      { id: 'nav-numbering', label: 'Numbering', href: '/settings?tab=numbering', icon: <Hash size={15} /> },
-      { id: 'nav-business', label: 'Business Settings', href: '/settings?tab=business', icon: <Settings size={15} /> },
+      {
+        id: 'nav-users',
+        label: 'Users & Permissions',
+        href: '/settings?tab=users',
+        icon: <Shield size={15} />,
+      },
+      {
+        id: 'nav-numbering',
+        label: 'Numbering',
+        href: '/settings?tab=numbering',
+        icon: <Hash size={15} />,
+      },
+      {
+        id: 'nav-business',
+        label: 'Business Settings',
+        href: '/settings?tab=business',
+        icon: <Settings size={15} />,
+      },
     ],
   },
 ];
@@ -128,29 +224,26 @@ interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
   session: AuthSession;
-  onSessionChange: (session: AuthSession | null) => void;
 }
 
-function navForRole(session: AuthSession) {
-  if (session.role === 'Admin') return NAV_ITEMS;
-  return NAV_ITEMS
-    .filter((item) => ['nav-dashboard', 'nav-inventory', 'nav-stock'].includes(item.id))
-    .map((item) => {
-      if (!item.children) return item;
-      return {
-        ...item,
-        children: item.children.filter((child) =>
-          ['nav-designs', 'nav-catalogue', 'nav-all-skus', 'nav-add-design', 'nav-print-tags', 'nav-stock-list', 'nav-edit-stock', 'nav-stock-tags'].includes(child.id)
-        ),
-      };
-    });
+// U5: the role decides which menu items exist. An item is offered when its route is open to the role (the same table as
+// the route gate in authStore), and a group when at least one of its items is.
+function navForRole(session: AuthSession): NavItem[] {
+  const open = (item: NavItem) => (item.href ? canAccessPath(session.role, item.href) : true);
+  return NAV_ITEMS.flatMap((item) => {
+    if (!item.children) return open(item) ? [item] : [];
+    const children = item.children.filter(open);
+    return children.length > 0 ? [{ ...item, children }] : [];
+  });
 }
 
-export default function Sidebar({ collapsed, onToggle, session, onSessionChange }: SidebarProps) {
+export default function Sidebar({ collapsed, onToggle, session }: SidebarProps) {
   const pathname = usePathname();
   const visibleNav = navForRole(session);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    new Set(session.role === 'Admin' ? ['nav-inventory', 'nav-sales'] : ['nav-inventory', 'nav-stock'])
+    new Set(
+      session.role === 'staff' ? ['nav-inventory', 'nav-stock'] : ['nav-inventory', 'nav-sales']
+    )
   );
 
   const toggleSection = (id: string) => {
@@ -176,8 +269,13 @@ export default function Sidebar({ collapsed, onToggle, session, onSessionChange 
       `}
     >
       {/* Logo */}
-      <div className={`flex items-center border-b border-border ${collapsed ? 'justify-center px-3 py-4' : 'px-4 py-4 gap-2'}`}>
-        <Link href="/" className={`flex items-center gap-2 min-w-0 hover:opacity-80 transition-opacity ${collapsed ? 'justify-center' : ''}`}>
+      <div
+        className={`flex items-center border-b border-border ${collapsed ? 'justify-center px-3 py-4' : 'px-4 py-4 gap-2'}`}
+      >
+        <Link
+          href="/"
+          className={`flex items-center gap-2 min-w-0 hover:opacity-80 transition-opacity ${collapsed ? 'justify-center' : ''}`}
+        >
           <AppLogo size={32} />
           {!collapsed && (
             <span className="font-bold text-sm text-foreground tracking-tight leading-tight">
@@ -236,6 +334,7 @@ export default function Sidebar({ collapsed, onToggle, session, onSessionChange 
                 <>
                   <button
                     onClick={() => toggleSection(item.id)}
+                    aria-expanded={isExpanded}
                     className={`
                       w-full flex items-center gap-2.5 px-3 py-2 rounded-sm nav-item-hover text-sm
                       ${isExpanded ? 'text-foreground font-600' : 'text-muted-foreground font-500'}
@@ -297,18 +396,21 @@ export default function Sidebar({ collapsed, onToggle, session, onSessionChange 
         <div className="border-t border-border p-3">
           <div className="flex items-center gap-2.5 px-2 py-2 rounded-sm hover:bg-muted transition-colors">
             <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center">
-              <span className="text-xs font-bold text-primary">{session.role === 'Admin' ? BUSINESS_OWNER_INITIALS : 'ST'}</span>
+              <span className="text-xs font-bold text-primary">
+                {initialsOf(session.displayName)}
+              </span>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-foreground truncate">{session.role === 'Admin' ? BUSINESS_OWNER_NAME : session.displayName}</p>
-              <p className="text-xs text-muted-foreground">{session.role}</p>
+              <p className="text-xs font-semibold text-foreground truncate">
+                {session.displayName}
+              </p>
+              <p data-testid="session-role" className="text-xs text-muted-foreground">
+                {ROLE_LABEL[session.role]}
+              </p>
             </div>
             <button
               type="button"
-              onClick={() => {
-                signOut();
-                onSessionChange(null);
-              }}
+              onClick={() => void signOut()}
               className="text-xs text-primary hover:underline"
             >
               Logout
@@ -320,14 +422,13 @@ export default function Sidebar({ collapsed, onToggle, session, onSessionChange 
         <div className="border-t border-border p-2 flex justify-center">
           <button
             type="button"
-            onClick={() => {
-              signOut();
-              onSessionChange(null);
-            }}
+            onClick={() => void signOut()}
             className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center"
             title="Logout"
           >
-            <span className="text-xs font-bold text-primary">{session.role === 'Admin' ? BUSINESS_OWNER_INITIALS : 'ST'}</span>
+            <span className="text-xs font-bold text-primary">
+              {initialsOf(session.displayName)}
+            </span>
           </button>
         </div>
       )}

@@ -2,23 +2,29 @@
 
 import React, { useState } from 'react';
 import AppLogo from '@/components/ui/AppLogo';
-import { signIn, type AuthSession } from '@/lib/authStore';
+import { signIn } from '@/lib/authStore';
 import { BUSINESS_NAME } from '@/lib/businessConfig';
 
-export default function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
-  const [username, setUsername] = useState('admin');
+// U1: e-mail and password through Supabase Auth. The screen shows no credentials and no hints, and starts empty.
+// `notice` is why the person is back here: "Your account is not active", or the 12-hour idle logout (U3, U4).
+export default function LoginScreen({ notice }: { notice: string | null }) {
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    const session = signIn(username, password);
-    if (!session) {
-      setError('Invalid username or password.');
-      return;
-    }
+    if (submitting) return;
     setError('');
-    onLogin(session);
+    setSubmitting(true);
+    try {
+      // On success the gate moves on by itself (the auth event); this screen is gone by then.
+      const result = await signIn(email, password);
+      if (result.error) setError(result.error);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -28,18 +34,25 @@ export default function LoginScreen({ onLogin }: { onLogin: (session: AuthSessio
           <AppLogo size={42} />
           <div>
             <h1 className="text-lg font-bold text-foreground">{BUSINESS_NAME}</h1>
-            <p className="text-xs text-muted-foreground">Local staff access</p>
+            <p className="text-xs text-muted-foreground">Sign in</p>
           </div>
         </div>
 
         <div className="space-y-3">
+          {notice && !error && (
+            <p role="status" className="text-xs font-semibold text-amber-700">
+              {notice}
+            </p>
+          )}
           <label className="text-xs font-semibold text-muted-foreground block">
-            Username
+            Email
             <input
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
               className="input-field mt-1"
               autoComplete="username"
+              required
             />
           </label>
           <label className="text-xs font-semibold text-muted-foreground block">
@@ -50,19 +63,23 @@ export default function LoginScreen({ onLogin }: { onLogin: (session: AuthSessio
               onChange={(event) => setPassword(event.target.value)}
               className="input-field mt-1"
               autoComplete="current-password"
+              required
             />
           </label>
-          {error && <p className="text-xs font-semibold text-red-600">{error}</p>}
+          {error && (
+            <p role="alert" className="text-xs font-semibold text-red-600">
+              {error}
+            </p>
+          )}
         </div>
 
-        <button type="submit" className="btn-primary w-full justify-center py-2.5">
-          Sign In
+        <button
+          type="submit"
+          disabled={submitting}
+          className="btn-primary w-full justify-center py-2.5 disabled:opacity-60"
+        >
+          {submitting ? 'Signing in...' : 'Sign In'}
         </button>
-
-        <div className="rounded-sm bg-muted/60 p-3 text-xs text-muted-foreground space-y-1">
-          <p><strong className="text-foreground">Admin:</strong> admin / admin123</p>
-          <p><strong className="text-foreground">Staff:</strong> staff / staff123</p>
-        </div>
       </form>
     </main>
   );

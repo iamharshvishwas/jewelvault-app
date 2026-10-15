@@ -22,10 +22,12 @@
     "db:test": "node scripts/lane.mjs test",
     "db:test:2": "node scripts/lane.mjs test2",
     "db:check": "bash scripts/check-migrations.sh",
+    "test:e2e": "node scripts/lane.mjs run npx playwright test",
     "verify": "node scripts/lane.mjs verify"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
+    "@supabase/supabase-js": "2.116.0",
     "@tailwindcss/forms": "^0.5.10",
     "@tailwindcss/typography": "^0.5.16",
     "jsbarcode": "^3.11.6",

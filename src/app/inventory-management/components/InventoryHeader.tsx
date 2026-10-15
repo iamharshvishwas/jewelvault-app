@@ -1,19 +1,28 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Plus, Grid, List, ScanLine, Printer, Download, Upload, FileSpreadsheet, FileText } from 'lucide-react';
+import {
+  Plus,
+  Grid,
+  List,
+  ScanLine,
+  Printer,
+  Download,
+  Upload,
+  FileSpreadsheet,
+  FileText,
+} from 'lucide-react';
 import { getDesigns } from '@/lib/designStore';
 import { downloadCsv, downloadExcel, printPdf, type ExportRow } from '@/lib/exportUtils';
-import { getSession, type AuthRole } from '@/lib/authStore';
+import { useSession } from '@/lib/authStore';
 
 export default function InventoryHeader() {
   const [view, setView] = useState<'grid' | 'table'>('grid');
   const [stats, setStats] = useState({ designs: 0, skus: 0, inStock: 0 });
-  const [role, setRole] = useState<AuthRole>('Staff');
-  const isAdmin = role === 'Admin';
+  const { role } = useSession();
+  const isAdmin = role === 'owner';
 
   useEffect(() => {
-    setRole(getSession()?.role ?? 'Staff');
     const compute = () => {
       const designs = getDesigns();
       const allSkus = designs?.flatMap((d) => d?.skus);
@@ -70,7 +79,8 @@ export default function InventoryHeader() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">Inventory</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          {stats?.designs} design{stats?.designs !== 1 ? 's' : ''} · {stats?.skus} SKU{stats?.skus !== 1 ? 's' : ''} · {stats?.inStock} in stock
+          {stats?.designs} design{stats?.designs !== 1 ? 's' : ''} · {stats?.skus} SKU
+          {stats?.skus !== 1 ? 's' : ''} · {stats?.inStock} in stock
         </p>
       </div>
       <div className="flex items-center gap-2 flex-wrap">

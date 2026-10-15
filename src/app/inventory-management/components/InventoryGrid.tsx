@@ -6,8 +6,21 @@ import { clearInventory, getDesigns, removeDesign, removeDesigns } from '@/lib/d
 import StatusBadge from '@/components/ui/StatusBadge';
 import MaterialBadge from '@/components/ui/MaterialBadge';
 import InventoryTable from './InventoryTable';
-import { Grid, List, Printer, Tag, ArrowLeftRight, Archive, ChevronLeft, ChevronRight, Trash2, AlertTriangle, X, Package } from 'lucide-react';
-import { getSession, type AuthRole } from '@/lib/authStore';
+import {
+  Grid,
+  List,
+  Printer,
+  Tag,
+  ArrowLeftRight,
+  Archive,
+  ChevronLeft,
+  ChevronRight,
+  Trash2,
+  AlertTriangle,
+  X,
+  Package,
+} from 'lucide-react';
+import { useSession } from '@/lib/authStore';
 import type { SkuStatus, Design } from '@/lib/mockData';
 
 const SORT_OPTIONS = [
@@ -32,10 +45,7 @@ function DeleteConfirmModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onCancel}
-      />
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onCancel} />
       {/* Modal */}
       <div className="relative bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-5">
         {/* Close */}
@@ -53,9 +63,7 @@ function DeleteConfirmModal({
           </div>
           <div>
             <h3 className="text-lg font-bold text-foreground">Delete Design?</h3>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              This action cannot be undone.
-            </p>
+            <p className="text-sm text-muted-foreground mt-0.5">This action cannot be undone.</p>
           </div>
         </div>
 
@@ -75,12 +83,15 @@ function DeleteConfirmModal({
             {design.designName && (
               <p className="text-xs text-muted-foreground">{design.designName}</p>
             )}
-            <p className="text-xs text-muted-foreground">{design.category} · {design.skus.length} SKU{design.skus.length !== 1 ? 's' : ''}</p>
+            <p className="text-xs text-muted-foreground">
+              {design.category} · {design.skus.length} SKU{design.skus.length !== 1 ? 's' : ''}
+            </p>
           </div>
         </div>
 
         <p className="text-sm text-muted-foreground">
-          Deleting this design will remove it and all its associated SKUs from inventory. Sales history will be preserved.
+          Deleting this design will remove it and all its associated SKUs from inventory. Sales
+          history will be preserved.
         </p>
 
         {/* Actions */}
@@ -113,13 +124,12 @@ export default function InventoryGrid() {
   const [sort, setSort] = useState('sort-newest');
   const [page, setPage] = useState(1);
   const [deleteTarget, setDeleteTarget] = useState<Design | null>(null);
-  const [role, setRole] = useState<AuthRole>('Staff');
+  const { role } = useSession();
   const perPage = 8;
-  const isAdmin = role === 'Admin';
+  const isAdmin = role === 'owner';
 
   // Sync from store on mount and on window focus (so new designs from Add Design appear)
   useEffect(() => {
-    setRole(getSession()?.role ?? 'Staff');
     const sync = () => setDesigns([...getDesigns()]);
     sync();
     window.addEventListener('focus', sync);
@@ -169,7 +179,12 @@ export default function InventoryGrid() {
     const selectedSkuCount = designs
       .filter((design) => selectedIds.has(design.id))
       .reduce((total, design) => total + design.skus.length, 0);
-    if (!window.confirm(`Delete ${selectedIds.size} design(s) and ${selectedSkuCount} SKU(s)? This cannot be undone.`)) return;
+    if (
+      !window.confirm(
+        `Delete ${selectedIds.size} design(s) and ${selectedSkuCount} SKU(s)? This cannot be undone.`
+      )
+    )
+      return;
     removeDesigns(selectedIds);
     setDesigns([...getDesigns()]);
     setSelectedIds(new Set());
@@ -177,7 +192,12 @@ export default function InventoryGrid() {
 
   const handleClearInventory = () => {
     const skuCount = designs.reduce((total, design) => total + design.skus.length, 0);
-    if (!window.confirm(`Delete ALL inventory: ${designs.length} design(s) and ${skuCount} SKU(s)? This cannot be undone.`)) return;
+    if (
+      !window.confirm(
+        `Delete ALL inventory: ${designs.length} design(s) and ${skuCount} SKU(s)? This cannot be undone.`
+      )
+    )
+      return;
     clearInventory();
     setDesigns([]);
     setSelectedIds(new Set());
@@ -194,7 +214,8 @@ export default function InventoryGrid() {
         <div>
           <h3 className="text-lg font-semibold text-foreground mb-1">No designs yet</h3>
           <p className="text-sm text-muted-foreground max-w-xs">
-            Add your first jewellery design to get started. Click <strong>+ Add Design</strong> above.
+            Add your first jewellery design to get started. Click <strong>+ Add Design</strong>{' '}
+            above.
           </p>
         </div>
       </div>
@@ -221,7 +242,9 @@ export default function InventoryGrid() {
             className="input-field text-xs py-1.5 w-44"
           >
             {SORT_OPTIONS.map((o) => (
-              <option key={o.id} value={o.id}>{o.label}</option>
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
             ))}
           </select>
           <span className="text-xs text-muted-foreground">{total} designs</span>
@@ -257,7 +280,10 @@ export default function InventoryGrid() {
         <div className="slide-up flex items-center gap-3 bg-foreground text-primary-foreground px-4 py-2.5 rounded-xl">
           <span className="text-sm font-semibold">{selectedIds.size} selected</span>
           <div className="flex items-center gap-2 ml-2">
-            <Link href="/print-tags" className="flex items-center gap-1.5 text-xs bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors">
+            <Link
+              href="/print-tags"
+              className="flex items-center gap-1.5 text-xs bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors"
+            >
               <Printer size={13} /> Print Tags
             </Link>
             <button className="flex items-center gap-1.5 text-xs bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors">
@@ -293,7 +319,8 @@ export default function InventoryGrid() {
           {paginated.map((design) => {
             const inStockCount = design.skus.filter((s) => s.status === 'In Stock').length;
             const isSelected = selectedIds.has(design.id);
-            const displayStatus: SkuStatus = inStockCount > 0 ? 'In Stock' : (design.skus[0]?.status ?? 'Archived');
+            const displayStatus: SkuStatus =
+              inStockCount > 0 ? 'In Stock' : (design.skus[0]?.status ?? 'Archived');
             const totalGW = design.skus.reduce((a, s) => a + s.grossWeight, 0);
 
             return (
@@ -313,7 +340,10 @@ export default function InventoryGrid() {
                   </div>
                   {isAdmin && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); setDeleteTarget(design); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteTarget(design);
+                      }}
                       className="absolute top-2 right-2 z-10 w-7 h-7 rounded-full bg-white/90 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
                       title="Delete design"
                     >
@@ -335,9 +365,13 @@ export default function InventoryGrid() {
                 <div className="p-3 space-y-2">
                   <div className="flex items-start justify-between gap-1">
                     <div>
-                      <p className="font-mono text-xs font-bold text-primary leading-tight">{design.designNumber}</p>
+                      <p className="font-mono text-xs font-bold text-primary leading-tight">
+                        {design.designNumber}
+                      </p>
                       {design.designName && (
-                        <p className="text-xs text-foreground font-medium leading-tight mt-0.5 line-clamp-1">{design.designName}</p>
+                        <p className="text-xs text-foreground font-medium leading-tight mt-0.5 line-clamp-1">
+                          {design.designName}
+                        </p>
                       )}
                     </div>
                     <StatusBadge status={displayStatus} size="xs" />
@@ -349,14 +383,22 @@ export default function InventoryGrid() {
                     <span className="text-xs text-muted-foreground">{design.category}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs text-muted-foreground pt-1 border-t border-border/50">
-                    <span>{design.skus.length} SKU{design.skus.length !== 1 ? 's' : ''}</span>
+                    <span>
+                      {design.skus.length} SKU{design.skus.length !== 1 ? 's' : ''}
+                    </span>
                     {totalGW > 0 && <span>{totalGW.toFixed(3)}g GW</span>}
                   </div>
                   <div className="flex gap-2 pt-1">
-                    <Link href={`/edit-stock?id=${design.id}`} className="btn-secondary py-1.5 text-xs flex-1 justify-center">
+                    <Link
+                      href={`/edit-stock?id=${design.id}`}
+                      className="btn-secondary py-1.5 text-xs flex-1 justify-center"
+                    >
                       Edit Stock
                     </Link>
-                    <Link href={`/design-detail?id=${design.id}`} className="btn-ghost py-1.5 text-xs flex-1 justify-center">
+                    <Link
+                      href={`/design-detail?id=${design.id}`}
+                      className="btn-ghost py-1.5 text-xs flex-1 justify-center"
+                    >
                       View
                     </Link>
                   </div>

@@ -13,6 +13,10 @@ const BASE_URL = `http://localhost:${PORT}`;
 export default defineConfig({
   testDir: './tests/e2e',
   outputDir: './test-results',
+  // Makes the test logins through the local Auth admin API (FE02); it needs the lane's keys, so run `npm run test:e2e`.
+  globalSetup: './tests/e2e/global-setup.ts',
+  // A first request to the dev server compiles the page, which takes several seconds.
+  expect: { timeout: 15_000 },
   // Serial on purpose: the tests of a lane share one local database.
   fullyParallel: false,
   workers: 1,
