@@ -83,6 +83,7 @@ R-role-1. The role of a logged-in user comes from the `profiles` table and nowhe
 | `/inventory-management`, `/design-detail`, `/print-tags` | yes | read only | yes |
 | `/add-design`, `/edit-stock` | yes | no | yes |
 | `/reports` (date controls and export buttons hidden in M1, O32), `/settings` | yes | no | no |
+| `/scan-detail` (scan a tag; the phone menu is M2, so M1 keeps the prototype's owner-only access) | yes | no | no |
 | `/order-book`, `/catalogue`, `/customer-catalogue` | hidden in M1 | hidden | hidden |
 
 The Estimate screen's date editor and edit mode (`EstimateViewClient.tsx:113-159`) are removed in M1 (K1, Y8), and the draft screens no longer show a "next number" before saving (L4, section 18, AC6).
@@ -824,3 +825,4 @@ Gaps and one self-contradiction that an implementer found while building. None c
 | BN-5 | DB02 | S6 said the defaults of `created_at` and `updated_at` call `private.now_ts()`, which S4 forbids (a default calls built-in functions only). S6 now says the defaults are `clock_timestamp()` and the trigger `set_updated_at` stamps both from `private.now_ts()` |
 | BN-6 | DB02 | D1 now states `ON DELETE RESTRICT` on the profile key, as line 107 and S7 already said for every key. DB02 had made it CASCADE so that the test harness could delete logins; the harness now deletes the profile first |
 | BN-7 | DB03 | D6 left `designs.material` open. It is now `Gold` or `Silver` as a `CHECK`, so a design that could never be billed cannot exist |
+| BN-8 | FE02 | The screens-by-role table of 1.3 had no row for `/scan-detail`; it now says owner only in M1, as the prototype had it (the phone menu that leads to it is M2), and a route that is not in the table is closed to everyone |

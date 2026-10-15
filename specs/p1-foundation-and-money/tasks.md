@@ -1,6 +1,6 @@
 # Tasks: P1 foundation and money (the JewelVault backend)
 
-Generated on 2026-10-15 from `_build/p1-plan/plan_data.py` by `build_plan.py`, which also checks every requirement and test of `spec.md` (827 lines) against these tasks, that each test can pass in the task that introduces it, and that every existing file path exists. Days are Claude-days, plus or minus 30 percent (plan section 4). `[P]` marks a task that can run beside the one before it in its lane. "Tests" are spec tests first written (and seen failing) in that task; "extends" are spec tests that task completes a part of; "plan tests" are checks the plan adds because the spec has no test ID for them.
+Generated on 2026-10-15 from `_build/p1-plan/plan_data.py` by `build_plan.py`, which also checks every requirement and test of `spec.md` (829 lines) against these tasks, that each test can pass in the task that introduces it, and that every existing file path exists. Days are Claude-days, plus or minus 30 percent (plan section 4). `[P]` marks a task that can run beside the one before it in its lane. "Tests" are spec tests first written (and seen failing) in that task; "extends" are spec tests that task completes a part of; "plan tests" are checks the plan adds because the spec has no test ID for them.
 
 ## Database
 
@@ -143,7 +143,7 @@ Generated on 2026-10-15 from `_build/p1-plan/plan_data.py` by `build_plan.py`, w
 
 ### DB07 Photo storage: bucket and policies
 
-- **Agent:** C   **PLAN.md task:** P1-T7   **Days:** 0.5   **Depends on:** DB03
+- **Agent:** B   **PLAN.md task:** P1-T7   **Days:** 0.5   **Depends on:** DB03
 - **Spec lines:** P1, P3
 - **Tests first written here:** T-D21   **Extends:** -   **Plan tests:** -
 - **Do:** Migration 0014: bucket `design-photos` (public read, 2 MB, jpeg, webp, png) and the policies of P3 written with one policy per command on `storage.objects` using `private.app_role()`: owner and staff insert only, only the owner overwrites or deletes, a biller and anon cannot add or list. The upload half of T-D21 (a real 5 MB file refused) runs in FE05.
