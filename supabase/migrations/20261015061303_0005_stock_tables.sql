@@ -13,7 +13,8 @@
 -- piroi 1,000,000,000) and a row of private.limits; test T-F02 compares the two from the catalogue.
 
 -- ---------------------------------------------------------------- D6: designs
--- design_no is unique ignoring case. primary_image_path and image_paths hold storage paths only: a value that starts with
+-- material is Gold or Silver, as the prototype's Material type, D4 and the pricing rules (R4, R5) know only those two; the import
+-- writes designs straight into the table, so the CHECK is the layer that holds. design_no is unique ignoring case. primary_image_path and image_paths hold storage paths only: a value that starts with
 -- data: (an inline image) is refused (P4). The array is joined with a control character that no path contains, so the one
 -- pattern tests every element for the start of the string. built-in functions only, as S4 asks of a CHECK.
 create table public.designs (
@@ -22,7 +23,9 @@ create table public.designs (
   name text,
   category_id uuid not null references public.categories (id) on delete restrict,
   subcategory_id uuid references public.subcategories (id) on delete restrict,
-  material text not null constraint designs_material_not_blank check (btrim(material) <> ''),
+  material text not null
+    constraint designs_material_not_blank check (btrim(material) <> '')
+    constraint designs_material_check check (material in ('Gold', 'Silver')),
   purity text not null constraint designs_purity_not_blank check (btrim(purity) <> ''),
   selling_method text not null constraint designs_selling_method_check check (selling_method in ('By Weight', 'Per Piece')),
   description text,

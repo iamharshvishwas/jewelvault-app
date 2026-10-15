@@ -18,7 +18,7 @@
 -- The helpers in pg_temp catch an error and report it, so a missing table makes the assertions fail one by one instead of
 -- stopping the file; they are granted to public so that they can be called while a role is impersonated.
 begin;
-select plan(362);
+select plan(368);
 
 -- ---------------------------------------------------------------- helpers
 -- 'ok <rows>' when the statement ran, 'err <sqlstate>' when it did not. Row-level security that hides a row from an update
@@ -281,6 +281,16 @@ select is(pg_temp.try(format($$insert into public.designs (design_no, category_i
   'err 23514', 'D6: a blank purity is refused');
 select is(pg_temp.try(format($$insert into public.designs (design_no, category_id, material, purity, selling_method) values ('FX-X3', %L, '', '22K', 'By Weight')$$, current_setting('jv.c1'))),
   'err 23514', 'D6: a blank material is refused');
+select is(pg_temp.try(format($$insert into public.designs (design_no, category_id, material, purity, selling_method) values ('FX-M1', %L, 'Platinum', '950', 'By Weight')$$, current_setting('jv.c1'))),
+  'err 23514', 'D6: a material other than Gold or Silver (Platinum) is refused: the pricing rules know only those two');
+select is(pg_temp.try(format($$insert into public.designs (design_no, category_id, material, purity, selling_method) values ('FX-M2', %L, 'gold', '22K', 'By Weight')$$, current_setting('jv.c1'))),
+  'err 23514', 'D6: the spelling is exact: gold in lower case is refused');
+select is(pg_temp.try(format($$insert into public.designs (design_no, category_id, material, purity, selling_method) values ('FX-M3', %L, 'Gold', '22K', 'By Weight'), ('FX-M4', %L, 'Silver', '925', 'Per Piece')$$, current_setting('jv.c1'), current_setting('jv.c1'))),
+  'ok 2', 'D6: Gold and Silver are accepted');
+select is(
+  (select array_agg(c.conname::text order by c.conname) from pg_constraint c
+    where c.conrelid = 'public.designs'::regclass and c.contype = 'c' and c.conname like 'designs\_material%'),
+  array['designs_material_check', 'designs_material_not_blank'], 'D6: material has a named check for Gold or Silver beside the not-blank check');
 select is(pg_temp.try(format($$insert into public.designs (design_no, category_id, material, purity, selling_method, primary_image_path) values ('FX-X4', %L, 'Gold', '22K', 'By Weight', 'data:image/jpeg;base64,/9j/4AAQ')$$, current_setting('jv.c1'))),
   'err 23514', 'T-F02, P4: a primary image value that starts with data: is refused');
 select is(pg_temp.try(format($$insert into public.designs (design_no, category_id, material, purity, selling_method, primary_image_path) values ('FX-X5', %L, 'Gold', '22K', 'By Weight', ' DATA:image/png;base64,iVBOR')$$, current_setting('jv.c1'))),
@@ -680,6 +690,8 @@ select is(pg_temp.try(format($$insert into public.designs (design_no, category_i
 select is(pg_temp.try(format($$update public.designs set name = 'N', description = 'D', notes = 'Nt', tags = array['a', 'b'], primary_image_path = 'designs/x/1.jpg', image_paths = array['designs/x/1.jpg'], category_id = %L, subcategory_id = null where id = %L$$, current_setting('jv.c2'), current_setting('jv.d1'))), 'ok 1', 'A5: the owner can edit every content column of a design');
 select is(pg_temp.try(format($$update public.designs set archived_at = now() where id = %L$$, current_setting('jv.d3'))), 'ok 1', 'A5: and archive a design that has no live piece');
 select is(pg_temp.try(format($$update public.designs set material = 'Silver', purity = '999' where id = %L$$, current_setting('jv.d1'))), 'ok 1', 'A4: the owner can change material and purity');
+select is(pg_temp.try(format($$update public.designs set material = 'Platinum' where id = %L$$, current_setting('jv.d1'))), 'err 23514', 'D6: but not to a material other than Gold or Silver: the check refuses it');
+select is((select material from public.designs where id = current_setting('jv.d1')::uuid), 'Silver', 'D6: and the design keeps its material');
 select is(pg_temp.try(format($$update public.designs set selling_method = 'Per Piece' where id = %L$$, current_setting('jv.d4'))), 'ok 1', 'A4: and the selling method (here of a design with no live piece)');
 select is(pg_temp.try(format($$update public.designs set design_no = 'FX-NEW' where id = %L$$, current_setting('jv.d1'))), 'err 42501', 'T-D19: a column outside the content columns cannot be updated: design_no');
 select is(pg_temp.try(format($$update public.designs set import_batch_id = gen_random_uuid() where id = %L$$, current_setting('jv.d1'))), 'err 42501', 'T-D19: nor import_batch_id');
