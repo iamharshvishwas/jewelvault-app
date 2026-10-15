@@ -87,14 +87,14 @@ The spec defines 103 tests (section 15). A test is **introduced** in the task wh
 | DB09a | The write prologue and create_customer | T-F06 | T-D09 | - |
 | DB09b | create_bill core without payments (private.create_bill_core) | T-A03, T-A06, T-A15, T-A17, T-B16, T-B24, T-C01, T-C04, T-C05, T-C06, T-C08, T-D03 | T-A10, T-D09 | - |
 | DB10a | private.rebalance for money and silver | T-B26 | - | - |
-| DB10b | record_payment | T-B04, T-B05, T-B22, T-C09 | T-B01, T-B06, T-B17, T-D09 | - |
+| DB10b | record_payment | T-B04, T-B05, T-B22, T-C09 | T-B01, T-B06, T-B17, T-D09, T-A09 | - |
 | DB16 | Views V1 to V4 | T-B02, T-B15, T-B17, T-D18 | T-B05 | - |
 | DB11 | Cash limit and PAN rules, and the payment rows of a bill (the private helpers only) | T-A12, T-B03, T-B07 | T-B01 | - |
-| DB12 | settle_fine | T-B11, T-B12, T-B13, T-B23 | T-D09 | - |
+| DB12 | settle_fine | T-B11, T-B12, T-B13, T-B23 | T-D09, T-A09 | - |
 | DB13 | void_receipt and cancel_bill | T-B08, T-B09, T-B10 | T-B17, T-D09 | - |
 | DB14a | reissue_bill | T-B19, T-B25 | T-B17, T-D09 | - |
-| DB14b | add_opening_balance | T-B21, T-F07 | T-B17, T-D09 | - |
-| DB15 | issue_refund (first to leave if the calendar slips) | T-B20 | T-D09 | - |
+| DB14b | add_opening_balance | T-B21, T-F07 | T-B17, T-D09, T-A09 | - |
+| DB15 | issue_refund (first to leave if the calendar slips) | T-B20 | T-D09, T-A09 | - |
 | DB17a | Invariants I1 to I7, I10 and I13, with the mutation helper | - | T-B18 | PT-I1 mutation half of T-B18: one damaged row per invariant |
 | DB17b | Nightly job, review line, backup heartbeat and the dashboard summary function | T-B18 | T-B24, T-C05 | - |
 | DB18a | Two-session interleavings with the test hook | T-C10, T-C11, T-C12, T-C13, T-C14 | - | - |
