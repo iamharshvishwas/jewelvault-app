@@ -12,8 +12,8 @@
 --   * the forced person columns and the stamps (T-D22).
 --
 -- DB04 and DB05 extend T-F02 by adding their tables to pg_temp.f02_tables() and their capped columns to
--- pg_temp.expected_caps() below. The checks are written against the catalogue, so a table or a cap that is added without
--- its row fails here.
+-- pg_temp.expected_caps() below (DB04 added the five money tables and 22 caps). The checks are written against the
+-- catalogue, so a table or a cap that is added without its row fails here.
 --
 -- The helpers in pg_temp catch an error and report it, so a missing table makes the assertions fail one by one instead of
 -- stopping the file; they are granted to public so that they can be called while a role is impersonated.
@@ -76,7 +76,8 @@ grant execute on function pg_temp.try(text), pg_temp.cnt(text, text), pg_temp.fx
 
 -- ---- T-F02: the tables of this task, and the caps. DB04 and DB05 add their tables and columns to these two lists.
 create function pg_temp.f02_tables() returns text[] language sql as $f$
-  select array['settings', 'daily_rates', 'categories', 'subcategories', 'designs', 'skus', 'sku_private']
+  select array['settings', 'daily_rates', 'categories', 'subcategories', 'designs', 'skus', 'sku_private',
+               'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations']
 $f$;
 
 -- Which column carries which cap of S4 (the name is the row of private.limits). Money amounts, rates and weights only.
@@ -91,7 +92,30 @@ create function pg_temp.expected_caps() returns table (tbl text, col text, limit
     ('skus', 'labour_retail', 'max_rate'),
     ('skus', 'labour_semi', 'max_rate'),
     ('skus', 'labour_wholesale', 'max_rate'),
-    ('sku_private', 'original_net_weight', 'max_weight')
+    ('sku_private', 'original_net_weight', 'max_weight'),
+    -- DB04: the money tables (D11 to D14). A bill's fine weight is a sum over up to 200 lines, so it has no cap of its own.
+    ('bills', 'subtotal', 'max_amount'),
+    ('bills', 'discount', 'max_amount'),
+    ('bills', 'additional_charges', 'max_amount'),
+    ('bills', 'grand_total', 'max_amount'),
+    ('bill_items', 'line_no', 'max_bill_lines'),
+    ('bill_items', 'quantity', 'max_quantity'),
+    ('bill_items', 'gross_weight', 'max_weight'),
+    ('bill_items', 'customer_net_weight', 'max_weight'),
+    ('bill_items', 'metal_rate', 'max_rate'),
+    ('bill_items', 'labour_rate', 'max_rate'),
+    ('bill_items', 'list_metal_rate', 'max_rate'),
+    ('bill_items', 'list_labour_rate', 'max_rate'),
+    ('bill_items', 'metal_amount', 'max_amount'),
+    ('bill_items', 'labour_amount', 'max_amount'),
+    ('bill_items', 'piroi', 'max_amount'),
+    ('bill_items', 'other_charges', 'max_amount'),
+    ('bill_items', 'item_total', 'max_amount'),
+    ('receipts', 'amount', 'max_amount'),
+    ('receipts', 'fine_grams', 'max_weight'),
+    ('receipts', 'silver_rate', 'max_rate'),
+    ('receipt_allocations', 'amount', 'max_amount'),
+    ('receipt_allocations', 'fine_grams', 'max_weight')
 $f$;
 
 -- Every "<column> <= <number>" in a CHECK of the tables, read from the catalogue: the cap literals as they are stored.
@@ -157,7 +181,7 @@ select is(
   (select array_agg(relname::text order by relname) from pg_class
     where relnamespace = 'public'::regnamespace and relname = any (pg_temp.f02_tables()) and relrowsecurity),
   (select array_agg(t order by t) from unnest(pg_temp.f02_tables()) t),
-  'A1, S9: row-level security is on for all seven tables');
+  'A1, S9: row-level security is on for all twelve tables (the seven of DB03 and the five of DB04)');
 select is(
   (select array_agg(c.relname || '.' || a.attname order by c.relname, a.attname)
      from pg_attribute a join pg_class c on c.oid = a.attrelid
@@ -171,7 +195,7 @@ select is(
       and (select count(*) from pg_trigger t where t.tgrelid = c.oid and not t.tgisinternal
               and t.tgfoid = 'private.set_updated_at'::regproc) = 1),
   (select array_agg(t order by t) from unnest(pg_temp.f02_tables()) t),
-  'S6: every one of the seven tables has the set_updated_at trigger once');
+  'S6: every one of the twelve tables has the set_updated_at trigger once');
 
 -- ---------------------------------------------------------------- 2. the fixtures
 do $mk$
@@ -406,15 +430,15 @@ select is(
     where c.contype = 'f' and cl.relnamespace = 'public'::regnamespace and cl.relname = any (pg_temp.f02_tables())
       and not exists (select 1 from pg_index i where i.indrelid = c.conrelid and i.indisvalid
                         and (i.indkey::smallint[])[0:cardinality(c.conkey) - 1] @> c.conkey)),
-  '{}'::text[], 'T-D11, D19: every foreign key of the seven tables has an index that starts with its columns');
+  '{}'::text[], 'T-D11, D19: every foreign key of the twelve tables has an index that starts with its columns');
 
 -- ---------------------------------------------------------------- 4. T-F02: the caps of S4 equal private.limits
 select is(pg_temp.cap_drift(), '{}'::text[], 'T-F02, S4: every cap literal in a CHECK equals its row in private.limits, and none is unlisted');
-select is((select count(*)::int from pg_temp.expected_caps() e join pg_temp.cap_literals() l on l.tbl = e.tbl and l.col = e.col), 10,
-  'T-F02: the ten capped columns are all found in the catalogue');
+select is((select count(*)::int from pg_temp.expected_caps() e join pg_temp.cap_literals() l on l.tbl = e.tbl and l.col = e.col), 32,
+  'T-F02: the thirty-two capped columns (ten of DB03, twenty-two of DB04) are all found in the catalogue');
 select pg_temp.fx($q$update private.limits set value = 99999 where name = 'max_weight'$q$);
-select is(array_length(pg_temp.cap_drift(), 1), 5,
-  'T-F02, test of the test: a different max_weight in private.limits is seen on all five weight columns');
+select is(array_length(pg_temp.cap_drift(), 1), 9,
+  'T-F02, test of the test: a different max_weight in private.limits is seen on all nine weight columns');
 select pg_temp.fx($q$update private.limits set value = 100000 where name = 'max_weight'$q$);
 select pg_temp.fx($q$alter table public.daily_rates add constraint daily_rates_fx_second_cap check (rate_per_gram <= 12345) not valid$q$);
 select is(pg_temp.cap_drift(), array['daily_rates.rate_per_gram: CHECK says 12345, private.limits.max_rate says 100000000'],
@@ -535,15 +559,15 @@ select is(
   (select array_agg(t order by t) from unnest(pg_temp.f02_tables()) t
     where has_table_privilege('anon', 'public.' || t, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
        or has_any_column_privilege('anon', 'public.' || t, 'SELECT, INSERT, UPDATE, REFERENCES')),
-  null, 'T-D02, A4: anon has no right of any kind on the seven tables');
+  null, 'T-D02, A4: anon has no right of any kind on the twelve tables');
 select is(
   (select array_agg(t order by t) from unnest(pg_temp.f02_tables()) t
     where has_table_privilege('authenticated', 'public.' || t, 'DELETE, TRUNCATE, REFERENCES, TRIGGER')),
-  null, 'T-D07, S7: authenticated has no delete, truncate, references or trigger right on the seven tables');
+  null, 'T-D07, S7: authenticated has no delete, truncate, references or trigger right on the twelve tables');
 select is(
   (select array_agg(t order by t) from unnest(pg_temp.f02_tables()) t
     where not has_table_privilege('authenticated', 'public.' || t, 'SELECT')),
-  null, 'A4: authenticated can select from all seven (the row rules decide who sees what)');
+  null, 'A4: authenticated can select from all twelve (the row rules decide who sees what)');
 select is(
   (select array_agg(t order by t) from unnest(pg_temp.f02_tables()) t
     where has_table_privilege('authenticated', 'public.' || t, 'INSERT') or has_table_privilege('authenticated', 'public.' || t, 'UPDATE')),
@@ -572,14 +596,17 @@ select is(
   (select array_agg(c.relname || '.' || p.polname || ':' || p.polcmd::text order by c.relname, p.polname)
      from pg_policy p join pg_class c on c.oid = p.polrelid
     where c.relnamespace = 'public'::regnamespace and c.relname = any (pg_temp.f02_tables())),
-  array['categories.categories_insert:a', 'categories.categories_select:r', 'categories.categories_update:w',
+  array['bill_items.bill_items_select:r', 'bills.bills_select:r',
+        'categories.categories_insert:a', 'categories.categories_select:r', 'categories.categories_update:w',
+        'customers.customers_select:r', 'customers.customers_update:w',
         'daily_rates.daily_rates_insert:a', 'daily_rates.daily_rates_select:r', 'daily_rates.daily_rates_update:w',
         'designs.designs_select:r', 'designs.designs_update:w',
+        'receipt_allocations.receipt_allocations_select:r', 'receipts.receipts_select:r',
         'settings.settings_insert:a', 'settings.settings_select:r', 'settings.settings_update:w',
         'sku_private.sku_private_insert:a', 'sku_private.sku_private_select:r', 'sku_private.sku_private_update:w',
         'skus.skus_select:r', 'skus.skus_update:w',
         'subcategories.subcategories_insert:a', 'subcategories.subcategories_select:r', 'subcategories.subcategories_update:w'],
-  'A7, lint 0006: one policy per command on each table, and none at all for insert on designs and skus, or for delete anywhere');
+  'A7, lint 0006: one policy per command on each table; none for insert on designs, skus and customers, none at all on the four money tables beyond select, or for delete anywhere');
 
 -- ---------------------------------------------------------------- 8. anon: nothing (A4)
 select tests.as_anon();
