@@ -1,6 +1,6 @@
 # Plan: P1 foundation and money (the JewelVault backend)
 
-Status: **DRAFT 3**, written on Wednesday 14 October 2026 against `spec.md` (824 lines). Draft 1 was reviewed by a fresh agent (`plan-review.md`: 0 Critical, 5 High, 12 Medium, 6 Low, verdict pass with fixes); draft 2 answered every finding (section 11) and its changed lines were re-checked (`plan-review-2.md`: 0 Critical, 1 High, 7 Medium, 4 Low, pass with fixes); this draft answers those (section 11.1). Tasks, tests and the checks are generated from `_build/p1-plan/plan_data.py`, so this file and `tasks.md` cannot drift from the spec.
+Status: **DRAFT 3**, written on Thursday 15 October 2026 against `spec.md` (826 lines). Draft 1 was reviewed by a fresh agent (`plan-review.md`: 0 Critical, 5 High, 12 Medium, 6 Low, verdict pass with fixes); draft 2 answered every finding (section 11) and its changed lines were re-checked (`plan-review-2.md`: 0 Critical, 1 High, 7 Medium, 4 Low, pass with fixes); this draft answers those (section 11.1). Tasks, tests and the checks are generated from `_build/p1-plan/plan_data.py`, so this file and `tasks.md` cannot drift from the spec.
 Maps to: `PLAN.md` tasks P1-T4 to P1-T10, P2-T1 to P2-T3 and the data side of P3-T4. Not in this plan: the printed estimate and the print shell (P3-T1), the rate card by purity and the stale-rate guard (P3-T2), regression, acceptance, training and drills (P3-T5 to P3-T8), and everything in M2.
 
 ## 1. Design: the simplest approach that meets the spec

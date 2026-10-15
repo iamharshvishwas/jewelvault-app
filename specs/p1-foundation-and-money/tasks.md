@@ -1,6 +1,6 @@
 # Tasks: P1 foundation and money (the JewelVault backend)
 
-Generated on 2026-10-14 from `_build/p1-plan/plan_data.py` by `build_plan.py`, which also checks every requirement and test of `spec.md` (824 lines) against these tasks, that each test can pass in the task that introduces it, and that every existing file path exists. Days are Claude-days, plus or minus 30 percent (plan section 4). `[P]` marks a task that can run beside the one before it in its lane. "Tests" are spec tests first written (and seen failing) in that task; "extends" are spec tests that task completes a part of; "plan tests" are checks the plan adds because the spec has no test ID for them.
+Generated on 2026-10-15 from `_build/p1-plan/plan_data.py` by `build_plan.py`, which also checks every requirement and test of `spec.md` (826 lines) against these tasks, that each test can pass in the task that introduces it, and that every existing file path exists. Days are Claude-days, plus or minus 30 percent (plan section 4). `[P]` marks a task that can run beside the one before it in its lane. "Tests" are spec tests first written (and seen failing) in that task; "extends" are spec tests that task completes a part of; "plan tests" are checks the plan adds because the spec has no test ID for them.
 
 ## Database
 
