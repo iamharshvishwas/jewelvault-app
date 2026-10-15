@@ -9,7 +9,7 @@ import { apiEnv, createLogin, deleteLogin, restFetch, rpc, signIn, type Login } 
 // The database halves of these tests are the pgTAP files 010_privileges, 011_profiles and 012_common_triggers. What only a
 // real login can show is here: the Auth service with sign-up off, the token a user gets after changing their own metadata,
 // the REST API as a signed-in user, and the role's statement timeout as a request sees it.
-// Every login made here is deleted again (the profile goes with it).
+// Every login made here is deleted again: the profile row first (a login with a profile cannot be deleted, S7), then the login.
 
 const root = path.resolve(__dirname, '../..');
 let admin: Client;
@@ -353,11 +353,32 @@ describe('T-E09: a login made the way the dashboard makes it', () => {
     expect(after.body).toEqual([{ role: 'biller', full_name: 'Ramesh Kumar', active: true }]);
   });
 
-  it('removes the profile with the login, so a test login leaves nothing behind', async () => {
+  it('cannot be deleted through the Auth admin API while it has a profile: the login stays (S7)', async () => {
+    const made = await login();
+    const env = apiEnv();
+    const res = await fetch(`${env.apiUrl}/auth/v1/admin/users/${made.id}`, {
+      method: 'DELETE',
+      headers: { apikey: env.secretKey, authorization: `Bearer ${env.secretKey}` },
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(
+      (await admin.query('select count(*)::int as n from auth.users where id = $1', [made.id]))
+        .rows[0].n
+    ).toBe(1);
+    expect(await profileOf(made.id)).toBeDefined();
+    // the login still works
+    expect((await signIn(made.email, made.password)).id).toBe(made.id);
+  });
+
+  it('can be deleted once its profile row has been deleted first, which is what deleteLogin does', async () => {
     const made = await createLogin();
     expect(await profileOf(made.id)).toBeDefined();
     await deleteLogin(made.id);
     expect(await profileOf(made.id)).toBeUndefined();
+    expect(
+      (await admin.query('select count(*)::int as n from auth.users where id = $1', [made.id]))
+        .rows[0].n
+    ).toBe(0);
   });
 });
 

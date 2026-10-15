@@ -554,6 +554,11 @@ begin
   end if;
 
   if not p_keep_users then
+    -- DB02: a login that has a profile cannot be deleted (profiles.id is ON DELETE RESTRICT). The truncate above has emptied
+    -- profiles already; this line keeps the order explicit if profiles is ever left out of that list.
+    if to_regclass('public.profiles') is not null then
+      delete from public.profiles;
+    end if;
     delete from auth.users;
     get diagnostics v_users = row_count;
   end if;

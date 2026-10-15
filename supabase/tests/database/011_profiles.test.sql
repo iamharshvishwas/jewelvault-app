@@ -7,7 +7,7 @@
 -- file, which lets this file show every failure before migration 0002 exists. They can be called while a role is
 -- impersonated (they are granted to public here).
 begin;
-select plan(101);
+select plan(106);
 
 -- A login the way the dashboard makes it: a row in auth.users and nothing else. (tests.make_user builds the logins that
 -- need a profile of a given role; it makes the same row and then activates it with private.activate_user.)
@@ -106,8 +106,8 @@ select col_is_pk('public', 'profiles', 'id', 'D1: id is the primary key');
 select is(
   (select c.confrelid::regclass::text || '.' || (select attname from pg_attribute where attrelid = c.confrelid and attnum = c.confkey[1]) || ' ' || c.confdeltype::text
      from pg_constraint c where c.conrelid = to_regclass('public.profiles') and c.contype = 'f'),
-  'auth.users.id c',
-  'D1: id is a foreign key to auth.users, and a profile goes with its login (the harness deletes logins through the Auth API)');
+  'auth.users.id r',
+  'D1, S7: id is a foreign key to auth.users with ON DELETE RESTRICT: a login that has a profile cannot be deleted (deactivate it instead)');
 select is(
   (select relrowsecurity from pg_class where oid = to_regclass('public.profiles')),
   true, 'A1: row-level security is on for profiles');
@@ -183,8 +183,18 @@ select is(
   (select count(*)::int from unnest(array[current_setting('jv.owner')::uuid, current_setting('jv.biller')::uuid,
      current_setting('jv.staff')::uuid, current_setting('jv.inactive')::uuid]) u where pg_temp.profile_of(u) is not null),
   4, 'tests.make_user gives a profile to each role it builds');
-delete from auth.users where id = current_setting('jv.n_phone')::uuid;
-select is(pg_temp.profile_of(current_setting('jv.n_phone')::uuid), null, 'D1: deleting a login deletes its profile (the cascade)');
+select throws_ok(
+  $$delete from auth.users where id = current_setting('jv.n_phone')::uuid$$,
+  '23503', null, 'D1, S7: deleting a login that has a profile is refused with a foreign key violation');
+select is(pg_temp.profile_of(current_setting('jv.n_phone')::uuid), 'staff/false/New user', 'D1: and the profile is still there');
+select is((select count(*)::int from auth.users where id = current_setting('jv.n_phone')::uuid), 1, 'D1: and so is the login');
+select lives_ok(
+  $$delete from public.profiles where id = current_setting('jv.n_phone')::uuid$$,
+  'D1: the database owner can delete the profile row of a login made by mistake (the SQL editor)');
+select lives_ok(
+  $$delete from auth.users where id = current_setting('jv.n_phone')::uuid$$,
+  'D1: and then the login can be deleted');
+select is((select count(*)::int from auth.users where id = current_setting('jv.n_phone')::uuid), 0, 'D1: and it is gone');
 
 -- ---------------------------------------------------------------- 4. private.app_role() (D2, S10, A2, A10)
 select has_function('private', 'app_role', array[]::text[], 'S10: the helper is private.app_role()');

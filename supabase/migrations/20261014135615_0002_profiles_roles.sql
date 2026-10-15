@@ -5,12 +5,15 @@
 -- metadata, which the user can edit. A login that is not active, or has no profile, can read and write nothing (A10).
 
 -- ---------------------------------------------------------------- D1: the table
--- A profile goes with its login: deleting a login through the Auth service (the dashboard, or the admin API that the test
--- harness uses) deletes its profile. This is the one foreign key that is not restrict, because a profile has no life of
--- its own; a later table that names a person can point at profiles with restrict (S7), and then a login that has done
--- anything cannot be deleted either. created_at and updated_at are stamped by the trigger of migration 0003 (S6).
+-- A login that has a profile cannot be deleted (ON DELETE RESTRICT, section 2 and S7: nothing is ever deleted). The columns
+-- that name a person (created_by, updated_by, set_by, confirmed_by, voided_by, cancelled_by) are plain uuids with no
+-- foreign key, so this row is the only record of who that person was on every old bill; deleting the login must not erase
+-- it. The dashboard refuses to delete such a login. To retire a person, set active = false (and ban the login in the
+-- dashboard). To remove a login that was made by mistake, the database owner deletes its profile row first in the SQL
+-- editor, then the login. The test harness does the same before it deletes the logins it made. created_at and updated_at
+-- are stamped by the trigger of migration 0003 (S6).
 create table public.profiles (
-  id uuid primary key references auth.users (id) on delete cascade,
+  id uuid primary key references auth.users (id) on delete restrict,
   full_name text not null constraint profiles_full_name_not_blank check (btrim(full_name) <> ''),
   role text not null constraint profiles_role_check check (role in ('owner', 'biller', 'staff')),
   active boolean not null default false,
@@ -121,7 +124,9 @@ create trigger profiles_protect_own_role
 --
 -- It sets the real name, the role (owner, biller or staff) and active = true, and returns what it set so the result can
 -- be checked. It also makes the profile of a login that has none (a login made before this migration). Only the database
--- owner can run it: it is not granted to anyone.
+-- owner can run it: it is not granted to anyone. To retire a person, do not delete the login (it has a profile, so the
+-- dashboard refuses): set active = false on the profile and ban the login. To remove a login made by mistake, delete its
+-- profile row first in the SQL editor, then the login.
 create or replace function private.activate_user(p_email text, p_role text, p_full_name text)
 returns jsonb
 language plpgsql

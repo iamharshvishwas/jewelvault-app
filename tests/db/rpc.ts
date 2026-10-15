@@ -179,8 +179,19 @@ async function activateProfile(id: string, email: string, role: AppRole): Promis
   }
 }
 
-/** Deletes the login again. A login that is already gone is not an error. */
+/**
+ * Deletes the login again. A login that is already gone is not an error. A login that has a profile cannot be deleted
+ * (profiles.id is ON DELETE RESTRICT, DB02), so the profile row is deleted first over a database connection, the way the
+ * runbook removes a login made by mistake.
+ */
 export async function deleteLogin(id: string): Promise<void> {
+  const db = await connect('rpc-delete-login');
+  try {
+    const { rows } = await db.query("select to_regclass('public.profiles') is not null as found");
+    if (rows[0].found) await db.query('delete from public.profiles where id = $1', [id]);
+  } finally {
+    await db.end();
+  }
   const env = apiEnv();
   const res = await timed(`${env.apiUrl}/auth/v1/admin/users/${id}`, {
     method: 'DELETE',
