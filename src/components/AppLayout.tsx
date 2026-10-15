@@ -6,7 +6,7 @@ import Sidebar from './Sidebar';
 import MobileNav from './MobileNav';
 import Topbar from './Topbar';
 import LoginScreen from './LoginScreen';
-import { canAccessPath, retryProfile, signOut, useSession } from '@/lib/authStore';
+import { PREVIEW_MODE, canAccessPath, retryProfile, signOut, useSession } from '@/lib/authStore';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -87,6 +87,15 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
       {/* Mobile Bottom Nav */}
       <MobileNav session={session} />
+
+      {PREVIEW_MODE && (
+        <div
+          role="note"
+          className="fixed bottom-16 lg:bottom-2 left-1/2 -translate-x-1/2 z-50 rounded-full bg-amber-100 border border-amber-300 px-3 py-0.5 text-[11px] font-semibold text-amber-900 shadow-sm pointer-events-none"
+        >
+          Preview: sample data, kept only in this browser. Nothing is saved to a server.
+        </div>
+      )}
     </div>
   );
 }

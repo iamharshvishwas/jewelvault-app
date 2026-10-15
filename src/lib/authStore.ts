@@ -117,7 +117,28 @@ export const NOT_ACTIVE_NOTICE = 'Your account is not active. Ask the owner to a
 export const IDLE_NOTICE =
   'You were signed out after 12 hours without a click or key press. Sign in again to continue.';
 
-let state: SessionState = LOADING;
+/**
+ * Preview mode: a build made with NEXT_PUBLIC_PREVIEW_MODE=1 opens every screen as the owner, with no login and no call to
+ * Supabase or any server, so the front end can be looked at before a back end exists. The data on the screens is the
+ * prototype's own sample data, kept in this browser only, and a banner says so (AppLayout). The variable is written out in
+ * full because Next.js replaces exactly that text at build time. It is off unless set: a real build never opens like this.
+ */
+export const PREVIEW_MODE = process.env.NEXT_PUBLIC_PREVIEW_MODE === '1';
+
+const PREVIEW_STATE: SessionState = {
+  status: 'signedIn',
+  session: {
+    userId: 'preview',
+    email: 'preview@example.invalid',
+    displayName: 'Preview',
+    role: 'owner',
+  },
+  role: 'owner',
+  notice: null,
+  error: null,
+};
+
+let state: SessionState = PREVIEW_MODE ? PREVIEW_STATE : LOADING;
 const listeners = new Set<() => void>();
 
 function setState(next: SessionState): void {
@@ -182,6 +203,7 @@ let loadingFor: { userId: string; email: string } | null = null;
 function ensureStarted(): void {
   if (started || typeof window === 'undefined') return;
   started = true;
+  if (PREVIEW_MODE) return; // no Supabase client in preview mode
   try {
     getSupabase().auth.onAuthStateChange(onAuthEvent);
   } catch (error) {
@@ -339,6 +361,11 @@ export async function signIn(email: string, password: string): Promise<SignInRes
  * Only this browser's session ends ("local"): the same person's other devices stay signed in.
  */
 export function signOut(notice: string | null = null): Promise<void> {
+  if (PREVIEW_MODE) {
+    // There is no login to leave: empty the caches and stay on the preview.
+    runLogoutHooks();
+    return Promise.resolve();
+  }
   endSession(notice);
   // One after the other, and signIn waits for the last: a sign-in made while an older sign-out is still on its way to the
   // server would otherwise have its new session removed when that sign-out finishes.
