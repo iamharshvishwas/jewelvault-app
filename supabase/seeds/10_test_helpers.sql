@@ -594,3 +594,30 @@ $lock$;
 grant execute on function tests.as_user(uuid), tests.as_anon(), tests.reset_role() to anon, authenticated, service_role;
 
 -- ===== END DB01 (test harness) =====
+
+-- ===== BEGIN DB07 (photo storage) =====
+
+-- tests.reset_business_data() truncates the tables of public and private and leaves storage alone. A test that had to commit
+-- a photo (an upload over HTTP, FE05) clears it with this: it deletes every row of storage.objects and answers how many.
+-- It keeps the buckets: design-photos is made by migration 0014, belongs to the schema and is what the next upload needs.
+--   * The platform refuses a delete from storage.objects unless storage.allow_delete_query is 'true' (the trigger
+--     storage.protect_delete); the Storage service sets it for its own calls and so does this, for the transaction only.
+--   * Only the rows go. The file behind a row stays in the lane's storage volume until `db:stop -- --no-backup`; the service
+--     serves nothing without its row, and a new upload to the same path replaces the file.
+--   * lock_timeout bounds the delete, like reset_business_data: it fails instead of waiting for ever behind an open upload.
+create or replace function tests.reset_storage() returns integer
+language plpgsql set search_path = ''
+as $f$
+declare
+  v_deleted integer;
+begin
+  perform set_config('lock_timeout', '10s', true);
+  perform set_config('storage.allow_delete_query', 'true', true);
+  delete from storage.objects;
+  get diagnostics v_deleted = row_count;
+  return v_deleted;
+end
+$f$;
+revoke all on function tests.reset_storage() from public, anon, authenticated;
+
+-- ===== END DB07 (photo storage) =====
