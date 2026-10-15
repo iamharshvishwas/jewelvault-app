@@ -1,6 +1,6 @@
 # Plan: P1 foundation and money (the JewelVault backend)
 
-Status: **DRAFT 3**, written on Thursday 15 October 2026 against `spec.md` (826 lines). Draft 1 was reviewed by a fresh agent (`plan-review.md`: 0 Critical, 5 High, 12 Medium, 6 Low, verdict pass with fixes); draft 2 answered every finding (section 11) and its changed lines were re-checked (`plan-review-2.md`: 0 Critical, 1 High, 7 Medium, 4 Low, pass with fixes); this draft answers those (section 11.1). Tasks, tests and the checks are generated from `_build/p1-plan/plan_data.py`, so this file and `tasks.md` cannot drift from the spec.
+Status: **DRAFT 3**, written on Thursday 15 October 2026 against `spec.md` (827 lines). Draft 1 was reviewed by a fresh agent (`plan-review.md`: 0 Critical, 5 High, 12 Medium, 6 Low, verdict pass with fixes); draft 2 answered every finding (section 11) and its changed lines were re-checked (`plan-review-2.md`: 0 Critical, 1 High, 7 Medium, 4 Low, pass with fixes); this draft answers those (section 11.1). Tasks, tests and the checks are generated from `_build/p1-plan/plan_data.py`, so this file and `tasks.md` cannot drift from the spec.
 Maps to: `PLAN.md` tasks P1-T4 to P1-T10, P2-T1 to P2-T3 and the data side of P3-T4. Not in this plan: the printed estimate and the print shell (P3-T1), the rate card by purity and the stale-rate guard (P3-T2), regression, acceptance, training and drills (P3-T5 to P3-T8), and everything in M2.
 
 ## 1. Design: the simplest approach that meets the spec
@@ -135,7 +135,7 @@ The full text of each task is in `tasks.md`; this is the list. **The unit.** A C
 | DB05 | A | Counters, idempotency, audit, touch triggers, seeds | DB04 | 1.0 | P1-T4 (slice 2), P1-T9 (part) |
 | DB06 [P] | C | Stock functions: create_design and set_sku_status | DB05 | 1.0 | P1-T4/P1-T6 (stock saves) |
 | DB07 [P] | C | Photo storage: bucket and policies | DB03 | 0.5 | P1-T7 |
-| DB08 | B | Pricing functions, quote_bill and the parity test | DB03, FE01 | 1.3 | P2-T1 |
+| DB08 | C | Pricing functions, quote_bill and the parity test | DB03, FE01 | 1.3 | P2-T1 |
 | DB09a | A | The write prologue and create_customer | DB05, DB02 | 0.6 | P2-T1 |
 | DB09b | A | create_bill core without payments (private.create_bill_core) | DB09a, DB08 | 1.2 | P2-T1 |
 | DB10a | A | private.rebalance for money and silver | DB09b | 0.9 | P2-T1 |
@@ -186,12 +186,12 @@ The full text of each task is in `tasks.md`; this is the list. **The unit.** A C
 
 ```
 Agent A (database)      : DB01 > DB02 > DB03 > DB04 > DB05 > DB09a > DB09b > DB10a > DB10b > DB13 > DB14a > DB17a > DB17b > DB18a > DB18c > RV2 > RV3 > CL
-Agent B (front end)     : FE01 > FE02 > DB08 > FE03 > FE04 > FE05 > FE10b > FE04b > FE07a > FE07b > FE08 > FE09 > FE10a > FE11
-Agent C (side, reviews) : DB01b > DB07 > DB06 > DB16 > FE06 > RV1 > DB21a > DB11 > DB12 > DB14b > DB15 > DB20a > DB18b > DB19 > DB20b > DB21
+Agent B (front end)     : FE01 > FE02 > FE03 > FE04 > FE05 > FE10b > FE04b > FE07a > FE07b > FE08 > FE09 > FE10a > FE11
+Agent C (side, reviews) : DB01b > DB08 > DB07 > DB06 > DB16 > FE06 > RV1 > DB21a > DB11 > DB12 > DB14b > DB15 > DB20a > DB18b > DB19 > DB20b > DB21
 Harsh                   : PL01, PL02, PL03 (none blocks DB01 to DB05; assumed done by working day 6)
 ```
 
-If every task had its own agent, the longest chain of dependencies would be **15.4 Claude-days** (DB01 > DB02 > DB03 > DB04 > DB05 > DB09a > DB09b > DB10a > DB10b > FE04b > FE07a > FE07b > FE08 > FE09 > FE11 > RV3 > CL). With three agents and the order above, the last task (CL) finishes on working day **17.3**; agent A is busy 16.1 days, agent B 14.0 and agent C 12.0. Counting Monday to Saturday with Tuesday 20 October (Dussehra) off, one Claude-day per working day, starting Thursday 15 October (the two dates are: Sundays off / Sundays 18 Oct, 25 Oct and 1 Nov worked):
+If every task had its own agent, the longest chain of dependencies would be **15.4 Claude-days** (DB01 > DB02 > DB03 > DB04 > DB05 > DB09a > DB09b > DB10a > DB10b > FE04b > FE07a > FE07b > FE08 > FE09 > FE11 > RV3 > CL). With three agents and the order above, the last task (CL) finishes on working day **17.3**; agent A is busy 16.1 days, agent B 12.7 and agent C 13.3. Counting Monday to Saturday with Tuesday 20 October (Dussehra) off, one Claude-day per working day, starting Thursday 15 October (the two dates are: Sundays off / Sundays 18 Oct, 25 Oct and 1 Nov worked):
 
 | Task | Title | Finishes (working day) | Date |
 |---|---|---|---|
@@ -221,7 +221,7 @@ If every task had its own agent, the longest chain of dependencies would be **15
 
 **Two tripwires.** (1) DB05 (counters, audit, touch triggers) is planned to finish on working day 5.3, Thu 22 Oct / Wed 21 Oct: DB01 to DB05 are the first real measurement of the unit, but they are mostly configuration, so a fast result there proves little. (2) DB10b (`record_payment`) is planned to finish on working day 9.0, Mon 26 Oct / Sat 24 Oct: DB09a to DB10b are 3.8 planned days of real money functions with two-session tests, and that is the measurement to trust. If either took more than 20 percent longer than planned, the orchestrator tells Harsh that go-live moves; if the second took far less, the schedule above is pessimistic.
 
-**What the schedule does not include.** After RV3 `PLAN.md` still needs regression, acceptance by Siddhi's two staff, training and drill 2 (P3-T5 to P3-T8, about 2.7 days) and the fix loop; P3-T1 to P3-T3 (print, rate card, hide screens) and DB19's real data run in the lanes of agents B and C when they are idle (14.0 and 12.0 busy days out of 17.3) but are not scheduled here. `PLAN.md` rule 4 (no change between Thu 29 Oct and Wed 11 Nov) has to be re-cut: this plan's money gate lands around working day 14, after that date. **The honest reading for Harsh:** a go-live on 12 to 16 November is possible only if Sundays are worked, no task slips by more than about 20 percent, and Harsh's own tasks are done by about 21 October; it has no slack. If the tripwire shows a slip, the date to give Siddhi is the week of 16 to 20 November.
+**What the schedule does not include.** After RV3 `PLAN.md` still needs regression, acceptance by Siddhi's two staff, training and drill 2 (P3-T5 to P3-T8, about 2.7 days) and the fix loop; P3-T1 to P3-T3 (print, rate card, hide screens) and DB19's real data run in the lanes of agents B and C when they are idle (12.7 and 13.3 busy days out of 17.3) but are not scheduled here. `PLAN.md` rule 4 (no change between Thu 29 Oct and Wed 11 Nov) has to be re-cut: this plan's money gate lands around working day 14, after that date. **The honest reading for Harsh:** a go-live on 12 to 16 November is possible only if Sundays are worked, no task slips by more than about 20 percent, and Harsh's own tasks are done by about 21 October; it has no slack. If the tripwire shows a slip, the date to give Siddhi is the week of 16 to 20 November.
 
 ## 6. Budget and cut line
 

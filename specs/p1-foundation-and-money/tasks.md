@@ -1,6 +1,6 @@
 # Tasks: P1 foundation and money (the JewelVault backend)
 
-Generated on 2026-10-15 from `_build/p1-plan/plan_data.py` by `build_plan.py`, which also checks every requirement and test of `spec.md` (826 lines) against these tasks, that each test can pass in the task that introduces it, and that every existing file path exists. Days are Claude-days, plus or minus 30 percent (plan section 4). `[P]` marks a task that can run beside the one before it in its lane. "Tests" are spec tests first written (and seen failing) in that task; "extends" are spec tests that task completes a part of; "plan tests" are checks the plan adds because the spec has no test ID for them.
+Generated on 2026-10-15 from `_build/p1-plan/plan_data.py` by `build_plan.py`, which also checks every requirement and test of `spec.md` (827 lines) against these tasks, that each test can pass in the task that introduces it, and that every existing file path exists. Days are Claude-days, plus or minus 30 percent (plan section 4). `[P]` marks a task that can run beside the one before it in its lane. "Tests" are spec tests first written (and seen failing) in that task; "extends" are spec tests that task completes a part of; "plan tests" are checks the plan adds because the spec has no test ID for them.
 
 ## Database
 
@@ -153,7 +153,7 @@ Generated on 2026-10-15 from `_build/p1-plan/plan_data.py` by `build_plan.py`, w
 
 ### DB08 Pricing functions, quote_bill and the parity test
 
-- **Agent:** B   **PLAN.md task:** P2-T1   **Days:** 1.3   **Depends on:** DB03, FE01
+- **Agent:** C   **PLAN.md task:** P2-T1   **Days:** 1.3   **Depends on:** DB03, FE01
 - **Spec lines:** R1, R2, R3, R4, R5, R6, R7, R8, R12, R13, R14, X7
 - **Tests first written here:** T-A01, T-A04, T-A05, T-A07, T-A08, T-A09, T-A10, T-A11, T-A13, T-A14, T-A16, T-A18, T-A19   **Extends:** -   **Plan tests:** -
 - **Do:** Migration 0015: `private.price_line` and `private.price_bill` (version 1), `private.default_rate`, `private.list_prices`, the S4 caps on inputs and on computed amounts, per-line paise rounding, the `before_round >= 0` rule, the round-off setting, the `RATE_MISSING` and `RATE_STALE` warnings, and the read-only `quote_bill` (a definer function with a role check) taking a `p_pricing_version`. Pure functions over `jsonb`, so they are tested without bills. The 200-input parity test compares them with `src/lib/pricing.ts` from FE01.
