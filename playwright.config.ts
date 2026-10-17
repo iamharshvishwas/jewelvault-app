@@ -1,23 +1,26 @@
 import { defineConfig, devices } from '@playwright/test';
+import { lanePorts } from './scripts/e2e-ports.cjs';
 
-// End-to-end tests live in tests/e2e. Installing the packages does not download a browser:
-// run `npx playwright install chromium` once on a machine that will run the tests.
+// End-to-end tests live in tests/e2e. Installing the packages does not download a browser: run
+// `npx playwright install chromium` once on a machine that will run the tests.
 //
-// The dev-server port comes from PORT: scripts/lane.mjs gives every lane its own (main 4028, a 4128, b 4228, c 4328) and
-// writes it to .env.local, so two lanes never meet on one port and a lane never tests another lane's code by reusing
-// its server. Run the tests through the lane so the Supabase URL and key are the lane's too:
-//   LANE=a npm run lane -- run npx playwright test
-const PORT = Number(process.env.PORT || 4028);
-const BASE_URL = `http://localhost:${PORT}`;
+// They run against a lane: a MariaDB container, the API built from JV_API_DIR and three test users, which the global setup starts
+// before the first test and stops after the last (scripts/e2e-lane.mjs, WEB00). Nothing starts unless E2E=1 says so:
+//   LANE=b JV_API_DIR=../jewelvault-api E2E=1 npx playwright test tests/e2e/harness.spec.ts
+//
+// The site's port comes from PORT, else from the lane (main 4028, a 4128, b 4228, c 4328), else 4028; the lane's API listens on the next
+// port. Playwright starts the dev server itself, with the lane's API address as the only build-time variable (H4), and never reuses a
+// server that is already running on that port: a lane never tests another run's code.
+const { web: PORT, webOrigin: BASE_URL, apiOrigin: API_URL } = lanePorts(process.env);
 
 export default defineConfig({
   testDir: './tests/e2e',
   outputDir: './test-results',
-  // Makes the test logins through the local Auth admin API (FE02); it needs the lane's keys, so run `npm run test:e2e`.
+  // Starts the lane, makes the logins of the tests and stops everything again (WEB00).
   globalSetup: './tests/e2e/global-setup.ts',
   // A first request to the dev server compiles the page, which takes several seconds.
   expect: { timeout: 15_000 },
-  // Serial on purpose: the tests of a lane share one local database.
+  // Serial on purpose: the tests of a lane share one database.
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
@@ -28,11 +31,11 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
-  // Playwright starts the dev server itself, and reuses one that is already running on this lane's port.
   webServer: {
     command: 'npm run dev',
     url: BASE_URL,
-    env: { PORT: String(PORT) },
-    reuseExistingServer: !process.env.CI,
+    env: { PORT: String(PORT), NEXT_PUBLIC_API_URL: API_URL },
+    reuseExistingServer: false,
+    timeout: 120_000,
   },
 });
