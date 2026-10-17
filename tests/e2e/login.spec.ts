@@ -534,6 +534,9 @@ test.describe('T-D06 (E2E half): a deactivated user gets 401 at the next call, a
     const user = await makeSettledUser('biller', 'deactivated-midshift');
     await page.clock.install();
     const calls = trackApi(page);
+    // WEB04: the screen polls every 8 seconds, and a poll would meet the 401 before the click of this test does (the poll half of this is tests/e2e/poll.spec.ts). This test is
+    // about the other call, the activity call of a click, so the polls are held: they leave the browser and are never answered.
+    await page.route(`${e2eLane().apiUrl}/v1/sync/poll`, () => undefined);
     await signInAs(page, user);
     expect(await meFromPage(page)).toMatchObject({ status: 200 });
 

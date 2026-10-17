@@ -8,7 +8,14 @@
 // compared as microsecond numbers parsed from the exact text (stamp.ts). A copy with the same stamp replaces it too: it is the same row read a
 // second time, and for the derived resources (bill-summary, customer-balances) the later read is the one worked out last.
 //
+// PENDING (C4, C5 (a)): an ordinary edit marks its row with `hold` for as long as its write is in flight. A copy of that row that arrives in a poll
+// (`merge(..., { polled: true })`) is kept aside and not shown: it must not undo the edit under the person's hands. When the last hold on the row ends the
+// copy that waited is let in by the same rule as any other (the greater `updated_at` stays), so the write's own answer, which has a newer stamp, wins, and a
+// failed write that was rolled back falls back to what somebody else saved meanwhile. The screen's own merges (the optimistic row, the returned row, the
+// rollback) are never held back.
+//
 // CLEAR (U8): the logout hook of the session empties every resource at once. The versions move, so every view made from the rows is made again.
+// Holds and the copies that waited go with it: nothing of the old session comes back.
 import { SYNC_RESOURCES, type SyncResource, type SyncRows } from '@/lib/api/types';
 import { stampMicros } from './stamp';
 
@@ -51,9 +58,28 @@ interface Entry {
   micros: number;
 }
 
+export interface MergeOptions {
+  /** The rows come from a poll: a copy of a row an ordinary edit holds is kept aside until the edit ends (C4, C5 (a)). */
+  polled?: boolean;
+}
+
 export interface RowCache {
-  /** Keeps each row unless a newer copy of its key is held already. Returns how many rows were stored (new or replaced). Throws a CacheDataError for a row it cannot key or order. */
-  merge<R extends SyncResource>(resource: R, rows: readonly SyncRows[R][]): number;
+  /**
+   * Keeps each row unless a newer copy of its key is held already. Returns how many rows were stored (new or replaced). Throws a CacheDataError for a row it cannot key or order.
+   * With `polled`, a row that is held (`hold`) is not stored: its copy waits for the end of the hold.
+   */
+  merge<R extends SyncResource>(
+    resource: R,
+    rows: readonly SyncRows[R][],
+    options?: MergeOptions
+  ): number;
+  /**
+   * C5 (a): an ordinary edit of this row is in flight. Polled copies of the row wait until the returned function is called (twice is the same as once); two edits of one row
+   * hold it until both have ended. A logout drops every hold.
+   */
+  hold(resource: SyncResource, key: string): () => void;
+  /** Is an ordinary edit of this row in flight? */
+  isHeld(resource: SyncResource, key: string): boolean;
   get<R extends SyncResource>(resource: R, key: string): SyncRows[R] | undefined;
   /** Every row of the resource. The same array until the resource changes. */
   rows<R extends SyncResource>(resource: R): readonly SyncRows[R][];
@@ -73,6 +99,12 @@ export function createRowCache(): RowCache {
   const versions = new Map<SyncResource, number>();
   const lists = new Map<SyncResource, { version: number; rows: readonly object[] }>();
   const listeners = new Set<() => void>();
+  /** Edits in flight, by resource and key (how many). */
+  const holds = new Map<SyncResource, Map<string, number>>();
+  /** The newest polled copy of each held row, waiting for the end of the hold. */
+  const waiting = new Map<SyncResource, Map<string, Entry>>();
+  /** Moves on every clear: a release that belongs to an earlier session does nothing. */
+  let generation = 0;
 
   const versionNow = (resource: SyncResource) => versions.get(resource) ?? 0;
   const table = (resource: SyncResource): Map<string, Entry> => {
@@ -87,7 +119,21 @@ export function createRowCache(): RowCache {
     for (const listener of Array.from(listeners)) listener();
   };
 
-  function merge<R extends SyncResource>(resource: R, rows: readonly SyncRows[R][]): number {
+  /** The one rule: a copy goes in unless a newer one is held already (an equal stamp lets the later copy in). */
+  function store(held: Map<string, Entry>, key: string, entry: Entry): boolean {
+    const before = held.get(key);
+    if (before && before.micros > entry.micros) return false;
+    held.set(key, entry);
+    return true;
+  }
+
+  const isHeld = (resource: SyncResource, key: string) => (holds.get(resource)?.get(key) ?? 0) > 0;
+
+  function merge<R extends SyncResource>(
+    resource: R,
+    rows: readonly SyncRows[R][],
+    options: MergeOptions = {}
+  ): number {
     const field = KEY_FIELD[resource];
     const held = table(resource);
     let stored = 0;
@@ -105,10 +151,15 @@ export function createRowCache(): RowCache {
         } catch {
           throw new CacheDataError(resource, 'no readable updated_at');
         }
-        const before = held.get(key);
-        if (before && before.micros > micros) continue; // a newer copy is held already
-        held.set(key, { row: row as object, micros });
-        stored += 1;
+        const entry: Entry = { row: row as object, micros };
+        if (options.polled && isHeld(resource, key)) {
+          // an edit of this row is in flight: keep the newest polled copy aside, show nothing
+          let aside = waiting.get(resource);
+          if (!aside) waiting.set(resource, (aside = new Map()));
+          store(aside, key, entry);
+          continue;
+        }
+        if (store(held, key, entry)) stored += 1;
       }
     } finally {
       // also when a later row of the batch is refused: what was stored before it is in memory, so the versions must say so
@@ -120,8 +171,37 @@ export function createRowCache(): RowCache {
     return stored;
   }
 
+  function hold(resource: SyncResource, key: string): () => void {
+    let counts = holds.get(resource);
+    if (!counts) holds.set(resource, (counts = new Map()));
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    const mine = generation;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (mine !== generation) return; // the session it belonged to has ended
+      const now = (counts.get(key) ?? 1) - 1;
+      if (now > 0) {
+        counts.set(key, now);
+        return;
+      }
+      counts.delete(key);
+      const aside = waiting.get(resource);
+      const copy = aside?.get(key);
+      if (!aside || !copy) return;
+      aside.delete(key);
+      if (store(table(resource), key, copy)) {
+        versions.set(resource, versionNow(resource) + 1);
+        tell();
+      }
+    };
+  }
+
   return {
     merge,
+    hold,
+    isHeld,
     get: (resource, key) => tables.get(resource)?.get(key)?.row as never,
     rows: (resource) => {
       const version = versionNow(resource);
@@ -138,6 +218,9 @@ export function createRowCache(): RowCache {
       return total;
     },
     clear: () => {
+      generation += 1;
+      holds.clear();
+      waiting.clear();
       let emptied = false;
       for (const resource of SYNC_RESOURCES) {
         const held = tables.get(resource);

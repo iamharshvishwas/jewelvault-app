@@ -7,6 +7,7 @@ import MobileNav from './MobileNav';
 import Topbar from './Topbar';
 import LoginScreen from './LoginScreen';
 import ChangePasswordScreen from './ChangePasswordScreen';
+import ConnectionBanner from './ConnectionBanner';
 import { PREVIEW_MODE, canAccessPath, retrySession, signOut, useSession } from '@/lib/authStore';
 import {
   isGateOpen,
@@ -27,6 +28,8 @@ interface AppLayoutProps {
 // for one kind of person: a user whose password is still the temporary one sees the change-password screen and nothing else (U11).
 // `epoch` goes up each time the gate is opened for a person and a role (a login, start-up, a change of role): the page body is
 // keyed on it, so that a role that changed in the middle of a shift starts the page afresh instead of keeping what the old role saw.
+// WEB04 (C4, C7): once the gate is open the poller (src/lib/cache/poll.ts, started by importing it through ConnectionBanner) brings in what other people changed, and the banner
+// at the top says when the server cannot be reached or is waking up.
 // WEB03 (C2): between the login and the app stands the data gate. A signed-in person sees no data page until the first full hydrate of THIS role in THIS
 // epoch has finished (src/lib/cache/hydrate.ts): "3 of 8 tables" while it runs, the plain message and a retry button if it fails, never sample data and
 // never an empty list. The load lives at module level, so moving from page to page (each page wraps itself in this layout) never loads again.
@@ -91,6 +94,8 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
+        {/* C7: "Offline: changes cannot be saved" or "Waking up…"; every Save control is off while it shows */}
+        <ConnectionBanner />
         <Topbar onMenuClick={() => setSidebarCollapsed((p) => !p)} session={session} />
         <main className="flex-1 overflow-y-auto scrollbar-thin">
           <div

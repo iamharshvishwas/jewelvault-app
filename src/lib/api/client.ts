@@ -14,7 +14,9 @@
 //   - a gateway error, or any reply that is not JSON (an idle app being started, H7), is "Waking up": the call is retried 1, 2, 4, 8 and 15 seconds later, 30 seconds in all,
 //     with the same key (C7). A network failure is "Offline" at once and is not retried here; the poller backs off 8, 16, then 30 seconds (`nextPollDelayMs`);
 //   - `me` carries the SHA-256 of the API's pricing.ts; it is compared with the build's own, and a mismatch means Save on bills stays off (C12);
-//   - a 401 runs the hook of the session gate (U6), except the wrong password of the login screen.
+//   - a 401 runs the hook of the session gate (U6), except the wrong password of the login screen;
+//   - a call that saves data tells, when it is over (it worked or it did not), whoever asked to hear it (`onWriteFinished`): the poller of WEB04 polls at once after any write
+//     the screen made (C4).
 //
 // The module keeps no state of its own besides the connection banner and the pricing check; the session itself (who is signed in) is authStore's (WEB02).
 import { BUILD_PRICING_SHA256 } from './pricingHash';
@@ -473,6 +475,7 @@ export function createApiClient(config: ApiClientConfig = {}) {
   // ---- the hooks
   const unauthorizedHooks = new Set<(error: ApiError) => void>();
   const unconfirmedHooks = new Set<(save: UnconfirmedSave) => void>();
+  const writeFinishedHooks = new Set<(value: undefined) => void>();
   function runHooks<T>(hooks: Set<(value: T) => void>, value: T, what: string): void {
     for (const hook of Array.from(hooks)) {
       try {
@@ -483,10 +486,31 @@ export function createApiClient(config: ApiClientConfig = {}) {
     }
   }
 
+  /**
+   * One call, with everything the client promises. `sent` is set at the first try that leaves for the server, so that a call refused before any I/O (a bad path, a number in a
+   * money field) is not taken for a write that happened.
+   */
   async function request<T>(
     method: HttpMethod,
     path: string,
     options: RequestOptions = {}
+  ): Promise<T> {
+    const trace = { sent: false };
+    try {
+      return await attempt<T>(method, path, options, trace);
+    } finally {
+      // C4: the screen polls at once after any write it made, whatever became of it (a failed write may still have changed something). A read, a poll and the
+      // session calls save nothing and are not one.
+      if (trace.sent && method !== 'GET' && options.readOnly !== true)
+        runHooks(writeFinishedHooks, undefined, 'write-finished');
+    }
+  }
+
+  async function attempt<T>(
+    method: HttpMethod,
+    path: string,
+    options: RequestOptions,
+    trace: { sent: boolean }
   ): Promise<T> {
     // ---- everything that can be wrong with the CALLER is found before any I/O
     if (
@@ -575,6 +599,7 @@ export function createApiClient(config: ApiClientConfig = {}) {
       let response: Response;
       let reply: Reply;
       try {
+        trace.sent = true;
         response = await fetchFn(url, {
           method,
           headers,
@@ -746,6 +771,13 @@ export function createApiClient(config: ApiClientConfig = {}) {
       unconfirmedHooks.add(hook);
       return () => {
         unconfirmedHooks.delete(hook);
+      };
+    },
+    /** A call that saves data is over, however it ended (C4): the poller polls at once. Runs once for the call, not for each of its tries. */
+    onWriteFinished: (hook: () => void) => {
+      writeFinishedHooks.add(hook);
+      return () => {
+        writeFinishedHooks.delete(hook);
       };
     },
   };
