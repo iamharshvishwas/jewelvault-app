@@ -462,8 +462,9 @@ test.describe('T-E05: the data gate (C2, C8, U7, U8)', () => {
       await expect(page.getByRole('heading', { name: 'Daily Metal Rates' })).toBeVisible({
         timeout: 2000,
       });
-      await expect(page.getByLabel('Gold Rate (per gram)')).toHaveValue('7350');
-      await expect(page.getByLabel('Silver Rate (per gram)')).toHaveValue('88.5');
+      // WEB05: a rate for each purity, shown as the server stores it (the day's row, or the last rate before the day to start from)
+      await expect(page.getByLabel('Gold 22K rate (per gram)')).toHaveValue('7350.00');
+      await expect(page.getByLabel('Silver 925 rate (per gram)')).toHaveValue('88.50');
       await logout(page);
 
       for (const role of ['biller', 'staff'] as const) {

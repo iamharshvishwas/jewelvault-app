@@ -442,14 +442,15 @@ describe("T-E01 (clause): the owner's rate card reads the rates from memory as s
 });
 
 describe('T-E05 a change that cannot be saved yet is refused, never shown as if it were saved (C5, C8)', () => {
-  it('every writing function of the three stores says so and changes nothing, and nothing goes to the browser', async () => {
+  // WEB05 put the ordinary edits on the API (tests/unit/stores.test.ts): upsertDesign, renameSubcategory, removeSubcategory and saveSettings are writes now.
+  // What is left says "cannot be saved yet" until the task that owns it (WEB06: a new design, a status, a removal; WEB08: the sale) puts it on the API.
+  it('every writing function that is not on the API yet says so and changes nothing, and nothing goes to the browser', async () => {
     const { fake, cache, designs, catalog, settings } = await load();
     fillStock(cache);
     const before = designs.getDesigns();
     const design = before[0];
     const attempts: Array<[string, () => unknown]> = [
       ['addDesign', () => designs.addDesign(design)],
-      ['upsertDesign', () => designs.upsertDesign(design)],
       ['removeDesign', () => designs.removeDesign(design.id)],
       ['removeDesigns', () => designs.removeDesigns(new Set([design.id]))],
       ['clearInventory', () => designs.clearInventory()],
@@ -458,10 +459,7 @@ describe('T-E05 a change that cannot be saved yet is refused, never shown as if 
       ['resetLocalDesignData', () => designs.resetLocalDesignData()],
       ['addCategory', () => catalog.addCategory('Anklet')],
       ['addSubcategory', () => catalog.addSubcategory('Ring', 'Plain')],
-      ['renameSubcategory', () => catalog.renameSubcategory('Ring', 'Kundan', 'Kundan 2')],
-      ['removeSubcategory', () => catalog.removeSubcategory('Ring', 'Kundan')],
       ['clearAllSubcategories', () => catalog.clearAllSubcategories()],
-      ['saveSettings', () => settings.saveSettings(settings.getSettings())],
       ['resetSettings', () => settings.resetSettings()],
     ];
     for (const [name, attempt] of attempts) {
@@ -485,12 +483,15 @@ describe('T-E05 a preview build keeps the screens alive with sample data, as bef
     expect(app.getCustomers().length).toBe(mock.MOCK_CUSTOMERS.length);
   });
 
-  it('a preview writes its sample data to this browser only, which its banner says; the cache plays no part', async () => {
+  it('a preview changes its sample data in this page only: nothing goes to browser storage, and the cache plays no part (WEB05)', async () => {
     const { fake, designs, cache } = await load({ preview: true });
     const first = designs.getDesigns()[0];
     designs.updateSkuStatus(first.skus[0].id, 'Reserved');
     expect(designs.getDesigns()[0].skus[0].status).toBe('Reserved');
-    expect(fake.touched.some((t) => t === 'set jaishri.designs.v1')).toBe(true);
+    // the stock side keeps nothing in storage (the money side, appStore, still reads its own old keys in a preview: WEB07)
+    expect(fake.touched.filter((t) => /designs|categories|subcategories|settings/.test(t))).toEqual(
+      []
+    );
     expect(cache.size()).toBe(0);
   });
 });

@@ -10,17 +10,19 @@ import {
 import { DEFAULT_CATEGORIES, DEFAULT_CATEGORY_PREFIXES } from '@/lib/catalogStore';
 import type { DailyRateRow, UserRow } from '@/lib/api/types';
 import { rowCache, savingNotAvailable } from '@/lib/cache/cache';
+import { SaveError, editRow, insertRow, putSettingValue, sameDecimal } from '@/lib/cache/edit';
 import { stampMicros } from '@/lib/cache/stamp';
 import { PREVIEW_MODE } from '@/lib/previewMode';
 
-// Task WEB03. In a real build (spec C2, C8, C9) the settings of the screens are made from the rows the hydrate put in memory: one row per key in
-// `settings`, the people from `users`, the category prefixes from `categories` and the rates from `daily_rates` (D3, D20). `getSettings()` answers from memory
-// after the loading gate, reads no browser storage, and never returns the prototype's DEFAULT_SETTINGS values for a number the shop owns: a rate with no row is 0,
-// not the prototype's 6,920. A role that reads fewer keys (staff read seven, A4) gets the prototype's labels for the sections it does not read. A change cannot be
-// saved yet (WEB05 puts settings and rates on the API), so `saveSettings` and `resetSettings` say so and change nothing. In a preview build (until WEB15) the
-// store is the prototype's, kept in this browser only.
-
-const SETTINGS_KEY = 'jaishri.settings.v1';
+// The settings of the screens, and the daily rates.
+//   - In a real build (spec C2, C8, C9) `getSettings()` is made from the rows the hydrate put in memory: one row per key in `settings`, the people from `users`, the category
+//     prefixes from `categories` and the rates from `daily_rates` (D3, D20). It answers from memory after the loading gate, reads no browser storage, and never returns the
+//     prototype's DEFAULT_SETTINGS values for a number the shop owns: a rate with no row is 0, not the prototype's 6,920. A role that reads fewer keys (staff read seven, A4)
+//     gets the prototype's labels for the sections it does not read.
+//   - Task WEB05 (C5 (a)) puts the changes on the API. `saveSettings` writes each section that changed as ONE row, `PUT /v1/settings/<key>` with `{ value }`: the last write wins,
+//     so there is no stale check and nothing is reloaded on a conflict; memory shows the new value at once and goes back if the write fails. The people (`users`) are not a
+//     setting: logins are made with the admin tool. The rates are not settings either: `saveDailyRates` writes `daily_rates` rows (D4, Y8).
+//   - In a preview build (until WEB15) the store is the prototype's, in this page only. Nothing is kept in browser storage in either.
 
 export interface MaterialSetting {
   name: string;
@@ -155,10 +157,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
 };
 
-function canUseStorage() {
-  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
-}
-
 function mergeSettings(saved: Partial<AppSettings>): AppSettings {
   return {
     ...DEFAULT_SETTINGS,
@@ -285,33 +283,256 @@ function buildSettings(): AppSettings {
   };
 }
 
+// the preview's own settings, in this page only
+let previewSettings: AppSettings = DEFAULT_SETTINGS;
+
 export function getSettings(): AppSettings {
-  if (!PREVIEW_MODE) {
-    const version = rowCache.versionOf('settings', 'daily-rates', 'categories', 'users');
-    if (cachedSettings && cachedSettings.version === version) return cachedSettings.value;
-    const value = buildSettings();
-    cachedSettings = { version, value };
-    return value;
-  }
-  if (!canUseStorage()) return DEFAULT_SETTINGS;
-  const saved = window.localStorage.getItem(SETTINGS_KEY);
-  if (!saved) return DEFAULT_SETTINGS;
-  try {
-    return mergeSettings(JSON.parse(saved) as Partial<AppSettings>);
-  } catch {
-    return DEFAULT_SETTINGS;
+  if (PREVIEW_MODE) return previewSettings;
+  const version = rowCache.versionOf('settings', 'daily-rates', 'categories', 'users');
+  if (cachedSettings && cachedSettings.version === version) return cachedSettings.value;
+  const value = buildSettings();
+  cachedSettings = { version, value };
+  return value;
+}
+
+/** The stock locations of the shop (the setting `locations`, D3): the places a piece can be. Empty when the role does not read them or none are set. */
+export function getLocations(): string[] {
+  if (PREVIEW_MODE) return ['Main Showroom', 'Jaishri Vault', 'Workshop', 'Exhibition'];
+  const value = setting('locations');
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+}
+
+// ── saving the settings (WEB05) ──────────────────────────────────────────────
+
+/** The sections of `AppSettings` that are one row each in `settings`, and the key of the row. The people and the rates are rows of other tables. */
+const SECTION_KEYS = {
+  materials: 'materials',
+  customFields: 'custom_fields',
+  tagTemplate: 'tag_template',
+  estimate: 'estimate',
+  taxes: 'taxes',
+  numbering: 'numbering',
+  business: 'business',
+} as const;
+type SettingsSection = keyof typeof SECTION_KEYS;
+const SECTIONS = Object.keys(SECTION_KEYS) as SettingsSection[];
+
+/** The same JSON value, whatever the order of the keys of an object. */
+function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a) && Array.isArray(b))
+    return a.length === b.length && a.every((item, i) => sameJson(item, b[i]));
+  const x = a as Record<string, unknown>;
+  const y = b as Record<string, unknown>;
+  const keys = Object.keys(x);
+  return (
+    keys.length === Object.keys(y).length &&
+    keys.every((key) => Object.hasOwn(y, key) && sameJson(x[key], y[key]))
+  );
+}
+
+/**
+ * The value of the row of a section: what the screen holds, minus what is not part of the row (the rates of the estimate are `daily_rates`, the category prefixes are
+ * `categories`), over what the row holds now, so that a key this screen does not know is kept (the last write wins and must not lose the owner's other keys).
+ */
+function valueOfSection(section: SettingsSection, next: AppSettings): object {
+  const stored = objectOf(setting(SECTION_KEYS[section]));
+  switch (section) {
+    case 'materials':
+      return next.materials;
+    case 'customFields':
+      return next.customFields;
+    case 'estimate': {
+      const { defaultGoldRate: _gold, defaultSilverRate: _silver, ...rest } = next.estimate;
+      return { ...stored, ...rest };
+    }
+    case 'numbering': {
+      const { categoryPrefixes: _prefixes, ...rest } = next.numbering;
+      return { ...stored, ...rest };
+    }
+    case 'taxes':
+      return { ...stored, ...next.taxes, estimateTaxPercent: 0 };
+    default:
+      return { ...stored, ...next[section] };
   }
 }
 
-export function saveSettings(next: AppSettings): AppSettings {
-  if (!PREVIEW_MODE) throw savingNotAvailable('A change to the settings');
-  const normalized = mergeSettings(next);
-  if (canUseStorage()) window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(normalized));
-  return normalized;
+/**
+ * Saves the sections of the settings that changed, each as one row, one after another. Memory shows a section at once and goes back if its write fails; the first failure stops
+ * the rest. Resolves with the settings as they are then; throws a SaveError (`saved` counts the sections written). A preview changes its own settings.
+ */
+export async function saveSettings(next: AppSettings): Promise<AppSettings> {
+  if (PREVIEW_MODE) {
+    previewSettings = mergeSettings(next);
+    return previewSettings;
+  }
+  const current = getSettings();
+  let saved = 0;
+  for (const section of SECTIONS) {
+    if (sameJson(current[section], next[section])) continue;
+    try {
+      await putSettingValue(SECTION_KEYS[section], valueOfSection(section, next));
+      saved += 1;
+    } catch (error) {
+      throw new SaveError(error, { saved });
+    }
+  }
+  return getSettings();
 }
 
 export function resetSettings(): AppSettings {
   if (!PREVIEW_MODE) throw savingNotAvailable('Resetting the settings');
-  if (canUseStorage()) window.localStorage.removeItem(SETTINGS_KEY);
-  return DEFAULT_SETTINGS;
+  previewSettings = DEFAULT_SETTINGS;
+  return previewSettings;
+}
+
+// ── the daily rates (WEB05, D4, R2, Y8) ──────────────────────────────────────
+
+/** Today in the shop's time zone, `YYYY-MM-DD` (S5). The API decides what today is; this is what the screen offers. */
+export function businessToday(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
+
+export type RateMaterial = DailyRateRow['material'];
+
+/** One purity of one material on the rate card: its rate for the day if there is one, else the last rate before the day (to start from). */
+export interface RateEntry {
+  material: RateMaterial;
+  purity: string;
+  row: DailyRateRow | undefined;
+  suggestion: DailyRateRow | undefined;
+}
+
+// the preview's sample rates, in this page only
+const previewRates: DailyRateRow[] = PREVIEW_MODE
+  ? [
+      ['Gold', '22K', '6920.00'],
+      ['Silver', '925', '88.00'],
+    ].map(([material, purity, rate], n) => ({
+      id: `preview-rate-${n + 1}`,
+      material: material as RateMaterial,
+      purity,
+      rate_per_gram: rate,
+      rate_date: businessToday(),
+      confirmed_by: null,
+      created_at: '2026-01-01T00:00:00.000000Z',
+      updated_at: '2026-01-01T00:00:00.000000Z',
+      created_by: null,
+      updated_by: null,
+    }))
+  : [];
+
+const rateRows = (): readonly DailyRateRow[] =>
+  PREVIEW_MODE ? previewRates : rowCache.rows('daily-rates');
+
+/** The rate card for a day: each purity of Gold and Silver in the materials setting, with its rate for the day and the last rate before it. */
+export function getRateSheet(date: string): RateEntry[] {
+  const rows = rateRows();
+  const out: RateEntry[] = [];
+  for (const material of getSettings().materials) {
+    if (material.name !== 'Gold' && material.name !== 'Silver') continue;
+    for (const purity of material.purities) {
+      let row: DailyRateRow | undefined;
+      let suggestion: DailyRateRow | undefined;
+      for (const rate of rows) {
+        if (rate.material !== material.name || rate.purity !== purity) continue;
+        if (rate.rate_date === date) row = rate;
+        else if (rate.rate_date < date && (!suggestion || rate.rate_date > suggestion.rate_date))
+          suggestion = rate;
+      }
+      out.push({ material: material.name, purity, row, suggestion });
+    }
+  }
+  return out;
+}
+
+export interface RateInput {
+  material: RateMaterial;
+  purity: string;
+  /** What the person typed: an amount above 0 with at most two decimals. */
+  rate: string;
+}
+
+function rateText(entry: RateInput): string {
+  const text = entry.rate.trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(text) || !/[1-9]/.test(text))
+    throw new Error(
+      `The ${entry.material} ${entry.purity} rate must be an amount above 0 with at most two decimals, such as 7350.50.`
+    );
+  const [whole, fraction = ''] = text.split('.');
+  return `${whole.replace(/^0+(?=\d)/, '')}.${fraction.padEnd(2, '0')}`;
+}
+
+/**
+ * Saves the rates of one day (D4): a rate for a purity with no row that day is a NEW row (shown when the server has made it, C11); a rate that has a row is corrected by an
+ * ordinary edit of `rate_per_gram`, shown at once; one that did not change is not sent. One after another; the first failure stops the rest and names the purity. The API decides
+ * who may do what: the owner any day up to today and may correct today's, a biller today's only and no correction (Y8). Resolves with how many rates were written; throws a
+ * SaveError, or an Error before any call for a rate that is not an amount.
+ */
+export async function saveDailyRates(date: string, entries: readonly RateInput[]): Promise<number> {
+  const planned = entries.map((entry) => ({ entry, text: rateText(entry) }));
+  if (PREVIEW_MODE) {
+    let written = 0;
+    for (const { entry, text } of planned) {
+      const at = previewRates.findIndex(
+        (r) => r.rate_date === date && r.material === entry.material && r.purity === entry.purity
+      );
+      if (at >= 0) {
+        if (!sameDecimal(previewRates[at].rate_per_gram, text)) {
+          previewRates[at] = { ...previewRates[at], rate_per_gram: text };
+          written += 1;
+        }
+      } else {
+        previewRates.push({
+          ...previewRates[0],
+          id: `preview-rate-${previewRates.length + 1}`,
+          material: entry.material,
+          purity: entry.purity,
+          rate_per_gram: text,
+          rate_date: date,
+        });
+        written += 1;
+      }
+    }
+    return written;
+  }
+  let written = 0;
+  for (const { entry, text } of planned) {
+    const label = `${entry.material} ${entry.purity}`;
+    try {
+      const existing = rowCache
+        .rows('daily-rates')
+        .find(
+          (r) => r.rate_date === date && r.material === entry.material && r.purity === entry.purity
+        );
+      if (existing) {
+        if (sameDecimal(existing.rate_per_gram, text)) continue;
+        await editRow({
+          resource: 'daily-rates',
+          id: existing.id,
+          changes: { rate_per_gram: text },
+        });
+      } else {
+        await insertRow('daily-rates', {
+          material: entry.material,
+          purity: entry.purity,
+          rate_per_gram: text,
+          rate_date: date,
+        });
+      }
+      written += 1;
+    } catch (error) {
+      throw new SaveError(error, { saved: written, label });
+    }
+  }
+  return written;
 }
