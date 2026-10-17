@@ -7,7 +7,8 @@ const projectRoot = dirname(fileURLToPath(import.meta.url));
 const nextConfig = {
   // Static export: `next build` writes plain HTML, CSS and JS into out/.
   // No Node server is needed to host it. Server-only features (rewrites, redirects,
-  // custom headers, proxy, Server Actions, the default image optimiser) do not exist here.
+  // custom headers, proxy, Server Actions, the default image optimiser) do not exist here: the security headers are in vercel.json (spec H1),
+  // and scripts/check-build.mjs (npm run check:build) checks the output of this build (spec H2 to H4, C10).
   // Docs: node_modules/next/dist/docs/01-app/02-guides/static-exports.md
   output: 'export',
 

@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "next dev -p ${PORT:-4028}",
     "build": "next build",
+    "check:build": "node scripts/check-build.mjs",
     "typecheck": "next typegen && tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
