@@ -1,8 +1,14 @@
 'use client';
 
-import type { DesignRow, SkuRow } from '@/lib/api/types';
+import type {
+  CreateDesignResponse,
+  DesignRow,
+  SetSkuStatusResponse,
+  SkuRow,
+} from '@/lib/api/types';
 import { rowCache, savingNotAvailable } from './cache/cache';
 import {
+  SaveError,
   beginEdits,
   decimalText,
   sameDecimal,
@@ -10,7 +16,9 @@ import {
   type EditSpec,
   type EditableResource,
 } from './cache/edit';
+import { sendCreateDesign, sendSkuStatus } from './cache/stock';
 import { stampMicros } from './cache/stamp';
+import { PHOTO_RULES, photoUrl, uploadPhoto, type PhotoToUpload } from './photos';
 import {
   MOCK_DESIGNS,
   type Design,
@@ -27,8 +35,10 @@ import { PREVIEW_MODE } from './previewMode';
 //     from memory after the loading gate, the list is the same array until a row it is made of changes, and nothing is read from or written to browser storage.
 //     Before the gate has opened, or after a logout, memory is empty and so is the list: there is never sample data (D20);
 //   - the ordinary edit of a design and its pieces (`upsertDesign`, WEB05, C5 (a)) is shown in memory at once and written to the API: one write for each row that
-//     changed, with only the fields that changed and the exact `updated_at` text of the row the person started from (src/lib/cache/edit.ts). A new design, a change of
-//     status and a removal are the functions of WEB06 (X8, X9): until then those say they cannot be saved yet and change nothing;
+//     changed, with only the fields that changed and the exact `updated_at` text of the row the person started from (src/lib/cache/edit.ts);
+//   - a NEW design (`createDesign`, WEB06, X8) uploads its photos first and then makes one call with the ids and the person's own entries: nothing is shown until the API has
+//     answered, with ITS design number, piece numbers and barcodes (L3, C11); a change of status (`setSkuStatus`, WEB06, X9) is one call for the pieces asked, shown the same
+//     way. A removal, and the Sold of the billing screen (WEB08), still say they cannot be saved yet and change nothing;
 //   - in a preview build (src/lib/previewMode.ts, until WEB15) the store is the prototype's: sample data, in this page only. Nothing is kept in browser storage in either.
 // The shapes are the prototype's (src/lib/mockData.ts): weights and amounts are numbers made from the API's text, for display; money is never worked out from them.
 
@@ -148,6 +158,23 @@ const stampOrZero = (stamp: string): number => {
   }
 };
 
+/**
+ * The pictures of a design from the photo ids it holds (P4): the gallery gets the full pictures, a list the 320 px thumbnail of the primary photo, all on the API's origin. The
+ * primary photo comes first. A design with no photo shows the placeholder.
+ */
+function photosOf(row: DesignRow): Pick<Design, 'images' | 'thumbs' | 'primaryImage'> {
+  const ids = Array.isArray(row.photo_ids) ? row.photo_ids : [];
+  if (ids.length === 0) return { images: [NO_IMAGE], thumbs: [NO_IMAGE], primaryImage: NO_IMAGE };
+  const primary =
+    row.primary_photo_id && ids.includes(row.primary_photo_id) ? row.primary_photo_id : ids[0];
+  const ordered = [primary, ...ids.filter((id) => id !== primary)];
+  return {
+    images: ordered.map((id) => photoUrl(id, 'full')),
+    thumbs: ordered.map((id) => photoUrl(id, 'thumb')),
+    primaryImage: photoUrl(primary, 'thumb'),
+  };
+}
+
 function makeSku(
   row: SkuRow,
   design: DesignRow,
@@ -226,9 +253,7 @@ function buildView(): StockView {
       description: row.description ?? '',
       notes: row.notes ?? '',
       tags: Array.isArray(row.tags) ? row.tags : [],
-      // photos are WEB06's: until then every design shows the placeholder image
-      images: [NO_IMAGE],
-      primaryImage: NO_IMAGE,
+      ...photosOf(row),
       skus,
       createdAt: toIso(row.created_at),
       createdBy: (row.created_by && people.get(row.created_by)) || '',
@@ -448,6 +473,263 @@ export async function upsertDesign(design: Design, base?: Design): Promise<numbe
       });
   }
   return sendEdits(beginEdits(specs));
+}
+
+// ── a new design (WEB06, X8) ─────────────────────────────────────────────────────────────────────
+
+/** What the person typed for one group of identical pieces on the Add Design screen: text as typed, `pieces` as a whole number. */
+export interface PieceGroupInput {
+  pieces: number;
+  grossWeight: string;
+  /** The owner's own weight (D9). Only the owner's screen has the field; the API refuses it from anybody else. */
+  originalNetWeight: string;
+  customerNetWeight: string;
+  stones: string;
+  stoneWeight: string;
+  kundan: string;
+  kundanWeight: string;
+  piroi: string;
+  retailLabour: string;
+  semiWholesaleLabour: string;
+  wholesaleLabour: string;
+  notes: string;
+}
+
+export interface NewDesignInput {
+  /** Made by the page before the first upload (P2): the photos are stored under it. */
+  designId: string;
+  designName: string;
+  category: string;
+  subcategory: string;
+  material: string;
+  purity: string;
+  sellingMethod: string;
+  description: string;
+  tags: string[];
+  notes: string;
+  /** In the order they are attached. Each was given its id by the page. */
+  photos: PhotoToUpload[];
+  primaryPhotoId: string | null;
+  groups: PieceGroupInput[];
+}
+
+/** What the API made, for the screen to show: ITS numbers (L3, C11). */
+export interface CreatedDesign {
+  designId: string;
+  designNumber: string;
+  pieces: Array<{ id: string; skuNumber: string; barcode: string }>;
+}
+
+const MAX_PIECES_PER_GROUP = 100;
+const MAX_PIECES_PER_CALL = 500;
+
+const refused = (message: string) => new SaveError(new Error(message));
+
+/** A blank is absent; otherwise plain decimal text with the scale of the column. A number with more decimals than the column has is refused, never rounded (S3). */
+function decimalField(text: string, scale: number, label: string): string | undefined {
+  const clean = text.trim();
+  if (clean === '') return undefined;
+  const match = /^(\d*)(?:\.(\d+))?$/.exec(clean);
+  if (!match || (match[1] === '' && match[2] === undefined))
+    throw refused(`${label} must be a number such as 12.5. Nothing was changed.`);
+  const fraction = match[2] ?? '';
+  if (fraction.length > scale)
+    throw refused(`${label} can have at most ${scale} decimals. Nothing was changed.`);
+  return `${match[1] || '0'}.${fraction.padEnd(scale, '0')}`;
+}
+
+function countField(text: string, label: string): number | undefined {
+  const clean = text.trim();
+  if (clean === '') return undefined;
+  if (!/^\d+$/.test(clean)) throw refused(`${label} must be a whole number. Nothing was changed.`);
+  return Number(clean);
+}
+
+/** One group of the screen as the API takes it (X8 `pieces[]`): only what was typed, so a blank rate is absent and the API fills it (R1). */
+function pieceGroupBody(
+  group: PieceGroupInput,
+  at: number,
+  rateWord: string
+): Record<string, unknown> {
+  const where = `Group ${at + 1}, `;
+  if (!Number.isInteger(group.pieces) || group.pieces < 1)
+    throw refused(
+      `${where}pieces must be a whole number from 1 to ${MAX_PIECES_PER_GROUP}. Nothing was changed.`
+    );
+  if (group.pieces > MAX_PIECES_PER_GROUP)
+    throw refused(`${where}pieces can be at most ${MAX_PIECES_PER_GROUP}. Nothing was changed.`);
+  const body: Record<string, unknown> = { pieces: group.pieces };
+  const set = (name: string, value: unknown) => {
+    if (value !== undefined) body[name] = value;
+  };
+  set('gross_weight', decimalField(group.grossWeight, 3, `${where}gross weight`));
+  set(
+    'original_net_weight',
+    decimalField(group.originalNetWeight, 3, `${where}original net weight`)
+  );
+  set(
+    'customer_net_weight',
+    decimalField(group.customerNetWeight, 3, `${where}customer net weight`)
+  );
+  set('stones', countField(group.stones, `${where}stones`));
+  set('stone_weight', decimalField(group.stoneWeight, 3, `${where}stone weight`));
+  set('kundan', countField(group.kundan, `${where}kundan`));
+  set('kundan_weight', decimalField(group.kundanWeight, 3, `${where}kundan weight`));
+  set('piroi', decimalField(group.piroi, 2, `${where}piroi`));
+  set('labour_retail', decimalField(group.retailLabour, 2, `${where}retail ${rateWord}`));
+  set(
+    'labour_semi',
+    decimalField(group.semiWholesaleLabour, 2, `${where}semi-wholesale ${rateWord}`)
+  );
+  set('labour_wholesale', decimalField(group.wholesaleLabour, 2, `${where}wholesale ${rateWord}`));
+  const notes = group.notes.trim();
+  if (notes !== '') body.notes = notes;
+  return body;
+}
+
+/**
+ * The body of X8 from what the person typed. It holds the ids the page made (the design's and its photos'), the entries, and nothing the API makes: no design number, piece
+ * number, barcode, status, location, stamp or person (L3, C11); no image text, only photo ids (P4). Throws a SaveError for text that is not a number, before any call.
+ */
+export function createDesignBody(input: NewDesignInput): Record<string, unknown> {
+  if (input.groups.length === 0) throw refused('Add at least one piece. Nothing was changed.');
+  if (input.photos.length > PHOTO_RULES.maxPerDesign)
+    throw refused(
+      `A design can have at most ${PHOTO_RULES.maxPerDesign} photos. Nothing was changed.`
+    );
+  const total = input.groups.reduce((sum, group) => sum + group.pieces, 0);
+  if (total > MAX_PIECES_PER_CALL)
+    throw refused(
+      `At most ${MAX_PIECES_PER_CALL} pieces can be made at once. Nothing was changed.`
+    );
+  const rateWord = input.sellingMethod === 'Per Piece' ? 'rate' : 'labour';
+  const pieces = input.groups.map((group, at) => pieceGroupBody(group, at, rateWord));
+
+  const design: Record<string, unknown> = {
+    category_id: categoryIdOf(input.category),
+    material: input.material,
+    purity: input.purity.trim(),
+    selling_method: input.sellingMethod,
+  };
+  const subcategory = subcategoryIdOf(input.category, input.subcategory);
+  if (subcategory !== null) design.subcategory_id = subcategory;
+  const name = trimmedOrNull(input.designName);
+  if (name !== null) design.name = name;
+  const description = trimmedOrNull(input.description);
+  if (description !== null) design.description = description;
+  const notes = trimmedOrNull(input.notes);
+  if (notes !== null) design.notes = notes;
+  if (input.tags.length > 0) design.tags = input.tags;
+  if (input.photos.length > 0) {
+    design.photo_ids = input.photos.map((photo) => photo.photoId);
+    design.primary_photo_id = input.primaryPhotoId ?? input.photos[0].photoId;
+  }
+  return { design_id: input.designId, design, pieces };
+}
+
+/**
+ * Makes a design with its pieces (X8). The photos go up first, one after another (the full picture, then the thumbnail, under the design's id: P2); a photo already stored for
+ * this design id is not sent again, so a second Save sends only what is missing. Then ONE call carries the ids and the entries with an Idempotency-Key. Nothing is shown until
+ * the API has answered; then its design, pieces and (for the owner) their weights go into memory. `idempotencyKey` is the key of an earlier try of the SAME save that could not
+ * be confirmed (`ApiError.idempotencyKey`): the answer that was lost comes back, and one design is made. Throws a SaveError.
+ */
+export async function createDesign(
+  input: NewDesignInput,
+  options: { idempotencyKey?: string; onProgress?: (message: string) => void } = {}
+): Promise<CreatedDesign> {
+  if (PREVIEW_MODE) throw savingNotAvailable('A new design');
+  const body = createDesignBody(input); // everything that can be refused is refused before anything goes out
+  const session = rowCache.generation();
+  for (const [at, photo] of input.photos.entries()) {
+    options.onProgress?.(`Uploading photo ${at + 1} of ${input.photos.length}…`);
+    try {
+      await uploadPhoto(input.designId, photo);
+    } catch (error) {
+      throw new SaveError(error, { label: input.photos.length > 1 ? `Photo ${at + 1}` : null });
+    }
+  }
+  options.onProgress?.('Saving the design…');
+  const answer: CreateDesignResponse = await sendCreateDesign(body, options.idempotencyKey);
+  if (rowCache.generation() === session) {
+    rowCache.merge('designs', [answer.design]);
+    rowCache.merge('skus', answer.skus);
+    if (answer.sku_private && answer.sku_private.length > 0)
+      rowCache.merge('sku-private', answer.sku_private);
+  }
+  return {
+    designId: answer.design.id,
+    designNumber: answer.design.design_no,
+    pieces: answer.skus.map((sku) => ({ id: sku.id, skuNumber: sku.sku_no, barcode: sku.barcode })),
+  };
+}
+
+const DESIGN_FIELD_LABEL: Readonly<Record<string, string>> = {
+  gross_weight: 'gross weight',
+  original_net_weight: 'original net weight',
+  customer_net_weight: 'customer net weight',
+  stones: 'stones',
+  stone_weight: 'stone weight',
+  kundan: 'kundan',
+  kundan_weight: 'kundan weight',
+  piroi: 'piroi',
+  labour_retail: 'retail labour or rate',
+  labour_semi: 'semi-wholesale labour or rate',
+  labour_wholesale: 'wholesale labour or rate',
+  pieces: 'pieces',
+  notes: 'remarks',
+};
+
+/** The words for a design that could not be saved (C13): the API's own sentence with its field names turned into the names the screen shows, and a plain line for the two refusals that need one. */
+export function designSaveMessage(error: unknown): string {
+  if (!(error instanceof SaveError))
+    return error instanceof Error ? error.message : 'Unable to save this design.';
+  if (error.field === 'design_id')
+    return 'This design was already saved. Look for it in the inventory. Nothing more was changed.';
+  if (error.code === 'JV_FORBIDDEN' && error.field?.endsWith('original_net_weight'))
+    return 'Only the owner can enter the original net weight. Nothing was changed.';
+  if (error.field === 'design.photo_ids')
+    return 'The photos could not be attached to the design. Remove them, add them again and save. Nothing was changed.';
+  return error.message
+    .replace(
+      /pieces\[(\d+)\]\.([a-z_]+)/g,
+      (_all, at: string, name: string) =>
+        `Group ${Number(at) + 1}, ${DESIGN_FIELD_LABEL[name] ?? name}`
+    )
+    .replace(
+      /\bdesign\.(name|category_id|subcategory_id|selling_method|purity|material|description|notes|tags)\b/g,
+      (_all, name: string) => name.replace(/_id$/, '').replace(/_/g, ' ')
+    );
+}
+
+// ── a change of status (WEB06, X9) ───────────────────────────────────────────────────────────────
+
+/**
+ * Sets the status of pieces (X9): one call for the pieces asked, any status except Sold (a piece becomes Sold when a bill is saved, WEB08). Nothing is shown before the API has
+ * answered, because it can refuse (a Sold piece cannot be changed, and nothing in the call is then); then the rows it returned, with their new stamps, go into memory. Archived
+ * sets `archived_at` and leaving Archived clears it, on the API's side (D8). `idempotencyKey` is the key of an earlier try of the same change that could not be confirmed.
+ * Resolves with the rows. Throws a SaveError.
+ */
+export async function setSkuStatus(
+  skuIds: readonly string[],
+  status: SkuStatus,
+  options: { note?: string; idempotencyKey?: string } = {}
+): Promise<SkuRow[]> {
+  if (PREVIEW_MODE) throw savingNotAvailable('A change of status');
+  if (status === 'Sold')
+    throw refused('A piece becomes Sold when a bill is saved, not here. Nothing was changed.');
+  if (skuIds.length === 0) throw refused('No piece was chosen. Nothing was changed.');
+  if (skuIds.length > MAX_PIECES_PER_CALL)
+    throw refused(
+      `At most ${MAX_PIECES_PER_CALL} pieces can be changed at once. Nothing was changed.`
+    );
+  const session = rowCache.generation();
+  const note = options.note?.trim();
+  const answer: SetSkuStatusResponse = await sendSkuStatus(
+    { sku_ids: [...skuIds], status, ...(note ? { note } : {}) },
+    options.idempotencyKey
+  );
+  if (rowCache.generation() === session) rowCache.merge('skus', answer.skus);
+  return answer.skus;
 }
 
 export function removeDesign(id: string): void {

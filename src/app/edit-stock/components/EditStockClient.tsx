@@ -3,20 +3,24 @@
 import React, { useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Save, Trash2 } from 'lucide-react';
+import { Archive, ArrowLeft, Save, Trash2 } from 'lucide-react';
 import SaveButton from '@/components/ui/SaveButton';
 import { PREVIEW_MODE, useSession } from '@/lib/authStore';
 import { getCategories, getSubcategories } from '@/lib/catalogStore';
+import { useSavingAllowed } from '@/lib/api/connection';
 import { SaveError } from '@/lib/cache/edit';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
-import { getDesigns, removeSku, upsertDesign } from '@/lib/designStore';
+import { getDesigns, removeSku, setSkuStatus, upsertDesign } from '@/lib/designStore';
 import { getLocations } from '@/lib/settingsStore';
 import type { Design, Material, Purity, SellingMethod, Sku, SkuStatus } from '@/lib/mockData';
 
 // Edit Existing Stock (spec C5 (a), A5; task WEB05). The screen shows the design as it is in memory. The first change makes the person's working copy, and the design as
 // it was at that moment is kept beside it: Save sends one write for each row that changed, with only the fields that changed and the stamp of THAT design, so a row that
-// somebody else saved meanwhile is answered stale and reloaded, never overwritten (src/lib/designStore.ts, src/lib/cache/edit.ts). The status of a piece and the owner-only
-// weight are not ordinary edits and are not changed here; a piece is never deleted (S7).
+// somebody else saved meanwhile is answered stale and reloaded, never overwritten (src/lib/designStore.ts, src/lib/cache/edit.ts). The owner-only weight is not an ordinary edit
+// and is not changed here; a piece is never deleted (S7).
+// WEB06: the status of a piece has its own step (X9 set_sku_status): choosing a status, or pressing Archive, is ONE call for that piece, and the piece shows the new status once
+// the API has answered (a Sold piece cannot be changed, and any status can be refused). While there are unsaved changes the status cannot be changed, so that the stamp of
+// the piece the changes were started from is still the one the API holds when Save sends them.
 
 const STATUSES: SkuStatus[] = [
   'In Stock',
@@ -58,6 +62,7 @@ export default function EditStockClient() {
   const router = useRouter();
   const { role } = useSession();
   const isOwner = role === 'owner';
+  const savingAllowed = useSavingAllowed();
   // drawn again when a poll or an edit changes what is in memory
   useRowCacheVersion('designs', 'skus', 'sku-private', 'categories', 'subcategories', 'settings');
   const wantedId = useSyncExternalStore(noSubscription, readIdFromUrl, () => null);
@@ -69,6 +74,8 @@ export default function EditStockClient() {
   const [saved, setSaved] = useState('');
   const [problem, setProblem] = useState('');
   const [notice, setNotice] = useState('');
+  /** The piece whose status is on its way (X9). */
+  const [statusBusy, setStatusBusy] = useState<string | null>(null);
   const design = work?.draft ?? stored;
 
   if (!design) {
@@ -134,6 +141,33 @@ export default function EditStockClient() {
     } finally {
       setSaving(false);
     }
+  };
+
+  /** X9: one call for the piece, shown after the API has answered. A refusal says why in the API's own plain words. */
+  const changeStatus = async (sku: Sku, status: SkuStatus) => {
+    if (statusBusy !== null || status === sku.status) return;
+    setStatusBusy(sku.id);
+    setSaved('');
+    setProblem('');
+    setNotice('');
+    try {
+      await setSkuStatus([sku.id], status);
+      setSaved(`${sku.skuNumber} is now ${status}.`);
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'Unable to change the status.');
+    } finally {
+      setStatusBusy(null);
+    }
+  };
+
+  const archiveSku = (sku: Sku) => {
+    if (
+      !window.confirm(
+        `Archive ${sku.skuNumber}? It leaves the stock list, and its record is kept. You can bring it back by choosing another status.`
+      )
+    )
+      return;
+    void changeStatus(sku, 'Archived');
   };
 
   const deleteSku = (sku: Sku) => {
@@ -322,18 +356,36 @@ export default function EditStockClient() {
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {/* the status has a step of its own (X9, WEB06): it is shown here, and changed there */}
+                    {/* the status has a step of its own (X9): one call for this piece, shown when the API has answered. Sold is made by a bill and cannot be chosen. */}
                     <select
                       aria-label={`Status of ${sku.skuNumber}`}
                       className="input-field text-xs w-36"
                       value={sku.status}
-                      disabled={!PREVIEW_MODE}
-                      title={
-                        PREVIEW_MODE ? undefined : 'A change of status is made in its own step.'
+                      disabled={
+                        !PREVIEW_MODE &&
+                        (!savingAllowed ||
+                          statusBusy !== null ||
+                          work !== null ||
+                          sku.status === 'Sold')
                       }
-                      onChange={(e) => updateSku(sku.id, 'status', e.target.value as SkuStatus)}
+                      title={
+                        PREVIEW_MODE
+                          ? undefined
+                          : sku.status === 'Sold'
+                            ? 'A sold piece is changed by cancelling or re-issuing its bill.'
+                            : work !== null
+                              ? 'Save your changes first, then change the status.'
+                              : undefined
+                      }
+                      onChange={(e) => {
+                        const status = e.target.value as SkuStatus;
+                        if (PREVIEW_MODE) updateSku(sku.id, 'status', status);
+                        else void changeStatus(sku, status);
+                      }}
                     >
-                      {STATUSES.map((status) => (
+                      {STATUSES.filter(
+                        (status) => PREVIEW_MODE || status !== 'Sold' || sku.status === 'Sold'
+                      ).map((status) => (
                         <option key={status}>{status}</option>
                       ))}
                     </select>
@@ -348,8 +400,8 @@ export default function EditStockClient() {
                         <option key={location}>{location}</option>
                       ))}
                     </select>
-                    {/* nothing is deleted (S7): a piece leaves the stock by being archived, which is its own step (X9, WEB06) */}
-                    {PREVIEW_MODE && (
+                    {/* nothing is deleted (S7): a piece leaves the stock by being archived (X9) */}
+                    {PREVIEW_MODE ? (
                       <SaveButton
                         type="button"
                         onClick={() => deleteSku(sku)}
@@ -358,6 +410,22 @@ export default function EditStockClient() {
                         <Trash2 size={13} />
                         Delete SKU
                       </SaveButton>
+                    ) : (
+                      sku.status !== 'Sold' &&
+                      sku.status !== 'Archived' && (
+                        <SaveButton
+                          type="button"
+                          onClick={() => archiveSku(sku)}
+                          disabled={statusBusy !== null || work !== null}
+                          title={
+                            work !== null ? 'Save your changes first, then archive.' : undefined
+                          }
+                          className="inline-flex items-center gap-1 rounded-sm border border-amber-200 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                        >
+                          <Archive size={13} />
+                          Archive
+                        </SaveButton>
+                      )
                     )}
                   </div>
                 </div>

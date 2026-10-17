@@ -16,7 +16,9 @@
 //   - `me` carries the SHA-256 of the API's pricing.ts; it is compared with the build's own, and a mismatch means Save on bills stays off (C12);
 //   - a 401 runs the hook of the session gate (U6), except the wrong password of the login screen;
 //   - a call that saves data tells, when it is over (it worked or it did not), whoever asked to hear it (`onWriteFinished`): the poller of WEB04 polls at once after any write
-//     the screen made (C4).
+//     the screen made (C4);
+//   - a photo goes up as the raw bytes of a file (`upload`, WEB06): the body is the Blob and `Content-Type` is its picture type, never JSON; the address of a photo to show is
+//     `photoUrl`, on the API's origin (P2, P3).
 //
 // The module keeps no state of its own besides the connection banner and the pricing check; the session itself (who is signed in) is authStore's (WEB02).
 import { BUILD_PRICING_SHA256 } from './pricingHash';
@@ -253,8 +255,8 @@ function findWireNumber(
 
 const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** A new Idempotency-Key: a random UUID v4. One per user action (C6); make it when the action starts and keep it until the action ends. */
-export function newIdempotencyKey(): string {
+/** A random UUID v4: the id of a new design and of its photos (P2, C11), and the Idempotency-Key. The page makes no other id. */
+export function newUuid(): string {
   const c = globalThis.crypto;
   if (typeof c?.randomUUID === 'function') return c.randomUUID();
   const bytes = new Uint8Array(16);
@@ -264,6 +266,9 @@ export function newIdempotencyKey(): string {
   const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
+
+/** A new Idempotency-Key: a random UUID v4. One per user action (C6); make it when the action starts and keep it until the action ends. */
+export const newIdempotencyKey = newUuid;
 
 const abortError = () => new DOMException('The call was cancelled.', 'AbortError');
 
@@ -396,6 +401,8 @@ export interface RequestOptions {
   /** Added to the address as the query string (undefined and null are left out). */
   query?: Record<string, string | number | null | undefined>;
   body?: unknown;
+  /** The body is the raw bytes of a file (a photo, API17): sent as they are with this `Content-Type`, not as JSON. Not with `body`. */
+  bytes?: { data: Blob; contentType: string };
   /**
    * The call saves no business data: a poll, a quote, a read, the session calls. Its failures never say "saved" and never trigger the re-read. A POST of this kind still needs
    * X-JV-Client, and is retried on JV_BUSY like any other.
@@ -530,8 +537,12 @@ export function createApiClient(config: ApiClientConfig = {}) {
     }
     const write = method !== 'GET' && options.readOnly !== true;
     const key = keyGiven ?? (options.idempotent ? newIdempotencyKey() : null);
-    let payload: string | undefined;
-    if (options.body !== undefined) {
+    let payload: string | Blob | undefined;
+    if (options.bytes !== undefined) {
+      if (options.body !== undefined)
+        throw new Error('A call has a JSON body or the bytes of a file, not both.');
+      payload = options.bytes.data;
+    } else if (options.body !== undefined) {
       const offending = findWireNumber(options.body, null, '', true);
       if (offending !== null) {
         throw new TypeError(
@@ -549,7 +560,8 @@ export function createApiClient(config: ApiClientConfig = {}) {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (method !== 'GET') headers['X-JV-Client'] = 'web';
     if (key !== null) headers['Idempotency-Key'] = key;
-    if (payload !== undefined) headers['Content-Type'] = 'application/json';
+    if (options.bytes !== undefined) headers['Content-Type'] = options.bytes.contentType;
+    else if (payload !== undefined) headers['Content-Type'] = 'application/json';
 
     const fail = (init: FailInit): ApiError => {
       const error = new ApiError({
@@ -697,6 +709,28 @@ export function createApiClient(config: ApiClientConfig = {}) {
       request<T>('PUT', path, { ...options, body }),
     patch: <T>(path: string, body?: unknown, options: RequestOptions = {}) =>
       request<T>('PATCH', path, { ...options, body }),
+
+    /**
+     * `PUT` of the raw bytes of a file (a photo: `/v1/designs/{design_id}/photos/{photo_id}?kind=full|thumb`, API17). The body is the Blob, its `type` is the `Content-Type`
+     * (a Blob with no type goes as application/octet-stream, which the API reads by the first bytes). It carries no Idempotency-Key: a photo is insert-only and a second try of
+     * the same id is answered `409 JV_NOT_ALLOWED` with `details.reason: 'duplicate'`.
+     */
+    upload: <T>(
+      path: string,
+      data: Blob,
+      options: { query?: RequestOptions['query']; signal?: AbortSignal } = {}
+    ) =>
+      request<T>('PUT', path, {
+        query: options.query,
+        signal: options.signal,
+        bytes: { data, contentType: data.type || 'application/octet-stream' },
+      }),
+    /** The address of a photo to show: `GET /v1/photos/{id}/full` or `/thumb` on the API's origin (public, no session: P3). The id must be a UUID. */
+    photoUrl: (photoId: string, kind: 'full' | 'thumb'): string => {
+      if (!UUID_TEXT.test(photoId)) throw new Error('A photo id is a UUID.');
+      const base = origin ?? (origin = originFrom(addressOfTheBuild()));
+      return `${base}/v1/photos/${photoId.toLowerCase()}/${kind}`;
+    },
 
     // ---- the session calls (NODE-DESIGN 2.5). They change no business data, so a failure never says "saved".
     login: (email: string, password: string) =>

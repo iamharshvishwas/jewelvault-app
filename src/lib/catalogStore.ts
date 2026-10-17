@@ -11,8 +11,8 @@ import { PREVIEW_MODE } from './previewMode';
 //     (`createCategory`, `createSubcategory`); a rename and a removal are ordinary edits, shown at once and written with the exact stamp of the row. A removal is `active = false`
 //     (nothing is deleted, S7), and adding a name that was removed brings that row back, because the name is still taken. A category's prefix is written once, when it is made:
 //     the design numbers carry it (L3).
-//   - `addCategory` and `addSubcategory` (synchronous, used by the Add Design screen) cannot be saved from there yet: that screen is WEB06's, and until it moves to
-//     `createCategory` and `createSubcategory` they say so and change nothing in a real build.
+//   - `addCategory` and `addSubcategory` are the prototype's synchronous adds. The Add Design screen uses `createCategory` and `createSubcategory` since WEB06; the old two are
+//     left for the preview build's own tests and still say they cannot be saved in a real build.
 //   - In a preview build (until WEB15) the store is the prototype's, in this page only. The DEFAULT_* lists stay: the preview and the prototype's settings use them, and a real
 //     build never does. Nothing is kept in browser storage in either.
 
@@ -133,7 +133,7 @@ function previewAddSubcategory(category: string, clean: string): string {
   return clean;
 }
 
-/** The synchronous add of the prototype. Add Design (WEB06) calls it; a real build cannot save from there yet. */
+/** The synchronous add of the prototype (Add Design uses `createCategory` now); a real build cannot save from here. */
 export function addCategory(name: string): string {
   assertWritable('A new category');
   const clean = name.trim();
@@ -174,7 +174,7 @@ export function getSubcategories(category: string): string[] {
   return subcategories[category] || DEFAULT_SUBCATEGORY_LIST;
 }
 
-/** The synchronous add of the prototype. Add Design (WEB06) calls it; a real build cannot save from there yet. */
+/** The synchronous add of the prototype (Add Design uses `createSubcategory` now); a real build cannot save from here. */
 export function addSubcategory(category: string, name: string): string {
   assertWritable('A new sub-category');
   const clean = name.trim();

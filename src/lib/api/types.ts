@@ -478,10 +478,11 @@ export interface CreateCustomerResponse {
   customer: CustomerRow;
 }
 
-/** X8 `POST /v1/designs` (201). */
+/** X8 `POST /v1/designs` (201). `sku_private` is there only for a caller who may enter the original weight (the owner), one row for each piece that has one (D9). */
 export interface CreateDesignResponse {
   design: DesignRow;
   skus: SkuRow[];
+  sku_private?: SkuPrivateRow[];
 }
 
 /** X9 `POST /v1/skus/status` (200). */
