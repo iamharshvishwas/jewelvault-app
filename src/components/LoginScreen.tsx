@@ -5,8 +5,9 @@ import AppLogo from '@/components/ui/AppLogo';
 import { signIn } from '@/lib/authStore';
 import { BUSINESS_NAME } from '@/lib/businessConfig';
 
-// U1: e-mail and password through Supabase Auth. The screen shows no credentials and no hints, and starts empty.
-// `notice` is why the person is back here: "Your account is not active", or the 12-hour idle logout (U3, U4).
+// U1: e-mail and password at the API's own login. The screen shows no credentials and no clues, and starts empty.
+// `notice` is why the person is back here: the session ended (a deactivated account, a session past its limit) or the 12-hour idle
+// logout (U4, C16). A wrong password and "Your account is not active" are the answer of the login itself, shown under the fields.
 export default function LoginScreen({ notice }: { notice: string | null }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -19,7 +20,7 @@ export default function LoginScreen({ notice }: { notice: string | null }) {
     setError('');
     setSubmitting(true);
     try {
-      // On success the gate moves on by itself (the auth event); this screen is gone by then.
+      // On success the gate moves on by itself (the state of the session changes); this screen is gone by then.
       const result = await signIn(email, password);
       if (result.error) setError(result.error);
     } finally {

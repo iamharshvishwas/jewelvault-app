@@ -6,7 +6,8 @@ import Sidebar from './Sidebar';
 import MobileNav from './MobileNav';
 import Topbar from './Topbar';
 import LoginScreen from './LoginScreen';
-import { PREVIEW_MODE, canAccessPath, retryProfile, signOut, useSession } from '@/lib/authStore';
+import ChangePasswordScreen from './ChangePasswordScreen';
+import { PREVIEW_MODE, canAccessPath, retrySession, signOut, useSession } from '@/lib/authStore';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -14,10 +15,13 @@ interface AppLayoutProps {
 
 // U7: the one gate. It shows, in this order, a loading screen, the login screen, then the app. The state it reads is the
 // module-level one in authStore, so moving from page to page (each page wraps itself in this layout) never shows the
-// loading screen again, and no page reads the session on its own.
+// loading screen again, and no page reads the session on its own. Between the login screen and the app stands one more screen
+// for one kind of person: a user whose password is still the temporary one sees the change-password screen and nothing else (U11).
+// `epoch` goes up each time the gate is opened for a person and a role (a login, start-up, a change of role): the page body is
+// keyed on it, so that a role that changed in the middle of a shift starts the page afresh instead of keeping what the old role saw.
 export default function AppLayout({ children }: AppLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const { status, session, role, notice, error } = useSession();
+  const { status, session, role, notice, error, epoch } = useSession();
   const pathname = usePathname();
 
   if (status === 'error') {
@@ -28,7 +32,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
             {error}
           </p>
           <div className="flex gap-2 justify-center">
-            <button type="button" className="btn-primary" onClick={() => retryProfile()}>
+            <button type="button" className="btn-primary" onClick={() => retrySession()}>
               Try again
             </button>
             <button type="button" className="btn-secondary" onClick={() => void signOut()}>
@@ -49,6 +53,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
     );
   }
   if (status === 'signedOut' || !session) return <LoginScreen notice={notice} />;
+  if (status === 'mustChangePassword') return <ChangePasswordScreen session={session} />;
 
   const allowed = canAccessPath(role, pathname || '/');
 
@@ -67,7 +72,10 @@ export default function AppLayout({ children }: AppLayoutProps) {
       <div className="flex-1 flex flex-col overflow-hidden">
         <Topbar onMenuClick={() => setSidebarCollapsed((p) => !p)} session={session} />
         <main className="flex-1 overflow-y-auto scrollbar-thin">
-          <div className="max-w-screen-2xl mx-auto px-4 lg:px-6 xl:px-8 2xl:px-10 py-5 pb-24 lg:pb-6">
+          <div
+            key={epoch}
+            className="max-w-screen-2xl mx-auto px-4 lg:px-6 xl:px-8 2xl:px-10 py-5 pb-24 lg:pb-6"
+          >
             {allowed ? (
               children
             ) : (
