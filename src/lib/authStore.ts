@@ -30,6 +30,7 @@
 import { useSyncExternalStore } from 'react';
 import { api as siteApi, isApiError, type ApiClient, type ApiError } from '@/lib/api/client';
 import type { LoginResponse } from '@/lib/api/types';
+import { PREVIEW_MODE } from '@/lib/previewMode';
 
 export type AuthRole = 'owner' | 'biller' | 'staff';
 
@@ -588,13 +589,8 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
 
 // ------------------------------------------------------------------------------------------------ the store of the site
 
-/**
- * Preview mode: a build made with NEXT_PUBLIC_PREVIEW_MODE=1 opens every screen as the owner, with no login and no call to any server, so
- * the front end can be looked at before a back end exists. The data on the screens is the prototype's own sample data, kept in this
- * browser only, and a banner says so (AppLayout). The variable is written out in full because Next.js replaces exactly that text at build
- * time. It is off unless set: a real build never opens like this. WEB15 removes it together with the sample data.
- */
-export const PREVIEW_MODE = process.env.NEXT_PUBLIC_PREVIEW_MODE === '1';
+/** Preview mode (see src/lib/previewMode.ts): the front end opens as the owner with no login and no server, on sample data. Off unless the build says so. WEB15 removes it. */
+export { PREVIEW_MODE };
 
 const store = createSessionStore({ api: siteApi, preview: PREVIEW_MODE });
 

@@ -8,6 +8,17 @@ import {
   BUSINESS_TAGLINE,
 } from '@/lib/businessConfig';
 import { DEFAULT_CATEGORIES, DEFAULT_CATEGORY_PREFIXES } from '@/lib/catalogStore';
+import type { DailyRateRow, UserRow } from '@/lib/api/types';
+import { rowCache, savingNotAvailable } from '@/lib/cache/cache';
+import { stampMicros } from '@/lib/cache/stamp';
+import { PREVIEW_MODE } from '@/lib/previewMode';
+
+// Task WEB03. In a real build (spec C2, C8, C9) the settings of the screens are made from the rows the hydrate put in memory: one row per key in
+// `settings`, the people from `users`, the category prefixes from `categories` and the rates from `daily_rates` (D3, D20). `getSettings()` answers from memory
+// after the loading gate, reads no browser storage, and never returns the prototype's DEFAULT_SETTINGS values for a number the shop owns: a rate with no row is 0,
+// not the prototype's 6,920. A role that reads fewer keys (staff read seven, A4) gets the prototype's labels for the sections it does not read. A change cannot be
+// saved yet (WEB05 puts settings and rates on the API), so `saveSettings` and `resetSettings` say so and change nothing. In a preview build (until WEB15) the
+// store is the prototype's, kept in this browser only.
 
 const SETTINGS_KEY = 'jaishri.settings.v1';
 
@@ -174,7 +185,114 @@ function mergeSettings(saved: Partial<AppSettings>): AppSettings {
   };
 }
 
+// ── the settings made from memory (a real build) ─────────────────────────────
+
+let cachedSettings: { version: string; value: AppSettings } | null = null;
+
+const objectOf = (value: unknown): Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+const setting = (key: string): unknown => rowCache.get('settings', key)?.value;
+
+const ROLE_LABEL: Record<UserRow['role'], UserSetting['role']> = {
+  owner: 'Owner',
+  biller: 'Billing Staff',
+  staff: 'Inventory Staff',
+};
+
+const stampOrZero = (stamp: string): number => {
+  try {
+    return stampMicros(stamp);
+  } catch {
+    return 0;
+  }
+};
+
+/**
+ * The rate of a material the screens show as "the" rate (the dashboard's rate card, the estimate's default): the row with the latest `rate_date`, and of
+ * those the one written last. The rates are really per purity and per day (R2); the screens that choose a purity (WEB05, WEB08) read the rows. 0 when there is none.
+ */
+function latestRate(material: DailyRateRow['material']): number {
+  let best: DailyRateRow | null = null;
+  for (const row of rowCache.rows('daily-rates')) {
+    if (row.material !== material) continue;
+    if (
+      best === null ||
+      row.rate_date > best.rate_date ||
+      (row.rate_date === best.rate_date &&
+        (stampOrZero(row.updated_at) > stampOrZero(best.updated_at) ||
+          (row.updated_at === best.updated_at && row.purity < best.purity)))
+    ) {
+      best = row;
+    }
+  }
+  const rate = Number(best?.rate_per_gram);
+  return Number.isFinite(rate) ? rate : 0;
+}
+
+function buildSettings(): AppSettings {
+  const materials = setting('materials');
+  const customFields = setting('custom_fields');
+  return {
+    materials:
+      Array.isArray(materials) && materials.length
+        ? (materials as MaterialSetting[])
+        : DEFAULT_SETTINGS.materials,
+    customFields: Array.isArray(customFields)
+      ? (customFields as CustomFieldSetting[])
+      : DEFAULT_SETTINGS.customFields,
+    tagTemplate: {
+      ...DEFAULT_SETTINGS.tagTemplate,
+      ...objectOf(setting('tag_template')),
+    } as AppSettings['tagTemplate'],
+    estimate: {
+      ...DEFAULT_SETTINGS.estimate,
+      ...objectOf(setting('estimate')),
+      defaultGoldRate: latestRate('Gold'),
+      defaultSilverRate: latestRate('Silver'),
+    } as AppSettings['estimate'],
+    // the prototype's rule: an estimate carries no tax
+    taxes: {
+      ...DEFAULT_SETTINGS.taxes,
+      ...objectOf(setting('taxes')),
+      estimateTaxPercent: 0,
+    } as AppSettings['taxes'],
+    users: rowCache
+      .rows('users')
+      .map(
+        (user): UserSetting => ({
+          id: user.id,
+          name: user.full_name,
+          role: ROLE_LABEL[user.role] ?? 'Billing Staff',
+          canSeeOriginalWeight: user.role === 'owner',
+          canEditStock: user.role !== 'biller',
+          active: user.active,
+        })
+      )
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    numbering: {
+      ...DEFAULT_SETTINGS.numbering,
+      ...objectOf(setting('numbering')),
+      categoryPrefixes: Object.fromEntries(
+        rowCache.rows('categories').map((category) => [category.name, category.prefix])
+      ),
+    } as AppSettings['numbering'],
+    business: {
+      ...DEFAULT_SETTINGS.business,
+      ...objectOf(setting('business')),
+    } as AppSettings['business'],
+  };
+}
+
 export function getSettings(): AppSettings {
+  if (!PREVIEW_MODE) {
+    const version = rowCache.versionOf('settings', 'daily-rates', 'categories', 'users');
+    if (cachedSettings && cachedSettings.version === version) return cachedSettings.value;
+    const value = buildSettings();
+    cachedSettings = { version, value };
+    return value;
+  }
   if (!canUseStorage()) return DEFAULT_SETTINGS;
   const saved = window.localStorage.getItem(SETTINGS_KEY);
   if (!saved) return DEFAULT_SETTINGS;
@@ -186,12 +304,14 @@ export function getSettings(): AppSettings {
 }
 
 export function saveSettings(next: AppSettings): AppSettings {
+  if (!PREVIEW_MODE) throw savingNotAvailable('A change to the settings');
   const normalized = mergeSettings(next);
   if (canUseStorage()) window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(normalized));
   return normalized;
 }
 
 export function resetSettings(): AppSettings {
+  if (!PREVIEW_MODE) throw savingNotAvailable('Resetting the settings');
   if (canUseStorage()) window.localStorage.removeItem(SETTINGS_KEY);
   return DEFAULT_SETTINGS;
 }

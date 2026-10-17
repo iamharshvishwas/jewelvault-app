@@ -1,5 +1,5 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import Sidebar from './Sidebar';
@@ -8,6 +8,14 @@ import Topbar from './Topbar';
 import LoginScreen from './LoginScreen';
 import ChangePasswordScreen from './ChangePasswordScreen';
 import { PREVIEW_MODE, canAccessPath, retrySession, signOut, useSession } from '@/lib/authStore';
+import {
+  isGateOpen,
+  progressText,
+  resourcesFor,
+  retryHydrate,
+  startHydrate,
+  useHydrate,
+} from '@/lib/cache/hydrate';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -19,10 +27,19 @@ interface AppLayoutProps {
 // for one kind of person: a user whose password is still the temporary one sees the change-password screen and nothing else (U11).
 // `epoch` goes up each time the gate is opened for a person and a role (a login, start-up, a change of role): the page body is
 // keyed on it, so that a role that changed in the middle of a shift starts the page afresh instead of keeping what the old role saw.
+// WEB03 (C2): between the login and the app stands the data gate. A signed-in person sees no data page until the first full hydrate of THIS role in THIS
+// epoch has finished (src/lib/cache/hydrate.ts): "3 of 8 tables" while it runs, the plain message and a retry button if it fails, never sample data and
+// never an empty list. The load lives at module level, so moving from page to page (each page wraps itself in this layout) never loads again.
 export default function AppLayout({ children }: AppLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { status, session, role, notice, error, epoch } = useSession();
+  const hydrate = useHydrate();
   const pathname = usePathname();
+
+  // asked again by every page that mounts, answered once: a load of the same role and epoch is not started twice
+  useEffect(() => {
+    if (status === 'signedIn' && role) startHydrate(role, epoch);
+  }, [status, role, epoch]);
 
   if (status === 'error') {
     return (
@@ -54,6 +71,10 @@ export default function AppLayout({ children }: AppLayoutProps) {
   }
   if (status === 'signedOut' || !session) return <LoginScreen notice={notice} />;
   if (status === 'mustChangePassword') return <ChangePasswordScreen session={session} />;
+  // a preview build has no API: its stores hold sample data (src/lib/previewMode.ts) and the gate is open
+  if (!PREVIEW_MODE && !isGateOpen(hydrate, role, epoch)) {
+    return <DataGate failed={hydrate.status === 'error' ? hydrate.error : null} state={hydrate} />;
+  }
 
   const allowed = canAccessPath(role, pathname || '/');
 
@@ -104,6 +125,64 @@ export default function AppLayout({ children }: AppLayoutProps) {
           Preview: sample data, kept only in this browser. Nothing is saved to a server.
         </div>
       )}
+    </div>
+  );
+}
+
+/** C2: the loading screen of the data. The numbers are those of the load that is running; before it has started the count is that of the role's tables. */
+function DataGate({
+  failed,
+  state,
+}: {
+  failed: string | null;
+  state: ReturnType<typeof useHydrate>;
+}) {
+  const { role } = useSession();
+  if (failed !== null) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+        <div className="jewel-card p-6 max-w-sm w-full space-y-4 text-center">
+          <h1 className="text-base font-bold text-foreground">The data could not be loaded</h1>
+          <p role="alert" className="text-sm font-semibold text-red-600">
+            {failed}
+          </p>
+          <div className="flex gap-2 justify-center">
+            <button type="button" className="btn-primary" onClick={() => retryHydrate()}>
+              Try again
+            </button>
+            <button type="button" className="btn-secondary" onClick={() => void signOut()}>
+              Sign out
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  const total = state.tablesTotal || (role ? resourcesFor(role).length : 0);
+  const done = state.tablesTotal ? state.tablesDone : 0;
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center px-4">
+      <div className="jewel-card p-6 max-w-sm w-full space-y-3 text-center">
+        <p role="status" className="text-sm font-semibold text-foreground">
+          Loading your data
+        </p>
+        <div
+          role="progressbar"
+          aria-label="Loading your data"
+          aria-valuemin={0}
+          aria-valuemax={total}
+          aria-valuenow={done}
+          className="h-2 w-full overflow-hidden rounded-full bg-muted"
+        >
+          <div
+            className="h-full bg-primary transition-all"
+            style={{ width: `${total ? Math.round((done / total) * 100) : 0}%` }}
+          />
+        </div>
+        <p data-testid="hydrate-progress" className="text-xs text-muted-foreground font-tabular">
+          {progressText({ tablesDone: done, tablesTotal: total })}
+        </p>
+      </div>
     </div>
   );
 }
