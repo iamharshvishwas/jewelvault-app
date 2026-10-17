@@ -7,6 +7,7 @@
   },
   "scripts": {
     "dev": "next dev -p ${PORT:-4028}",
+    "prebuild": "node scripts/pricing-hash.mjs",
     "build": "next build",
     "check:build": "node scripts/check-build.mjs",
     "typecheck": "next typegen && tsc --noEmit",
@@ -25,7 +26,8 @@
     "db:check": "bash scripts/check-migrations.sh",
     "test:e2e": "playwright test",
     "e2e:lane": "node scripts/e2e-lane.mjs",
-    "verify": "node scripts/lane.mjs verify"
+    "verify": "node scripts/lane.mjs verify",
+    "pricing:hash": "node scripts/pricing-hash.mjs"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
