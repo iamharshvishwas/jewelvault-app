@@ -25,6 +25,7 @@ import {
   type Invoice,
   type InvoiceItem,
   type LedgerEntry,
+  type LedgerKind,
   type Material,
   type Payment,
   type Purity,
@@ -375,11 +376,10 @@ function buildInvoices(): InvoiceView {
       createdBy: (bill.created_by && people.get(bill.created_by)) || '',
       notes: bill.notes ?? '',
     };
-    made.push({
-      invoice,
-      created: microsOf(bill.created_at),
-      opening: bill.doc_type === 'opening_balance',
-    });
+    const opening = bill.doc_type === 'opening_balance';
+    // dues brought forward have no lines and are not a sale: the screens say so (WEB10)
+    if (opening) invoice.openingBalance = true;
+    made.push({ invoice, created: microsOf(bill.created_at), opening });
   }
   // the newest first: the prototype put a new invoice at the front of its list
   made.sort(
@@ -421,6 +421,16 @@ const LEDGER_TYPE: Readonly<Record<string, LedgerEntry['type']>> = {
   Refund: 'Adjustment',
   Void: 'Adjustment',
 };
+const LEDGER_KINDS: ReadonlySet<string> = new Set<LedgerKind>([
+  'Invoice',
+  'Opening',
+  'Cancellation',
+  'Payment',
+  'Opening advance',
+  'Fine',
+  'Refund',
+  'Void',
+]);
 const EMPTY_LEDGER: LedgerEntry[] = [];
 const ledgerMemo = new Map<
   string,
@@ -443,6 +453,8 @@ function ledgerEntryOf(row: LedgerWireRow): LedgerEntry {
     customerId: row.customer_id,
     date: businessNoon(row.entry_date),
     type: LEDGER_TYPE[row.kind] ?? 'Adjustment',
+    // the kind V3 gave the row; the ledger table names the row by it (a kind this build does not know keeps the type above)
+    ...(LEDGER_KINDS.has(row.kind) ? { kind: row.kind as LedgerKind } : {}),
     description: row.description,
     debit: num(row.debit),
     credit: num(row.credit),
@@ -604,8 +616,12 @@ export interface CustomerBooks {
   outstanding: string;
   /** V2 `advance`: money received that no bill needed. */
   advance: string;
+  /** V2 `balance`, signed: `outstanding - advance`, and the last running balance of the customer's ledger (I4). */
+  balance: string;
   /** V2 `fine_outstanding`, grams. */
   fineOutstanding: string;
+  /** V2 `fine_balance`, grams, signed: the last running silver balance of the ledger. */
+  fineBalance: string;
 }
 
 /** The customer's V2 figures as the server worked them out, or null while the row has not arrived (nothing is made up). A preview build has none. */
@@ -613,7 +629,13 @@ export function getCustomerBooks(customerId: string): CustomerBooks | null {
   if (PREVIEW_MODE) return null;
   const row = rowCache.get('customer-balances', customerId);
   return row
-    ? { outstanding: row.outstanding, advance: row.advance, fineOutstanding: row.fine_outstanding }
+    ? {
+        outstanding: row.outstanding,
+        advance: row.advance,
+        balance: row.balance,
+        fineOutstanding: row.fine_outstanding,
+        fineBalance: row.fine_balance,
+      }
     : null;
 }
 

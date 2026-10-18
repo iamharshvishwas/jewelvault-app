@@ -512,7 +512,7 @@ describe('the lists the panel chooses a bill from (Y3): getBillsOfCustomer', () 
 });
 
 describe("getCustomerBooks: the customer's V2 figures as the server worked them out", () => {
-  it('gives the outstanding, the advance and the fine outstanding as the exact text of the row', async () => {
+  it('gives the outstanding, the advance, the balance and the silver outstanding and balance as the exact text of the row', async () => {
     const w = await storeWorld();
     const book = fill(w.cache);
     const row = book.balances.find((b) => b.id === id.priya)!;
@@ -520,7 +520,9 @@ describe("getCustomerBooks: the customer's V2 figures as the server worked them 
     expect(books).toEqual({
       outstanding: row.outstanding,
       advance: row.advance,
+      balance: row.balance, // WEB10: the card shows it, and it is the last running balance of the ledger (I4)
       fineOutstanding: row.fine_outstanding,
+      fineBalance: row.fine_balance,
     });
   });
 

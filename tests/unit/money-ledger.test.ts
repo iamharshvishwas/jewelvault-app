@@ -151,6 +151,7 @@ describe('getLedgerForCustomer() on the ledger the server sent (V3)', () => {
       customerId: id.priya,
       date: '2026-10-15T12:00:00.000Z',
       type: 'Invoice',
+      kind: 'Invoice', // the kind V3 gave the row (WEB10): the ledger table names the row by it
       description: 'Invoice JV-0001',
       debit: 257612,
       credit: 0,

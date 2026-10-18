@@ -150,13 +150,28 @@ export interface Invoice {
   date: string;
   createdBy: string;
   notes: string;
+  /** True for the dues brought forward (an opening-balance bill: no lines, not a sale, C14). Absent for every other bill. */
+  openingBalance?: boolean;
 }
+
+/** The kind V3 gives a row of the ledger (spec section 11): the words of the ledger table come from it. A preview build's sample entries have none. */
+export type LedgerKind =
+  | 'Invoice'
+  | 'Opening'
+  | 'Cancellation'
+  | 'Payment'
+  | 'Opening advance'
+  | 'Fine'
+  | 'Refund'
+  | 'Void';
 
 export interface LedgerEntry {
   id: string;
   customerId: string;
   date: string;
   type: 'Invoice' | 'Payment' | 'Credit' | 'Return' | 'Adjustment';
+  /** The kind of the row of V3 this entry was made from. */
+  kind?: LedgerKind;
   description: string;
   debit: number;
   credit: number;
