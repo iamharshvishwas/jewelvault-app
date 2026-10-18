@@ -88,6 +88,8 @@ export interface RowCache {
   size(): number;
   /** Empties every resource (U8). */
   clear(): void;
+  /** Moves on every `clear`: a write that was on its way when the session ended compares it with the one it started in, and puts nothing back (U8). */
+  generation(): number;
   /** A text that changes when any of these resources changes: what a view made from them is cached by. */
   versionOf(...resources: SyncResource[]): string;
   /** Called once after each change (a merge that stored something, a clear that emptied something). Returns the way to stop. */
@@ -234,6 +236,7 @@ export function createRowCache(): RowCache {
       lists.clear();
       if (emptied) tell();
     },
+    generation: () => generation,
     versionOf: (...resources) => resources.map((resource) => versionNow(resource)).join('.'),
     subscribe: (listener) => {
       listeners.add(listener);

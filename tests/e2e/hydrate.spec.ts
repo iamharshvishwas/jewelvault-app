@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { expect, test, type Page, type Request, type Route } from '@playwright/test';
+import { clearLoginCounters } from './clear-counters';
+import { noteApiCall, roomInTheMinute } from './pacing';
 import { e2eLane, e2eLogin, type E2eLogin, type E2eRole } from './global-setup';
 
 // WEB03: the first hydrate behind the loading gate, in a real browser against the real API of a lane (spec C2, C3, C8, C9, U7, U8).
@@ -146,6 +148,7 @@ async function asSite(
   options: { body?: unknown; cookie?: string } = {}
 ) {
   const { apiUrl, webOrigin } = e2eLane();
+  noteApiCall();
   const headers: Record<string, string> = { origin: webOrigin };
   if (method !== 'GET') headers['x-jv-client'] = 'web';
   if (options.body !== undefined) headers['content-type'] = 'application/json';
@@ -182,7 +185,7 @@ async function allRows(
   let after = '';
   for (;;) {
     const page = await asSite('GET', `/v1/sync/${resource}?limit=${limit}${after}`, { cookie });
-    expect(page.status, `the oracle's read of ${resource}`).toBe(200);
+    expect(page.status, `the oracle's read of ${resource}: ${JSON.stringify(page.json)}`).toBe(200);
     const body = page.json as {
       rows: Array<Record<string, unknown>>;
       next: { updated_at: string; key: string } | null;
@@ -250,6 +253,11 @@ const syncResourceOf = (route: Route): string => {
 };
 
 // ------------------------------------------------------------------------------------------------ T-E05
+
+test.beforeEach(async ({ page }) => {
+  await clearLoginCounters();
+  await roomInTheMinute(page);
+});
 
 test.describe('T-E05: the data gate (C2, C8, U7, U8)', () => {
   test.describe.configure({ timeout: 120_000 });
@@ -462,8 +470,9 @@ test.describe('T-E05: the data gate (C2, C8, U7, U8)', () => {
       await expect(page.getByRole('heading', { name: 'Daily Metal Rates' })).toBeVisible({
         timeout: 2000,
       });
-      await expect(page.getByLabel('Gold Rate (per gram)')).toHaveValue('7350');
-      await expect(page.getByLabel('Silver Rate (per gram)')).toHaveValue('88.5');
+      // WEB05: a rate for each purity, shown as the server stores it (the day's row, or the last rate before the day to start from)
+      await expect(page.getByLabel('Gold 22K rate (per gram)')).toHaveValue('7350.00');
+      await expect(page.getByLabel('Silver 925 rate (per gram)')).toHaveValue('88.50');
       await logout(page);
 
       for (const role of ['biller', 'staff'] as const) {
@@ -519,7 +528,7 @@ test.describe('T-E05: the data gate (C2, C8, U7, U8)', () => {
     const ended = await asSite('POST', '/v1/auth/logout', {
       cookie: `${cookie?.name}=${cookie?.value}`,
     });
-    expect(ended.status).toBe(200);
+    expect(ended.status, JSON.stringify(ended.json)).toBe(200);
     holding = false;
     release();
 

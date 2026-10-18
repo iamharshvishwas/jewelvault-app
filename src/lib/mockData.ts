@@ -59,7 +59,11 @@ export interface Design {
   description: string;
   notes: string;
   tags: string[];
+  /** The full pictures (the gallery), the primary one first. */
   images: string[];
+  /** The 320 px thumbnails of the same photos, in the same order (the strip under the gallery); absent in the sample data. */
+  thumbs?: string[];
+  /** What a list shows for the design: the thumbnail of the primary photo, or the placeholder. */
   primaryImage: string;
   skus: Sku[];
   createdAt: string;
