@@ -4,7 +4,9 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { expect, test, type Page, type Request, type Response } from '@playwright/test';
+import { clearLoginCounters } from './clear-counters';
 import { e2eLane, e2eLogin, type E2eLogin } from './global-setup';
+import { roomInTheMinute } from './pacing';
 
 // WEB07: the money-side cache in a real browser against the real API of a lane (spec C1, C3, C6, C11, C14, L5).
 //   - the customer card shows, for a book written straight into the lane's database, the figures of V1, V2 and V3 as the DATABASE works them out (the V1, V2 and V3 queries of
@@ -214,6 +216,13 @@ const customerSaves = (page: Page) => {
 };
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// The API lets one person make 300 calls a minute (A13); the volume test below makes about a hundred, so every test of this file waits for
+// room in the minute and starts from clean login counters (tests/e2e/pacing.ts, clear-counters.ts).
+test.beforeEach(async ({ page }) => {
+  await clearLoginCounters();
+  await roomInTheMinute(page);
+});
 
 test.beforeAll(async () => {
   await cleanLane();
