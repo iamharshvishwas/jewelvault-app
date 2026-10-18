@@ -1,14 +1,29 @@
 'use client';
 
-import { MOCK_CUSTOMERS, MOCK_INVOICES, MOCK_LEDGER, type Customer, type CustomerType, type Invoice, type LedgerEntry, type Payment } from './mockData';
+import {
+  MOCK_CUSTOMERS,
+  MOCK_INVOICES,
+  MOCK_LEDGER,
+  type Customer,
+  type CustomerType,
+  type Invoice,
+  type LedgerEntry,
+  type Payment,
+} from './mockData';
 import { getSettings } from './settingsStore';
+import { PREVIEW_MODE } from './previewMode';
 
+// WEB03 (C8, D20): the money-side store still holds the prototype's own customers, invoices and ledger until WEB07 moves it onto the rows of the cache. Until
+// then it reads and writes browser storage, and starts from the sample customers, in a preview build ONLY; in a real build it holds nothing and touches no
+// `jaishri.*` key (the old keys are read once by the opening-data import, IM7, and nothing else).
 const CUSTOMER_KEY = 'jaishri.customers.v1';
 const INVOICE_KEY = 'jaishri.invoices.v1';
 const LEDGER_KEY = 'jaishri.ledger.v1';
 
 function canUseStorage() {
-  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+  return (
+    PREVIEW_MODE && typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
+  );
 }
 
 function readStored<T>(key: string, fallback: T): T {
@@ -41,8 +56,12 @@ function normalizeCustomer(customer: Customer): Customer {
 }
 
 function normalizeInvoice(invoice: Invoice): Invoice {
-  const fineWeightDue = invoice.fineWeightDue ?? invoice.items.reduce((total, item) => total + (item.fineWeightDue ?? 0), 0);
-  const fineWeightSettled = invoice.fineWeightSettled ?? Math.max(0, fineWeightDue - (invoice.fineWeightPending ?? fineWeightDue));
+  const fineWeightDue =
+    invoice.fineWeightDue ??
+    invoice.items.reduce((total, item) => total + (item.fineWeightDue ?? 0), 0);
+  const fineWeightSettled =
+    invoice.fineWeightSettled ??
+    Math.max(0, fineWeightDue - (invoice.fineWeightPending ?? fineWeightDue));
   return recalculateInvoice({
     ...invoice,
     saleType: invoice.saleType ?? 'Retail',
@@ -56,24 +75,47 @@ function normalizeInvoice(invoice: Invoice): Invoice {
 function recalculateInvoice(invoice: Invoice): Invoice {
   const amountReceived = invoice.payments.reduce((total, payment) => total + payment.amount, 0);
   const pendingAmount = Math.max(0, invoice.grandTotal - amountReceived);
-  const fineWeightDue = invoice.fineWeightDue ?? invoice.items.reduce((total, item) => total + (item.fineWeightDue ?? 0), 0);
-  const fineWeightSettled = invoice.fineWeightSettled ?? Math.max(0, fineWeightDue - (invoice.fineWeightPending ?? fineWeightDue));
+  const fineWeightDue =
+    invoice.fineWeightDue ??
+    invoice.items.reduce((total, item) => total + (item.fineWeightDue ?? 0), 0);
+  const fineWeightSettled =
+    invoice.fineWeightSettled ??
+    Math.max(0, fineWeightDue - (invoice.fineWeightPending ?? fineWeightDue));
   const fineWeightPending = Math.max(0, fineWeightDue - fineWeightSettled);
   const status: Invoice['status'] =
-    pendingAmount <= 0 && fineWeightPending <= 0 ? 'Paid' : amountReceived > 0 || fineWeightSettled > 0 ? 'Partial' : 'Pending';
-  return { ...invoice, amountReceived, pendingAmount, fineWeightDue, fineWeightSettled, fineWeightPending, amountDue: invoice.amountDue ?? invoice.grandTotal, status };
+    pendingAmount <= 0 && fineWeightPending <= 0
+      ? 'Paid'
+      : amountReceived > 0 || fineWeightSettled > 0
+        ? 'Partial'
+        : 'Pending';
+  return {
+    ...invoice,
+    amountReceived,
+    pendingAmount,
+    fineWeightDue,
+    fineWeightSettled,
+    fineWeightPending,
+    amountDue: invoice.amountDue ?? invoice.grandTotal,
+    status,
+  };
 }
 
 function recalculateCustomer(customerId: string) {
-  const invoices = _invoices.filter((invoice) => invoice.customerId === customerId && invoice.status !== 'Cancelled');
+  const invoices = _invoices.filter(
+    (invoice) => invoice.customerId === customerId && invoice.status !== 'Cancelled'
+  );
   const totalPurchases = invoices.reduce((total, invoice) => total + invoice.grandTotal, 0);
-  const outstandingSilverFine = invoices.reduce((total, invoice) => total + (invoice.fineWeightPending ?? 0), 0);
+  const outstandingSilverFine = invoices.reduce(
+    (total, invoice) => total + (invoice.fineWeightPending ?? 0),
+    0
+  );
   const totalReceived = _ledger
     .filter((entry) => entry.customerId === customerId && entry.type === 'Payment')
     .reduce((total, entry) => total + entry.credit, 0);
-  const lastPurchase = invoices
-    .map((invoice) => invoice.date)
-    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || '';
+  const lastPurchase =
+    invoices
+      .map((invoice) => invoice.date)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || '';
 
   _customers = _customers.map((customer) =>
     customer.id === customerId
@@ -109,7 +151,19 @@ export function getCustomers(): Customer[] {
   return _customers;
 }
 
-export function addCustomer(data: Omit<Customer, 'id' | 'createdAt' | 'customerType' | 'totalPurchases' | 'totalReceived' | 'outstanding' | 'outstandingSilverFine' | 'lastPurchase'> & { customerType?: CustomerType }): Customer {
+export function addCustomer(
+  data: Omit<
+    Customer,
+    | 'id'
+    | 'createdAt'
+    | 'customerType'
+    | 'totalPurchases'
+    | 'totalReceived'
+    | 'outstanding'
+    | 'outstandingSilverFine'
+    | 'lastPurchase'
+  > & { customerType?: CustomerType }
+): Customer {
   const customer: Customer = {
     ...data,
     customerType: data.customerType ?? 'Retail',
@@ -174,7 +228,8 @@ export function addInvoice(invoice: Invoice): void {
       totalPurchases: customer.totalPurchases + normalizedInvoice.grandTotal,
       totalReceived: customer.totalReceived + received,
       outstanding: customer.outstanding + normalizedInvoice.pendingAmount,
-      outstandingSilverFine: (customer.outstandingSilverFine ?? 0) + (normalizedInvoice.fineWeightPending ?? 0),
+      outstandingSilverFine:
+        (customer.outstandingSilverFine ?? 0) + (normalizedInvoice.fineWeightPending ?? 0),
       lastPurchase: normalizedInvoice.date,
     });
   }
@@ -214,12 +269,20 @@ export function addInvoice(invoice: Invoice): void {
 }
 
 export function updateInvoiceDate(invoiceId: string, date: string): void {
-  const normalizedDate = date ? new Date(`${date}T12:00:00`).toISOString() : new Date().toISOString();
+  const normalizedDate = date
+    ? new Date(`${date}T12:00:00`).toISOString()
+    : new Date().toISOString();
   const invoice = getInvoiceById(invoiceId);
   if (!invoice) throw new Error('Estimate not found.');
 
-  _invoices = _invoices.map((inv) => (inv.id === invoice.id ? { ...inv, date: normalizedDate } : inv));
-  _ledger = _ledger.map((entry) => (entry.invoiceId === invoice.id || entry.reference === invoice.invoiceNumber ? { ...entry, date: normalizedDate } : entry));
+  _invoices = _invoices.map((inv) =>
+    inv.id === invoice.id ? { ...inv, date: normalizedDate } : inv
+  );
+  _ledger = _ledger.map((entry) =>
+    entry.invoiceId === invoice.id || entry.reference === invoice.invoiceNumber
+      ? { ...entry, date: normalizedDate }
+      : entry
+  );
   recalculateLedgerBalances(invoice.customerId);
   recalculateCustomer(invoice.customerId);
   persistAppStore();
@@ -254,7 +317,9 @@ export function updateInvoice(invoiceId: string, updates: Partial<Invoice>): Inv
   const discount = Number(updates.discount ?? current.discount) || 0;
   const additionalCharges = Number(updates.additionalCharges ?? current.additionalCharges) || 0;
   const beforeRoundOff = Math.max(0, subtotal - discount + additionalCharges);
-  const roundOff = getSettings().estimate.roundOff ? Math.round(beforeRoundOff) - beforeRoundOff : 0;
+  const roundOff = getSettings().estimate.roundOff
+    ? Math.round(beforeRoundOff) - beforeRoundOff
+    : 0;
   const fineWeightDue = mergedItems.reduce((total, item) => total + (item.fineWeightDue ?? 0), 0);
   const fineWeightSettled = Math.min(current.fineWeightSettled ?? 0, fineWeightDue);
   const normalized = recalculateInvoice({
@@ -276,7 +341,9 @@ export function updateInvoice(invoiceId: string, updates: Partial<Invoice>): Inv
   });
 
   _invoices = _invoices.map((invoice) => (invoice.id === current.id ? normalized : invoice));
-  _ledger = _ledger.filter((entry) => entry.invoiceId !== current.id && entry.reference !== current.invoiceNumber);
+  _ledger = _ledger.filter(
+    (entry) => entry.invoiceId !== current.id && entry.reference !== current.invoiceNumber
+  );
 
   addLedgerEntry({
     customerId: normalized.customerId,
@@ -307,7 +374,8 @@ export function updateInvoice(invoiceId: string, updates: Partial<Invoice>): Inv
   }
 
   recalculateLedgerBalances(current.customerId);
-  if (normalized.customerId !== current.customerId) recalculateLedgerBalances(normalized.customerId);
+  if (normalized.customerId !== current.customerId)
+    recalculateLedgerBalances(normalized.customerId);
   recalculateCustomer(current.customerId);
   if (normalized.customerId !== current.customerId) recalculateCustomer(normalized.customerId);
   persistAppStore();
@@ -331,7 +399,8 @@ export function addLedgerEntry(entry: Omit<LedgerEntry, 'id' | 'balance' | 'fine
   // Compute running balance for this customer
   const existing = _ledger.filter((e) => e.customerId === entry.customerId);
   const prevBalance = existing.length > 0 ? existing[existing.length - 1].balance : 0;
-  const prevFineBalance = existing.length > 0 ? existing[existing.length - 1].fineBalance ?? 0 : 0;
+  const prevFineBalance =
+    existing.length > 0 ? (existing[existing.length - 1].fineBalance ?? 0) : 0;
   const balance = prevBalance + entry.debit - entry.credit;
   const fineBalance = prevFineBalance + (entry.fineDebit ?? 0) - (entry.fineCredit ?? 0);
 
@@ -347,7 +416,11 @@ export function addLedgerEntry(entry: Omit<LedgerEntry, 'id' | 'balance' | 'fine
 
 // ── Payment Recording ─────────────────────────────────────────────────────────
 
-export function recordPayment(customerId: string, payment: Omit<Payment, 'id'>, invoiceId?: string): void {
+export function recordPayment(
+  customerId: string,
+  payment: Omit<Payment, 'id'>,
+  invoiceId?: string
+): void {
   const pmt: Payment = {
     ...payment,
     id: `pmt-${Date.now()}`,
@@ -405,11 +478,17 @@ export function settleSilverFine(
 ): void {
   const fineCredit = Math.max(0, Number(grams) || 0);
   if (fineCredit <= 0) throw new Error('Fine grams must be greater than 0.');
-  if (mode === 'Cash' && (!silverRate || silverRate <= 0)) throw new Error('Silver rate is required for cash fine settlement.');
+  if (mode === 'Cash' && (!silverRate || silverRate <= 0))
+    throw new Error('Silver rate is required for cash fine settlement.');
 
   let remaining = fineCredit;
   const eligible = [..._invoices]
-    .filter((invoice) => invoice.customerId === customerId && invoice.status !== 'Cancelled' && (invoice.fineWeightPending ?? 0) > 0)
+    .filter(
+      (invoice) =>
+        invoice.customerId === customerId &&
+        invoice.status !== 'Cancelled' &&
+        (invoice.fineWeightPending ?? 0) > 0
+    )
     .sort((a, b) => {
       if (invoiceId && a.id === invoiceId) return -1;
       if (invoiceId && b.id === invoiceId) return 1;
@@ -450,7 +529,10 @@ export function settleSilverFine(
     credit: 0,
     fineCredit: settled,
     silverRate: mode === 'Cash' ? silverRate : undefined,
-    reference: mode === 'Cash' ? `Fine cash equivalent ₹${Math.round(amountEquivalent).toLocaleString('en-IN')}` : 'Silver fine received',
+    reference:
+      mode === 'Cash'
+        ? `Fine cash equivalent ₹${Math.round(amountEquivalent).toLocaleString('en-IN')}`
+        : 'Silver fine received',
     invoiceId,
   });
 
@@ -466,7 +548,11 @@ export function deleteRecordedPayment(ledgerEntryId: string): void {
   if ((entry.fineCredit ?? 0) > 0) {
     let remaining = entry.fineCredit ?? 0;
     const affected = [..._invoices]
-      .filter((invoice) => invoice.customerId === entry.customerId && (entry.invoiceId ? invoice.id === entry.invoiceId : (invoice.fineWeightDue ?? 0) > 0))
+      .filter(
+        (invoice) =>
+          invoice.customerId === entry.customerId &&
+          (entry.invoiceId ? invoice.id === entry.invoiceId : (invoice.fineWeightDue ?? 0) > 0)
+      )
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     for (const invoice of affected) {
@@ -508,7 +594,9 @@ export function deleteRecordedPayment(ledgerEntryId: string): void {
       return true;
     });
 
-    return payments.length !== invoice.payments.length ? recalculateInvoice({ ...invoice, payments }) : invoice;
+    return payments.length !== invoice.payments.length
+      ? recalculateInvoice({ ...invoice, payments })
+      : invoice;
   });
 
   _ledger = _ledger.filter((item) => item.id !== ledgerEntryId);
@@ -611,7 +699,9 @@ export function computeAgeingStock() {
   const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
   return designs.flatMap((d) =>
     d.skus
-      .filter((s) => s.status === 'In Stock' && now - new Date(s.createdAt).getTime() > ninetyDaysMs)
+      .filter(
+        (s) => s.status === 'In Stock' && now - new Date(s.createdAt).getTime() > ninetyDaysMs
+      )
       .map((s) => ({
         id: s.id,
         designNumber: s.designNumber,
@@ -625,7 +715,13 @@ export function computeAgeingStock() {
 }
 
 export function computeRecentActivity() {
-  const activities: { id: string; type: string; description: string; time: string; amount: number }[] = [];
+  const activities: {
+    id: string;
+    type: string;
+    description: string;
+    time: string;
+    amount: number;
+  }[] = [];
 
   const recentInvoices = [..._invoices]
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
@@ -647,7 +743,10 @@ export function computeRecentActivity() {
       id: `act-design-${d.id}`,
       type: 'stock',
       description: `Design ${d.designNumber} added — ${d.skus.length} SKU(s)`,
-      time: new Date(d.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+      time: new Date(d.createdAt).toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
       amount: 0,
     });
   }
@@ -664,7 +763,16 @@ export function computeCategoryStockData() {
       categoryMap[d.category] = (categoryMap[d.category] || 0) + inStock;
     }
   }
-  const COLORS = ['#D4A843', '#B8902E', '#9B7A28', '#7D6422', '#C4A030', '#E8C060', '#F0D080', '#A89020'];
+  const COLORS = [
+    '#D4A843',
+    '#B8902E',
+    '#9B7A28',
+    '#7D6422',
+    '#C4A030',
+    '#E8C060',
+    '#F0D080',
+    '#A89020',
+  ];
   return Object.entries(categoryMap).map(([name, value], i) => ({
     name,
     value,

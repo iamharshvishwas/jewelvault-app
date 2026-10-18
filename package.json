@@ -7,7 +7,9 @@
   },
   "scripts": {
     "dev": "next dev -p ${PORT:-4028}",
+    "prebuild": "node scripts/pricing-hash.mjs",
     "build": "next build",
+    "check:build": "node scripts/check-build.mjs",
     "typecheck": "next typegen && tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -22,8 +24,10 @@
     "db:test": "node scripts/lane.mjs test",
     "db:test:2": "node scripts/lane.mjs test2",
     "db:check": "bash scripts/check-migrations.sh",
-    "test:e2e": "node scripts/lane.mjs run npx playwright test",
-    "verify": "node scripts/lane.mjs verify"
+    "test:e2e": "playwright test",
+    "e2e:lane": "node scripts/e2e-lane.mjs",
+    "verify": "node scripts/lane.mjs verify",
+    "pricing:hash": "node scripts/pricing-hash.mjs"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",

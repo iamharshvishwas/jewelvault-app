@@ -7,7 +7,7 @@
 //   LANE=a npm run db:test          reset, then the pgTAP tests (supabase test db neither migrates nor seeds)
 //   LANE=a npm run db:test:2        the Vitest tests over two connections and over HTTP
 //   LANE=a npm run db:check         T-F04: the migrations applied twice give the same schema, the advisor is clean
-//   LANE=a npm run verify           every gate before anything is called ready to push
+//   npm run verify                  every gate before anything is called ready to push (WEB00: no Supabase stack; E2E=1 LANE=b JV_API_DIR=... adds the browser tests, see scripts/e2e-lane.mjs)
 //   LANE=a npm run lane -- <command>  psql, run, status, ports, env, fingerprint, advisors ...  (see `help`)
 //
 // A lane is main, a, b or c. Each has its own work folder .lanes/<lane>/ (never committed) that holds the committed
@@ -199,29 +199,29 @@ export function renderEnvLocal(lane, { apiUrl, dbUrl, publishableKey }) {
 
 // ------------------------------------------------------------------------------------------------ verify plan
 
-// The order of the brief: typecheck, lint, unit, db:check, db:test, db:test:2, build, build check. A step whose script
-// does not exist yet is skipped by name, with the task that adds it, and the report names it.
+// WEB00: `npm run verify` is typecheck, changed-file lint, unit tests, build, build check (WEB14) and, with E2E=1, the Playwright tests against a lane
+// (a MariaDB container, the API of JV_API_DIR and three test users: scripts/e2e-lane.mjs). The Supabase steps (db:check, db:test, db:test:2) are gone
+// from it; their scripts stay until WEB15 removes the Supabase pieces. Only the e2e step needs a lane, so plain `npm run verify` needs neither LANE nor Docker.
 const VERIFY_STEPS = [
   { name: 'typecheck', script: 'typecheck' },
   { name: 'lint (changed files)', script: 'lint:changed' },
   { name: 'unit', script: 'test' },
-  { name: 'db:check', script: 'db:check', needsLane: true },
-  { name: 'db:test', script: 'db:test', needsLane: true },
-  { name: 'db:test:2', script: 'db:test:2', needsLane: true },
   { name: 'build', script: 'build' },
-  { name: 'build check', script: 'build:check', task: 'FE06' },
-  { name: 'e2e', script: 'test:e2e', task: 'FE02' },
+  { name: 'build check', script: 'check:build' },
+  { name: 'e2e', script: 'test:e2e', needsLane: true },
 ];
 
 /**
  * @param {Record<string, string>} scripts the scripts of package.json
- * @returns {Array<{ name: string, script: string, task?: string, needsLane: boolean, skip?: string }>}
+ * @param {Record<string, string | undefined>} [env] the environment: E2E=1 switches the e2e step on
+ * @returns {Array<{ name: string, script: string, needsLane: boolean, missing: boolean, skip?: string }>}
  */
-export function planVerify(scripts) {
+export function planVerify(scripts, env = process.env) {
   return VERIFY_STEPS.map((step) => ({
     ...step,
     needsLane: Boolean(step.needsLane),
-    skip: !scripts[step.script] && step.task ? `skipped (task ${step.task})` : undefined,
+    missing: !scripts[step.script],
+    skip: step.needsLane && env.E2E !== '1' ? 'skipped (set E2E=1 to run it)' : undefined,
   }));
 }
 
@@ -846,33 +846,60 @@ function runLogged(command, args, logFile, env) {
   });
 }
 
-async function cmdVerify(lane) {
-  assertDocker();
+/** Is the lane's MariaDB container still there? (`docker rm -fv` should have removed it.) */
+function laneContainerLeft(lane) {
+  const namespace = process.env.JV_LANE_NAMESPACE ? `${process.env.JV_LANE_NAMESPACE}-` : '';
+  const result = spawnSync(
+    'docker',
+    ['ps', '-a', '-q', '--filter', `name=^jv-mariadb-${namespace}${lane}$`],
+    { encoding: 'utf8' }
+  );
+  return result.status === 0 && result.stdout.trim() !== '';
+}
+
+async function cmdVerify() {
+  const withE2e = process.env.E2E === '1';
+  let lane = null;
+  if (withE2e) {
+    // Fail before the long steps, not after them: the e2e step needs a lane, the API checkout and Docker.
+    try {
+      // loaded only here: this file stays usable on its own (the migration tests copy it alone into a scratch repository)
+      const e2eLane = await import('./e2e-lane.mjs');
+      lane = e2eLane.assertLane(process.env.LANE);
+      e2eLane.resolveApiDir(process.env);
+    } catch (error) {
+      die(error.message);
+    }
+    assertDocker();
+  }
   const scripts = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).scripts;
-  const plan = planVerify(scripts);
-  const logDir = path.join(laneDir(lane), 'logs');
+  const plan = planVerify(scripts, process.env);
+  const logDir = path.join(laneDir(lane ?? '_local'), 'logs');
   mkdirSync(logDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15);
   const logFile = path.join(logDir, `verify-${stamp}.log`);
-  const volumesBefore = volumeCount();
+  const volumesBefore = withE2e ? volumeCount() : null;
   /** @type {Array<{ name: string, status: 'passed' | 'FAILED' | 'skipped', detail: string }>} */
   const results = [];
   for (const step of plan) {
     if (step.skip) {
       info(`\n== ${step.name}: ${step.skip}`);
-      results.push({
-        name: step.name,
-        status: 'skipped',
-        detail: `task ${step.task}`,
-      });
+      results.push({ name: step.name, status: 'skipped', detail: step.skip });
       continue;
     }
     info(`\n== ${step.name}`);
-    if (step.needsLane) await ensureRunning(lane);
+    if (step.missing) {
+      results.push({
+        name: step.name,
+        status: 'FAILED',
+        detail: `package.json has no script "${step.script}"`,
+      });
+      continue;
+    }
     const started = Date.now();
     const code = await runLogged('npm', ['run', step.script], logFile, {
       ...process.env,
-      LANE: lane,
+      ...(lane ? { LANE: lane } : {}),
     });
     const seconds = ((Date.now() - started) / 1000).toFixed(1);
     results.push(
@@ -881,15 +908,17 @@ async function cmdVerify(lane) {
         : { name: step.name, status: 'FAILED', detail: `${seconds} s, exit ${code}` }
     );
   }
-  info(`\nverify, lane ${lane}`);
-  for (const r of results) info(`  ${r.name.padEnd(22)} ${r.status} (${r.detail})`);
-  const failed = results.filter((r) => r.status === 'FAILED');
-  const skipped = results.filter((r) => r.status === 'skipped');
-  info(`  docker volumes: ${volumesBefore} before, ${volumeCount()} after`);
-  info(`  full output: ${path.relative(ROOT, logFile)}`);
-  if (skipped.length) {
-    info(`  skipped: ${skipped.map((r) => `${r.name} ${r.detail}`).join(', ')}`);
+  info(`\nverify${lane ? `, lane ${lane}` : ''}`);
+  for (const r of results) {
+    const outcome = r.status === 'skipped' ? r.detail : `${r.status} (${r.detail})`;
+    info(`  ${r.name.padEnd(22)} ${outcome}`);
   }
+  const failed = results.filter((r) => r.status === 'FAILED');
+  if (withE2e) {
+    info(`  docker volumes: ${volumesBefore} before, ${volumeCount()} after`);
+    info(`  lane container afterwards: ${laneContainerLeft(lane) ? 'STILL THERE' : 'none'}`);
+  }
+  info(`  full output: ${path.relative(ROOT, logFile)}`);
   info(failed.length ? `verify FAILED: ${failed.map((r) => r.name).join(', ')}` : 'verify passed');
   process.exit(failed.length ? 1 : 0);
 }
@@ -905,7 +934,7 @@ const HELP = `usage: LANE=<main|a|b|c> node scripts/lane.mjs <command> [options]
   test [files]           reset, then pgTAP (supabase test db)
   test2 [vitest args]    Vitest over two connections and HTTP (tests/db)
   check                  T-F04: migrations twice give the same schema, advisor clean
-  verify                 every gate (typecheck, lint, unit, db:check, db:test, db:test:2, build, ...)
+  verify                 every gate (typecheck, lint, unit, build, build check; E2E=1 adds the Playwright tests on a lane) (needs no LANE without E2E=1)
   run <command...>       run a command with the lane's environment (PORT, DATABASE_URL, ...)
   psql [args]            psql inside the lane's database container
   env                    print the lane's .env.local
@@ -916,7 +945,14 @@ const HELP = `usage: LANE=<main|a|b|c> node scripts/lane.mjs <command> [options]
   lint-changed           ESLint on the files changed since the merge base with main (needs no LANE)
 `;
 
-const NEEDS_NO_LANE = new Set(['ports', 'lint-migrations', 'lint-changed', 'help', undefined]);
+const NEEDS_NO_LANE = new Set([
+  'ports',
+  'lint-migrations',
+  'lint-changed',
+  'verify',
+  'help',
+  undefined,
+]);
 
 /** @param {string[]} argv */
 export async function main(argv) {
@@ -928,6 +964,7 @@ export async function main(argv) {
   if (command === 'ports') return cmdPorts();
   if (command === 'lint-migrations') return cmdLintMigrations(args);
   if (command === 'lint-changed') return cmdLintChanged();
+  if (command === 'verify') return cmdVerify();
   if (NEEDS_NO_LANE.has(command)) return undefined;
   let lane;
   try {
@@ -950,8 +987,6 @@ export async function main(argv) {
       return cmdTestTwoConnections(lane, args);
     case 'check':
       return cmdCheck(lane);
-    case 'verify':
-      return cmdVerify(lane);
     case 'run':
       return cmdRun(lane, args);
     case 'psql':

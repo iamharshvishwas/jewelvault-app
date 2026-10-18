@@ -226,56 +226,68 @@ describe('renderEnvLocal', () => {
   });
 });
 
-describe('the verify plan', () => {
+describe('the verify plan (WEB00)', () => {
   const scripts = {
     typecheck: 'x',
     'lint:changed': 'x',
     test: 'x',
+    build: 'x',
+    'check:build': 'x',
+    'test:e2e': 'x',
     'db:check': 'x',
     'db:test': 'x',
     'db:test:2': 'x',
-    build: 'x',
   };
+  type Step = {
+    name: string;
+    script: string;
+    needsLane: boolean;
+    skip?: string;
+  };
+  const plan = (env: Record<string, string | undefined>) => lane.planVerify(scripts, env) as Step[];
 
-  it('runs the steps in the order of the brief', () => {
-    const names = lane
-      .planVerify({ ...scripts, 'build:check': 'x', 'test:e2e': 'x' })
-      .map((s: { name: string }) => s.name);
-    expect(names).toEqual([
+  it('runs typecheck, changed-file lint, unit tests, build, build check and the e2e step, in that order', () => {
+    expect(plan({ E2E: '1' }).map((s) => s.name)).toEqual([
       'typecheck',
       'lint (changed files)',
       'unit',
-      'db:check',
-      'db:test',
-      'db:test:2',
       'build',
       'build check',
       'e2e',
     ]);
   });
 
-  it('skips a step whose script does not exist yet and names the task that adds it', () => {
-    const plan = lane.planVerify(scripts) as Array<{ name: string; skip?: string }>;
-    expect(plan.find((s) => s.name === 'build check')?.skip).toBe('skipped (task FE06)');
-    expect(plan.find((s) => s.name === 'e2e')?.skip).toBe('skipped (task FE02)');
-    expect(plan.find((s) => s.name === 'typecheck')?.skip).toBeUndefined();
+  it('runs the e2e step only when E2E=1, and says how to switch it on', () => {
+    for (const env of [{}, { E2E: '' }, { E2E: '0' }, { E2E: 'true' }]) {
+      expect(plan(env).find((s) => s.name === 'e2e')?.skip, JSON.stringify(env)).toBe(
+        'skipped (set E2E=1 to run it)'
+      );
+    }
+    expect(plan({ E2E: '1' }).find((s) => s.name === 'e2e')?.skip).toBeUndefined();
   });
 
-  it('runs the step as soon as its script exists', () => {
-    const plan = lane.planVerify({ ...scripts, 'build:check': 'x' }) as Array<{
-      name: string;
-      skip?: string;
-    }>;
-    expect(plan.find((s) => s.name === 'build check')?.skip).toBeUndefined();
+  it('runs the build check (npm run check:build) and the e2e step (npm run test:e2e) by script name', () => {
+    const byName = Object.fromEntries(plan({ E2E: '1' }).map((s) => [s.name, s.script]));
+    expect(byName['build check']).toBe('check:build');
+    expect(byName.e2e).toBe('test:e2e');
   });
 
-  it('marks the steps that need the lane stack', () => {
-    const plan = lane.planVerify(scripts) as Array<{ name: string; needsLane: boolean }>;
-    expect(plan.filter((s) => s.needsLane).map((s) => s.name)).toEqual([
-      'db:check',
-      'db:test',
-      'db:test:2',
-    ]);
+  it('no longer calls any Supabase lane step', () => {
+    for (const step of plan({ E2E: '1' })) {
+      expect(step.script, step.name).not.toMatch(/^db:/);
+    }
+  });
+
+  it('needs a lane (a MariaDB container and an API) for the e2e step alone', () => {
+    expect(
+      plan({ E2E: '1' })
+        .filter((s) => s.needsLane)
+        .map((s) => s.name)
+    ).toEqual(['e2e']);
+  });
+
+  it('is the package.json script verify, which runs lane.mjs verify', () => {
+    expect(JSON.parse(read('package.json')).scripts.verify).toBe('node scripts/lane.mjs verify');
   });
 });
 
@@ -347,16 +359,20 @@ describe('repository wiring', () => {
   });
 });
 
-describe('playwright.config.ts', () => {
+describe('playwright.config.ts (WEB00)', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
   });
 
-  it('runs one worker, not fully parallel, on the port from PORT', async () => {
-    vi.stubEnv('PORT', '4321');
+  const load = async (env: Record<string, string>) => {
+    for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
     vi.resetModules();
-    const config = (await import('../../playwright.config')).default;
+    return (await import('../../playwright.config')).default;
+  };
+
+  it('runs one worker, not fully parallel, on the port from PORT', async () => {
+    const config = await load({ PORT: '4321', LANE: '' });
     expect(config.workers).toBe(1);
     expect(config.fullyParallel).toBe(false);
     expect(config.use?.baseURL).toBe('http://localhost:4321');
@@ -365,11 +381,26 @@ describe('playwright.config.ts', () => {
     expect(server.env?.PORT).toBe('4321');
   });
 
-  it('falls back to 4028 when PORT is not set', async () => {
-    vi.stubEnv('PORT', '');
-    vi.resetModules();
-    const config = (await import('../../playwright.config')).default;
-    expect(config.use?.baseURL).toBe('http://localhost:4028');
+  it('falls back to the lane dev-server port, and to 4028 with no lane', async () => {
+    expect((await load({ PORT: '', LANE: 'b' })).use?.baseURL).toBe('http://localhost:4228');
+    expect((await load({ PORT: '', LANE: '' })).use?.baseURL).toBe('http://localhost:4028');
+  });
+
+  it("builds the site with the lane's API address and nothing else from outside (H4)", async () => {
+    const config = await load({ PORT: '4228', LANE: 'b' });
+    const server = config.webServer as { env?: Record<string, string> };
+    expect(server.env?.NEXT_PUBLIC_API_URL).toBe('http://localhost:4229');
+    expect(Object.keys(server.env ?? {}).sort()).toEqual(['NEXT_PUBLIC_API_URL', 'PORT']);
+  });
+
+  it('never reuses a server that is already running on the lane port', async () => {
+    const config = await load({ PORT: '4228', LANE: 'b' });
+    expect((config.webServer as { reuseExistingServer: boolean }).reuseExistingServer).toBe(false);
+  });
+
+  it('starts and stops the lane in the global setup', async () => {
+    const config = await load({ PORT: '4228', LANE: 'b' });
+    expect(config.globalSetup).toMatch(/tests\/e2e\/global-setup\.ts$/);
   });
 });
 
