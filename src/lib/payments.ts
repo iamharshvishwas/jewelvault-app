@@ -73,7 +73,7 @@ export interface FineInput {
 }
 
 /** Typed text to whole units (paise or milligrams), or the sentence that says what is wrong with it. A blank is "Enter the ...". */
-function typedUnits(text: string, scale: 2 | 3, what: string): number | string {
+export function typedUnits(text: string, scale: 2 | 3, what: string): number | string {
   const typed = text.trim();
   if (typed === '') return `Enter the ${what}.`;
   try {

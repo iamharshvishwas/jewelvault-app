@@ -439,10 +439,14 @@ export interface CreateBillResponse {
   advance_applied: MoneyText;
 }
 
-/** X10 `POST /v1/bills/{id}/reissue` (201). */
+/**
+ * X10 `POST /v1/bills/{id}/reissue` (201; handoff API26). `allocations` are the rows the call made (the carried-over money first, then the new payments), `released_allocations` the old
+ * bill's rows that the cancel released, `advance_applied` the money carried to the NEW bill.
+ */
 export interface ReissueBillResponse extends Omit<CreateBillResponse, 'bill'> {
   old_bill: BillRow;
   new_bill: BillRow;
+  released_allocations: ReceiptAllocationRow[];
 }
 
 /** X2 `POST /v1/customers/{id}/payments` (201). */
@@ -459,18 +463,25 @@ export interface SettleFineResponse {
   fine_remaining: WeightText;
 }
 
-/** X4 `POST /v1/receipts/{id}/void` (200). */
+/**
+ * X4 `POST /v1/receipts/{id}/void` (200; handoff API25). `allocations` are the rows the rebalance made; `bills` are the affected bills in the form of the bill-summary read (V1: the bills the
+ * receipt had paid, then the others the rebalance paid), as the API worked them out after the call.
+ */
 export interface VoidReceiptResponse {
   receipt: ReceiptRow;
   allocations: ReceiptAllocationRow[];
-  bills: BillRow[];
+  bills: BillSummaryRow[];
 }
 
-/** X5 `POST /v1/bills/{id}/cancel` (200). */
+/**
+ * X5 `POST /v1/bills/{id}/cancel` (200; handoff API25). `released_allocations` are the bill's rows the cancel released, `allocations` the rows the rebalance made with the freed money (a
+ * fourth key beside NODE-DESIGN 4.3's three: "advance adjusted").
+ */
 export interface CancelBillResponse {
   bill: BillRow;
   skus: SkuRow[];
   released_allocations: ReceiptAllocationRow[];
+  allocations: ReceiptAllocationRow[];
 }
 
 /** X6 `POST /v1/customers` (201). */
@@ -496,9 +507,9 @@ export interface IssueRefundResponse {
   advance: MoneyText;
 }
 
-/** X12 `POST /v1/customers/{id}/opening-balance` (201). */
+/** X12 `POST /v1/customers/{id}/opening-balance` (201; handoff API27). `bill` is null when the call had neither dues nor fine due; `allocations` are the rows the rebalance made. */
 export interface OpeningBalanceResponse {
-  bill: BillRow;
+  bill: BillRow | null;
   receipts: ReceiptRow[];
   allocations: ReceiptAllocationRow[];
 }

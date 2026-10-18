@@ -8,6 +8,8 @@ interface CustomerSearchPanelProps {
   customers: Customer[];
   selectedCustomer: Customer | null;
   onSelectCustomer: (c: Customer | null) => void;
+  /** A re-issue (X10, WEB11): the customer is the old bill's and cannot change (K6), so the panel shows it and offers no search and no change. */
+  locked?: { name: string; mobile: string } | null;
   // X6 is a call to the server (WEB07): the new customer comes back when it has been saved, or the promise is rejected with the plain sentence of what went wrong
   onCreateCustomer: (data: {
     name: string;
@@ -24,6 +26,7 @@ export default function CustomerSearchPanel({
   customers,
   selectedCustomer,
   onSelectCustomer,
+  locked = null,
   onCreateCustomer,
 }: CustomerSearchPanelProps) {
   const [query, setQuery] = useState('');
@@ -105,6 +108,32 @@ export default function CustomerSearchPanel({
       setIsSaving(false);
     }
   };
+
+  if (locked) {
+    return (
+      <div data-testid="reissue-customer" className="jewel-card p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-foreground">Customer</h3>
+          <span className="text-xs text-muted-foreground">
+            The customer cannot change in a re-issue
+          </span>
+        </div>
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+            <User size={18} className="text-primary" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-foreground">{locked.name}</p>
+            {locked.mobile && (
+              <p className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5">
+                <Phone size={11} /> {locked.mobile}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (selectedCustomer) {
     return (
