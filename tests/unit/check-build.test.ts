@@ -2,8 +2,16 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import ts from 'typescript';
 import { afterAll, describe, expect, it } from 'vitest';
-import { checkBuild, routesFromSrc } from '../../scripts/check-build.mjs';
+import {
+  ALLOWED_PUBLIC_ENV,
+  RAW_HTML_ALLOWED,
+  RAW_HTML_NAMES,
+  TOLERATED,
+  checkBuild,
+  routesFromSrc,
+} from '../../scripts/check-build.mjs';
 
 // T-D12, the build half (spec H2, H3, H4, C10, U10; task WEB14): scripts/check-build.mjs fails the build if out/ holds a forbidden string or a .map file, if src/ uses a raw-HTML API,
 // if a route has no static page, or if the code reads a build-time variable other than NEXT_PUBLIC_API_URL. These tests run it on small made-up folders, so each rule is shown
@@ -253,6 +261,255 @@ describe('T-D12 next.config.mjs (H1, H2, C10)', () => {
     ])
       expect(config, key).not.toHaveProperty(key);
     expect((config.images as { unoptimized: boolean }).unoptimized).toBe(true);
+  });
+});
+
+// PT-RV1c (implementation review 1, RV1-8; H3, H4, U10; task RV1c). The review's mutation A18 added a second name to ALLOWED_PUBLIC_ENV and none of the 46 tests of the build check
+// failed: every test planted a name that was NOT on the list, and none read the list itself. So the lists are pinned here, and the raw-HTML names that the check missed
+// (outerHTML, insertAdjacentHTML, document.write, document.writeln: RV1-8 (b)) fail like innerHTML does. These tests live in THIS file because the review's mutation runs name it.
+describe('PT-RV1c the build check cannot lose its pin: the lists (RV1-8 (a), A18)', () => {
+  it('the one build-time variable the code may read is NEXT_PUBLIC_API_URL, and the list says exactly that (H4, U10)', () => {
+    expect(ALLOWED_PUBLIC_ENV).toEqual(['NEXT_PUBLIC_API_URL']);
+  });
+
+  it('the names tolerated until WEB15 are these three and no more; WEB15 sets TOLERATED to [] and changes this line with it', () => {
+    expect(TOLERATED).toEqual([
+      'NEXT_PUBLIC_PREVIEW_MODE',
+      'NEXT_PUBLIC_SUPABASE_URL',
+      'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
+    ]);
+  });
+
+  it('no name is on both lists, so a tolerated name never becomes a silent one', () => {
+    for (const name of TOLERATED) expect(ALLOWED_PUBLIC_ENV).not.toContain(name);
+  });
+
+  it.each([
+    'NEXT_PUBLIC_SECRET_THING',
+    'NEXT_PUBLIC_API_URL_OLD',
+    'NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY',
+    'API_URL',
+  ])('reading %s fails: only the pinned name is silent, and a name next to it is not', (name) => {
+    const r = run(CLEAN_OUT, {
+      ...CLEAN_SRC,
+      'lib/env.ts': `export const x = process.env.${name};`,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.problems.join('\n')).toContain(name);
+  });
+
+  it('the raw-HTML names include all six, so none can be dropped quietly (a name may be added, never removed)', () => {
+    expect(RAW_HTML_NAMES).toEqual(
+      expect.arrayContaining([
+        'dangerouslySetInnerHTML',
+        'innerHTML',
+        'outerHTML',
+        'insertAdjacentHTML',
+        'document.write',
+        'document.writeln',
+      ])
+    );
+  });
+
+  it('the files allowed to use a raw-HTML name are exactly the print window, and only for document.write: the list cannot grow without this line changing', () => {
+    expect(RAW_HTML_ALLOWED).toEqual({ 'src/lib/exportUtils.ts': ['document.write'] });
+  });
+});
+
+describe('PT-RV1c the build check cannot lose its pin: raw HTML names (RV1-8 (b), H3)', () => {
+  const withSrc = (name: string, code: string) => ({ ...CLEAN_SRC, [name]: code });
+  const line2 = (use: string) =>
+    `export function f(el: HTMLElement, w: Window, h: string) {\n  ${use}\n}`;
+
+  it.each([
+    ['outerHTML', 'a property write', line2('el.outerHTML = h;')],
+    ['outerHTML', 'an element access with a string', line2("el['outerHTML'] = h;")],
+    ['outerHTML', 'a destructured name', line2('const { outerHTML } = el;')],
+    ['insertAdjacentHTML', 'a call', line2("el.insertAdjacentHTML('beforeend', h);")],
+    [
+      'insertAdjacentHTML',
+      'an element access with a string',
+      line2("el['insertAdjacentHTML']('afterbegin', h);"),
+    ],
+    ['document.write', 'a call on document', line2('document.write(h);')],
+    [
+      'document.write',
+      'a call on the document of another window (the shape of the print window)',
+      line2('w.document.write(h);'),
+    ],
+    ['document.write', 'a call on window.document', line2('window.document.write(h);')],
+    ['document.write', 'an element access with a string', line2("document['write'](h);")],
+    ['document.write', 'a destructured name', line2('const { write } = document;')],
+    [
+      'document.write',
+      'a copy that is not called there',
+      line2('const put = document.write.bind(document);'),
+    ],
+    ['document.write', 'a call through a cast', line2('(w as Window).document.write(h);')],
+    [
+      'document.write',
+      'a call on the contentDocument of a frame',
+      line2('(el as HTMLIFrameElement).contentDocument?.write(h);'),
+    ],
+    ['document.writeln', 'a call on document', line2('document.writeln(h);')],
+    [
+      'document.writeln',
+      'a call on the document of another window',
+      line2('w.document.writeln(h);'),
+    ],
+    ['document.writeln', 'an element access with a string', line2("w.document['writeln'](h);")],
+  ])('%s fails as %s, with the file, the line and the name', (name, _what, code) => {
+    const r = run(CLEAN_OUT, withSrc('lib/dom.ts', code));
+    expect(r.ok).toBe(false);
+    expect(r.problems.join('\n')).toMatch(
+      new RegExp(`lib/dom\\.ts:\\d+.*uses ${name.replace('.', '\\.')}( |\\b).*H3`)
+    );
+  });
+
+  it('the line number is the line of the use', () => {
+    const r = run(CLEAN_OUT, withSrc('lib/dom.ts', line2('w.document.write(h);')));
+    expect(r.problems).toEqual([
+      expect.stringMatching(/^src\/lib\/dom\.ts:2: uses document\.write /),
+    ]);
+  });
+
+  it('a comment, a text or another object that merely has a write method is not a use', () => {
+    const r = run(
+      CLEAN_OUT,
+      withSrc(
+        'lib/note.ts',
+        [
+          '// never use outerHTML, insertAdjacentHTML, document.write or document.writeln here',
+          '/* document.write(x); el.outerHTML = x; */',
+          'export const note = "document.write is banned, and so is outerHTML in a sentence";',
+          'export async function copy(items: ClipboardItem[], out: { write(s: string): void; writeln(s: string): void }) {',
+          '  await navigator.clipboard.write(items);',
+          "  out.write('a');",
+          "  out.writeln('b');",
+          "  const p = document.createElement('p');",
+          "  p.textContent = 'plain';",
+          '  document.body.append(p);',
+          '}',
+        ].join('\n')
+      )
+    );
+    expect(r.problems).toEqual([]);
+  });
+});
+
+describe('PT-RV1c the print window is allowed by name, and only it (RV1-8 (b))', () => {
+  const realFile = path.resolve(__dirname, '../../src/lib/exportUtils.ts');
+  const real = readFileSync(realFile, 'utf8');
+  const withSrc = (name: string, code: string) => ({ ...CLEAN_SRC, [name]: code });
+
+  it('the real src/lib/exportUtils.ts passes in its own place and uses document.write (an allowance for a file that no longer needs it must be removed)', () => {
+    expect(real).toContain('document.write(');
+    const r = run(CLEAN_OUT, withSrc('lib/exportUtils.ts', real));
+    expect(r.problems).toEqual([]);
+  });
+
+  it('the same text under another name fails: the allowance is the file, not the code', () => {
+    const r = run(CLEAN_OUT, withSrc('lib/printReport.ts', real));
+    expect(r.ok).toBe(false);
+    expect(r.problems.join('\n')).toMatch(/lib\/printReport\.ts:\d+.*uses document\.write/);
+  });
+
+  it.each([
+    ['innerHTML', 'el.innerHTML = h;'],
+    ['outerHTML', 'el.outerHTML = h;'],
+    ['insertAdjacentHTML', "el.insertAdjacentHTML('beforeend', h);"],
+    ['document.writeln', 'document.writeln(h);'],
+    ['dangerouslySetInnerHTML', 'const x = { dangerouslySetInnerHTML: { __html: h } };'],
+  ])(
+    'the allowed file is not allowed %s: the allowance is for document.write alone',
+    (name, use) => {
+      const code = `${real}\nexport function extra(el: HTMLElement, h: string) {\n  ${use}\n}\n`;
+      const r = run(CLEAN_OUT, withSrc('lib/exportUtils.ts', code));
+      expect(r.ok).toBe(false);
+      expect(r.problems.join('\n')).toContain(`uses ${name}`);
+    }
+  );
+
+  // WHY the allowance is safe: reportTableHtml builds the page that document.write receives, and every value that goes into it passes through escapeHtml (a title, a subtitle,
+  // a column name, a cell). This reads the function with the TypeScript parser and fails on a value that is put in as it is, so the allowance cannot hide a raw value (the review's worry).
+  const rawValues = (text: string) => {
+    const sf = ts.createSourceFile(
+      'exportUtils.ts',
+      text,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS
+    );
+    let fn: ts.FunctionDeclaration | undefined;
+    sf.forEachChild((n) => {
+      if (ts.isFunctionDeclaration(n) && n.name?.text === 'reportTableHtml') fn = n;
+    });
+    if (!fn)
+      throw new Error(
+        'reportTableHtml is not in src/lib/exportUtils.ts any more: move this test, and the RAW_HTML_ALLOWED entry of scripts/check-build.mjs, with the code that builds the print window'
+      );
+    const called = (e: ts.Node, name: string) =>
+      ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === name;
+    const safe = (e: ts.Expression): boolean => {
+      if (ts.isParenthesizedExpression(e)) return safe(e.expression);
+      if (called(e, 'escapeHtml')) return true;
+      if (ts.isTemplateExpression(e) || ts.isNoSubstitutionTemplateLiteral(e)) return true; // its own values are checked on their own
+      if (ts.isConditionalExpression(e)) return safe(e.whenTrue) && safe(e.whenFalse);
+      if (
+        ts.isCallExpression(e) &&
+        ts.isPropertyAccessExpression(e.expression) &&
+        e.expression.name.text === 'join' &&
+        ts.isCallExpression(e.expression.expression) &&
+        ts.isPropertyAccessExpression(e.expression.expression.expression) &&
+        e.expression.expression.expression.name.text === 'map'
+      ) {
+        // rows.map((row) => `...`).join(''): the callback must give a template or an escaped value
+        const cb = e.expression.expression.arguments[0];
+        return !!cb && ts.isArrowFunction(cb) && ts.isExpression(cb.body) && safe(cb.body);
+      }
+      // Math.max(1, columns.length): a number
+      return (
+        ts.isCallExpression(e) &&
+        ts.isPropertyAccessExpression(e.expression) &&
+        e.expression.expression.getText(sf) === 'Math' &&
+        e.expression.name.text === 'max'
+      );
+    };
+    const raw: string[] = [];
+    let spans = 0;
+    const visit = (n: ts.Node) => {
+      if (called(n, 'escapeHtml')) return; // what is inside the call is escaped as a whole
+      if (ts.isTemplateExpression(n))
+        for (const span of n.templateSpans) {
+          spans += 1;
+          if (!safe(span.expression)) raw.push(span.expression.getText(sf));
+        }
+      ts.forEachChild(n, visit);
+    };
+    visit(fn);
+    return { raw, spans };
+  };
+
+  it('every value put into the report page by reportTableHtml passes through escapeHtml', () => {
+    const { raw, spans } = rawValues(real);
+    expect(spans).toBeGreaterThan(5); // the test did read the page
+    expect(raw).toEqual([]);
+  });
+
+  it('negative control: a title, a column name or a cell put in without escapeHtml is found', () => {
+    for (const [from, to, found] of [
+      ['<title>${escapeHtml(title)}</title>', '<title>${title}</title>', 'title'],
+      ['<th>${escapeHtml(column)}</th>', '<th>${column}</th>', 'column'],
+      ['<td>${escapeHtml(row[column])}</td>', '<td>${row[column]}</td>', 'row[column]'],
+      [
+        '<p>${escapeHtml(subtitle ? `${subtitle} · Generated ${generated}` : `Generated ${generated}`)}</p>',
+        '<p>${subtitle}</p>',
+        'subtitle',
+      ],
+    ]) {
+      expect(real, from).toContain(from);
+      expect(rawValues(real.replace(from, to)).raw, from).toContain(found);
+    }
   });
 });
 
