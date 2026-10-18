@@ -9,6 +9,7 @@ import {
   watchCustomerLedger,
 } from '@/lib/appStore';
 import SaveButton from '@/components/ui/SaveButton';
+import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import CustomerList from './CustomerList';
 import CustomerDetail from './CustomerDetail';
 import type { Customer, CustomerType } from '@/lib/mockData';
@@ -48,17 +49,22 @@ export default function CustomerLedgerClient() {
   });
   const [errors, setErrors] = useState<Partial<AddCustomerForm>>({});
 
+  // C17: after any write that touches money the client polls at once, and that poll brings the customer's bill-summary rows and customer-balances row (V1, V2). The card is drawn
+  // again as soon as memory holds them, not at the next tick of the clock below; the tick stays for the ledger's own state and for the preview build, whose store has no events.
+  const books = useRowCacheVersion('customers', 'customer-balances', 'bills', 'bill-summary');
+  const selectedId = selectedCustomer?.id ?? null;
+
   useEffect(() => {
     const refresh = () => {
       const list = getCustomers();
       setCustomers(list);
       // Keep selected customer in sync
-      if (selectedCustomer) {
-        const updated = list.find((c) => c.id === selectedCustomer.id);
+      if (selectedId) {
+        const updated = list.find((c) => c.id === selectedId);
         if (updated) setSelectedCustomer(updated);
         // the state of the open card's ledger (WEB07): loading the first time, or why it could not be loaded
-        const status = getLedgerStatus(selectedCustomer.id);
-        const empty = getLedgerForCustomer(selectedCustomer.id).length === 0;
+        const status = getLedgerStatus(selectedId);
+        const empty = getLedgerForCustomer(selectedId).length === 0;
         setLedger((before) =>
           before.state === status.state &&
           before.message === status.message &&
@@ -71,7 +77,7 @@ export default function CustomerLedgerClient() {
     refresh();
     const interval = setInterval(refresh, 1000);
     return () => clearInterval(interval);
-  }, [selectedCustomer?.id]);
+  }, [selectedId, books]);
 
   // C3: the ledger of the customer is read from the server when the card opens, and again whenever that customer's updated_at changes
   useEffect(() => {
@@ -314,6 +320,7 @@ export default function CustomerLedgerClient() {
           )}
           {selectedCustomer ? (
             <CustomerDetail
+              key={selectedCustomer.id}
               customer={selectedCustomer}
               onDeleted={() => {
                 setCustomers(getCustomers());

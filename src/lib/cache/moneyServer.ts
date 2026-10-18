@@ -14,14 +14,32 @@
 //   The rows X1 returns (the bill, its lines, the receipts and the allocations of the payment rows) are merged as they are, and only when the server has answered (C5 (b)): a piece
 //   never shows Sold and a bill never shows saved before that (the pieces and the bill's figures V1 arrive with the poll the client makes at once after every write).
 //
+//   RECEIVING A PAYMENT (X2, `POST /v1/customers/{id}/payments`) AND SETTLING SILVER FINE (X3, `.../fine-settlements`, WEB09). The same rule again, with the customer in the path: ONE
+//   Idempotency-Key for each user action, where the action is the customer and the body as `buildPaymentBody` / `buildFineBody` make it. A double click joins the call on its way; pressing
+//   Save again for the SAME payment after a call that did not end well (a lost answer, a gateway error, a refusal such as the cash limit) sends the SAME key, so a payment whose answer was
+//   lost is answered from the server's store and never made twice (L5, C6); a payment with any other detail (another amount, a reason added), or for another customer, is another action and
+//   a key of its own. Once a payment was made, the next one has a new key even when it is the same: it is a second payment. The panel being closed forgets the keys of calls that could not
+//   be confirmed (`forgetPaymentTries`): the books have been read again by then, and the person sees whether the payment is there before keying it again (C13). The rows X2 and X3 return
+//   (the receipt and its allocations) are merged as they are, and only when the server has answered (C5 (b)); the figures of V1 and V2 come with the poll the client makes at once after
+//   every write (C17).
+//
 //   THE LEDGER OF A CUSTOMER (V3, `GET /v1/customers/{id}/ledger`). Not part of the hydrate: loaded when a customer card opens (`watchLedger`), in pages of up to 1,000 events
 //   that follow the server's own cursor, and loaded again when that customer's `updated_at` changes (every bill, receipt, cancel and void moves it, D23). The rows are kept as the
 //   server sent them, with the running balance it worked out; nothing is added up here.
 //
 // A logout (U8) forgets all of it: the ledgers, the remembered key, and any load still on its way is thrown away when it arrives.
 import { api as siteApi, isApiError, type ApiClient } from '@/lib/api/client';
-import type { CreateBillResponse, CreateCustomerResponse, CustomerRow } from '@/lib/api/types';
+import type {
+  CreateBillResponse,
+  CreateCustomerResponse,
+  CustomerRow,
+  ReceiptAllocationRow,
+  ReceiptRow,
+  RecordPaymentResponse,
+  SettleFineResponse,
+} from '@/lib/api/types';
 import type { BillBody } from '@/lib/billing';
+import type { RecordPaymentBody, SettleFineBody } from '@/lib/payments';
 import { registerLogoutHook as siteRegisterLogoutHook } from '@/lib/authStore';
 import { rowCache, type RowCache } from './cache';
 
@@ -83,6 +101,15 @@ export interface MoneyServer {
   createBill(input: BillBody): Promise<CreateBillResponse>;
   /** The person started over (a new sale, a discard): the key of the bill that could not be confirmed is forgotten, so the next bill gets a key of its own. */
   forgetBill(): void;
+  /**
+   * X2. Resolves with the answer (the receipt, its allocations and `advance_remaining`), whose rows are merged into the cache first. Rejects with the client's ApiError, whose `message` is
+   * the plain C13 text and whose `idempotencyKey` is kept for the next press of Save for the same payment.
+   */
+  recordPayment(customerId: string, input: RecordPaymentBody): Promise<RecordPaymentResponse>;
+  /** X3. The same for a silver-fine settlement (the receipt, its allocations and `fine_remaining`). */
+  settleFine(customerId: string, input: SettleFineBody): Promise<SettleFineResponse>;
+  /** The payment panel was closed: the keys of payments and settlements that could not be confirmed are forgotten, so the next one gets a key of its own. */
+  forgetPaymentTries(): void;
   /** Reads the whole ledger of the customer now. A second call while one is on its way joins it. Never rejects: a failure is `ledgerState`. */
   loadLedger(customerId: string): Promise<void>;
   /** A customer card is open: load the ledger and keep it current. Returns the way to stop (twice is once). */
@@ -239,6 +266,66 @@ export function createMoneyServer(deps: MoneyServerDeps): MoneyServer {
     return call;
   }
 
+  // ---- X2 and X3
+  const paying = new Map<string, Promise<unknown>>();
+  /** The payments and settlements whose last call did not end well: the action (path and body) -> the key it used. Pressing Save again for the same action sends the same key. */
+  const failedTries = new Map<string, string>();
+  const MOST_TRIES = 20;
+
+  function remember(action: string, key: string): void {
+    failedTries.delete(action);
+    failedTries.set(action, key);
+    while (failedTries.size > MOST_TRIES)
+      failedTries.delete(failedTries.keys().next().value as string);
+  }
+
+  /** One money call with a customer in its path: a key for each action, the rows it returns merged only when the server has answered. */
+  function moneyCall<Answer extends { receipt: ReceiptRow; allocations: ReceiptAllocationRow[] }>(
+    path: string,
+    customerId: string,
+    body: RecordPaymentBody | SettleFineBody
+  ): Promise<Answer> {
+    const action = stableJson({ path, body }); // the customer is in the path: one key never pays two customers
+    const joined = paying.get(action);
+    if (joined) return joined as Promise<Answer>; // a double click: the same action
+    const reuse = failedTries.get(action);
+    const mine = generation;
+    const call = (async () => {
+      try {
+        const answer = await api.post<Answer>(path, body, {
+          idempotent: true,
+          idempotencyKey: reuse,
+          context: { customerId },
+        });
+        if (mine === generation) {
+          // C5 (b): only now, and only what the function returned. V1 and V2 come with the poll that follows every write.
+          cache.merge('receipts', [answer.receipt]);
+          cache.merge('receipt-allocations', answer.allocations);
+          failedTries.delete(action);
+        }
+        return answer;
+      } catch (error) {
+        // the key travels on the error (L5): the next press of Save for this payment sends it again
+        if (mine === generation && isApiError(error) && error.idempotencyKey)
+          remember(action, error.idempotencyKey);
+        throw error;
+      } finally {
+        paying.delete(action);
+      }
+    })();
+    paying.set(action, call);
+    return call;
+  }
+
+  const recordPayment = (customerId: string, input: RecordPaymentBody) =>
+    moneyCall<RecordPaymentResponse>(`/v1/customers/${customerId}/payments`, customerId, input);
+  const settleFine = (customerId: string, input: SettleFineBody) =>
+    moneyCall<SettleFineResponse>(
+      `/v1/customers/${customerId}/fine-settlements`,
+      customerId,
+      input
+    );
+
   // ---- the ledgers
   const slots = new Map<string, Slot>();
   const pending = new Set<Promise<void>>();
@@ -342,6 +429,8 @@ export function createMoneyServer(deps: MoneyServerDeps): MoneyServer {
     lastTry = null;
     billing.clear();
     lastBillTry = null;
+    paying.clear();
+    failedTries.clear();
     unsubscribe?.();
     unsubscribe = null;
   }
@@ -353,6 +442,11 @@ export function createMoneyServer(deps: MoneyServerDeps): MoneyServer {
     createBill,
     forgetBill: () => {
       lastBillTry = null;
+    },
+    recordPayment,
+    settleFine,
+    forgetPaymentTries: () => {
+      failedTries.clear();
     },
     loadLedger,
     watchLedger,

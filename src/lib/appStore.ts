@@ -7,8 +7,11 @@ import type {
   CustomerBalanceRow,
   CustomerRow,
   ReceiptRow,
+  RecordPaymentResponse,
+  SettleFineResponse,
 } from '@/lib/api/types';
 import type { BillBody } from './billing';
+import type { RecordPaymentBody, SettleFineBody } from './payments';
 import { rowCache, savingNotAvailable } from './cache/cache';
 import { SaveError, editRow } from './cache/edit';
 import { moneyServer, type LedgerLoadState, type LedgerWireRow } from './cache/moneyServer';
@@ -541,6 +544,84 @@ export async function saveCustomerPan(customerId: string, pan: string): Promise<
     if (error instanceof SaveError && error.stale) await edit();
     else throw error;
   }
+}
+
+/**
+ * Receives a payment: X2 `POST /v1/customers/{id}/payments` with a fresh Idempotency-Key (C5 (b), C6, L5). Nothing is put in memory before the server has answered; then the receipt and
+ * the allocations it returned are, and the poll that follows the write brings the customer's V1 and V2 figures (C17). Pressing Save again for the same payment after a call that did not
+ * end well sends the same key, and a double click is one request, so a payment is made once. Resolves with the whole answer (`advance_remaining` is what is left of THIS payment);
+ * rejects with the client's error (`code`, `details`, a `message` in plain words). A preview build has no server: its panel saves the prototype's own payment.
+ */
+export function savePayment(
+  customerId: string,
+  body: RecordPaymentBody
+): Promise<RecordPaymentResponse> {
+  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('A payment'));
+  return moneyServer.recordPayment(customerId, body);
+}
+
+/** Settles silver fine: X3 `POST /v1/customers/{id}/fine-settlements`, in silver or in cash at a rate, with the same rules as `savePayment` (`fine_remaining` is the customer's fine after the call). */
+export function saveFineSettlement(
+  customerId: string,
+  body: SettleFineBody
+): Promise<SettleFineResponse> {
+  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('A silver settlement'));
+  return moneyServer.settleFine(customerId, body);
+}
+
+/** The payment panel was closed: the next payment or settlement gets a key of its own, even when it is the same as one that could not be confirmed. */
+export function forgetPaymentTries(): void {
+  if (!PREVIEW_MODE) moneyServer.forgetPaymentTries();
+}
+
+/**
+ * The bills a payment or a fine settlement can name (Y3), oldest first (bill date, then the time it was made): EVERY bill of the customer, the opening-balance bill (dues brought
+ * forward) and the cancelled one included, with the figures of V1; the panel keeps those with something pending. Unlike `getInvoices()` this is not the list of sales.
+ */
+export function getBillsOfCustomer(customerId: string): Invoice[] {
+  if (PREVIEW_MODE)
+    return _invoices
+      .filter((invoice) => invoice.customerId === customerId)
+      .sort((a, b) => a.date.localeCompare(b.date));
+  const order = (invoice: Invoice) => {
+    const row = rowCache.get('bills', invoice.id);
+    return { date: row?.bill_date ?? '', made: microsOf(row?.created_at ?? ''), id: invoice.id };
+  };
+  return currentInvoices()
+    .all.filter((invoice) => invoice.customerId === customerId)
+    .map((invoice) => ({ invoice, key: order(invoice) }))
+    .sort(
+      (a, b) =>
+        a.key.date.localeCompare(b.key.date) ||
+        a.key.made - b.key.made ||
+        a.key.id.localeCompare(b.key.id)
+    )
+    .map((entry) => entry.invoice);
+}
+
+export interface CustomerBooks {
+  /** V2 `outstanding`, the exact text of the row. */
+  outstanding: string;
+  /** V2 `advance`: money received that no bill needed. */
+  advance: string;
+  /** V2 `fine_outstanding`, grams. */
+  fineOutstanding: string;
+}
+
+/** The customer's V2 figures as the server worked them out, or null while the row has not arrived (nothing is made up). A preview build has none. */
+export function getCustomerBooks(customerId: string): CustomerBooks | null {
+  if (PREVIEW_MODE) return null;
+  const row = rowCache.get('customer-balances', customerId);
+  return row
+    ? { outstanding: row.outstanding, advance: row.advance, fineOutstanding: row.fine_outstanding }
+    : null;
+}
+
+/** The number of a bill (an answer names bills by id), or null when it is not in memory. */
+export function billNumberOf(billId: string): string | null {
+  if (PREVIEW_MODE)
+    return _invoices.find((invoice) => invoice.id === billId)?.invoiceNumber ?? null;
+  return rowCache.get('bills', billId)?.bill_no ?? null;
 }
 
 function addCustomerLocal(data: NewCustomer): Customer {
