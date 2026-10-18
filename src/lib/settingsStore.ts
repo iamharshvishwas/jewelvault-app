@@ -452,25 +452,40 @@ export function getDailyRates(): readonly DailyRateLike[] {
   return cachedRates.value;
 }
 
+function entryOf(
+  rows: readonly DailyRateRow[],
+  material: RateMaterial,
+  purity: string,
+  date: string
+): RateEntry {
+  let row: DailyRateRow | undefined;
+  let suggestion: DailyRateRow | undefined;
+  for (const rate of rows) {
+    if (rate.material !== material || rate.purity !== purity) continue;
+    if (rate.rate_date === date) row = rate;
+    else if (rate.rate_date < date && (!suggestion || rate.rate_date > suggestion.rate_date))
+      suggestion = rate;
+  }
+  return { material, purity, row, suggestion };
+}
+
 /** The rate card for a day: each purity of Gold and Silver in the materials setting, with its rate for the day and the last rate before it. */
 export function getRateSheet(date: string): RateEntry[] {
   const rows = rateRows();
   const out: RateEntry[] = [];
   for (const material of getSettings().materials) {
     if (material.name !== 'Gold' && material.name !== 'Silver') continue;
-    for (const purity of material.purities) {
-      let row: DailyRateRow | undefined;
-      let suggestion: DailyRateRow | undefined;
-      for (const rate of rows) {
-        if (rate.material !== material.name || rate.purity !== purity) continue;
-        if (rate.rate_date === date) row = rate;
-        else if (rate.rate_date < date && (!suggestion || rate.rate_date > suggestion.rate_date))
-          suggestion = rate;
-      }
-      out.push({ material: material.name, purity, row, suggestion });
-    }
+    for (const purity of material.purities) out.push(entryOf(rows, material.name, purity, date));
   }
   return out;
+}
+
+/**
+ * One purity of one material for a day, whether or not the materials setting lists it (a piece can carry a purity the setting does not, such as Custom): the billing screen asks
+ * about the purities its lines use (WEB16).
+ */
+export function rateEntryFor(material: RateMaterial, purity: string, date: string): RateEntry {
+  return entryOf(rateRows(), material, purity, date);
 }
 
 export interface RateInput {

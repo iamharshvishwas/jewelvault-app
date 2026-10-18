@@ -4,6 +4,7 @@ import CustomerSearchPanel from './CustomerSearchPanel';
 import ScanItemPanel, { type ScanResult } from './ScanItemPanel';
 import BillingItemsTable from './BillingItemsTable';
 import BillingSummaryPanel from './BillingSummaryPanel';
+import DashboardRateCard from '@/app/components/DashboardRateCard';
 import { addCustomer, forgetBillTry, getCustomers, getNextInvoiceNumber } from '@/lib/appStore';
 import { usePricingCheck } from '@/lib/api/connection';
 import { useSession } from '@/lib/authStore';
@@ -20,8 +21,10 @@ import {
   type SaleType,
   type SavedBill,
 } from '@/lib/billing';
+import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { findSkuByCode } from '@/lib/designStore';
 import { PREVIEW_MODE } from '@/lib/previewMode';
+import { rateKey, ratesToConfirm, withRates } from '@/lib/rateGuard';
 import { businessToday, getDailyRates, getSettings } from '@/lib/settingsStore';
 import type { Customer, Sku } from '@/lib/mockData';
 
@@ -54,6 +57,11 @@ export default function BillingPOSClient() {
   const session = useSession();
   const pricing = usePricingCheck();
   const billsAllowed = PREVIEW_MODE || pricing.state === 'match';
+  // WEB16 (D4, R2): the rates in memory change (a poll brings somebody's, or this screen confirms one): the screen is drawn again, and a line still on its default takes the new rate.
+  // The answers "bill without confirming" last for the visit (this component), not a new sale: the question is about the day's first bill.
+  const ratesVersion = useRowCacheVersion('daily-rates');
+  const [seenRates, setSeenRates] = useState(ratesVersion);
+  const [withoutConfirming, setWithoutConfirming] = useState<ReadonlySet<string>>(() => new Set());
 
   useEffect(() => {
     const interval = setInterval(() => setCustomers(getCustomers()), 1000);
@@ -135,6 +143,11 @@ export default function BillingPOSClient() {
     handleSaleTypeChange(saleTypeAfterChoosing(nextCustomer, saleType));
   };
 
+  if (ratesVersion !== seenRates) {
+    setSeenRates(ratesVersion);
+    setItems((prev) => withRates(prev, contextFor(saleType, invoiceDate)));
+  }
+
   const handleNewSale = () => {
     forgetBillTry(); // the next bill is another action: a key of its own
     setSaleNo((n) => n + 1);
@@ -160,6 +173,15 @@ export default function BillingPOSClient() {
   const preview = previewBill({ items, saleType, discount, additionalCharges, roundOffSetting });
   const locked = busy || saved !== null;
   const today = businessToday();
+  // WEB16: a rate nobody confirmed today asks before the first bill of the day. Only the people who can confirm one are asked (the owner, a biller), and not the preview build.
+  const mayConfirm = !PREVIEW_MODE && (session.role === 'owner' || session.role === 'biller');
+  const unconfirmed =
+    mayConfirm && !locked
+      ? ratesToConfirm({ items, billDate: invoiceDate, today, rates: getDailyRates() })
+      : [];
+  const asked = unconfirmed.filter((rate) => !withoutConfirming.has(rateKey(rate)));
+  const answered = unconfirmed.filter((rate) => withoutConfirming.has(rateKey(rate)));
+  const nameOf = (rate: { material: string; purity: string }) => `${rate.material} ${rate.purity}`;
 
   return (
     <div className="space-y-4">
@@ -173,6 +195,66 @@ export default function BillingPOSClient() {
           {pricing.state === 'unknown'
             ? 'Checking that this page and the server work out bills the same way. Saving bills is off until then.'
             : 'This page and the server do not work out bills the same way, so saving bills is switched off. Reload the page; if this stays, tell the owner.'}
+        </div>
+      )}
+
+      {/* WEB16: the first bill of the day asks about a rate nobody confirmed today; the answer is a row dated today, or "bill without confirming" (the API then warns, T-A17) */}
+      {asked.length > 0 && (
+        <section
+          data-testid="rate-guard"
+          aria-label="Today's rate is not confirmed"
+          className="space-y-3 rounded-sm border border-amber-300 bg-amber-50 p-4"
+        >
+          <div>
+            <h2 className="text-sm font-bold text-amber-900">Today&apos;s rate is not confirmed</h2>
+            <p className="text-xs text-amber-800">
+              {`Before the first bill of the day, check the rate of ${asked.map(nameOf).join(', ')}. `}
+              {asked.some((rate) => rate.last === null)
+                ? 'A purity with no rate yet needs one.'
+                : 'The last rate is shown with its date.'}
+            </p>
+          </div>
+          <DashboardRateCard
+            confirmToday={asked.map((rate) => ({
+              material: rate.material,
+              purity: rate.purity,
+              onBill: rate.onBill,
+            }))}
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              data-testid="rate-guard-skip"
+              onClick={() =>
+                setWithoutConfirming((prev) => new Set([...prev, ...asked.map(rateKey)]))
+              }
+              className="btn-secondary py-1.5 text-xs"
+            >
+              Bill without confirming
+            </button>
+            <p className="text-xs text-amber-800">
+              The bill is made at the rate on the line. It is saved, and marked as an old or missing
+              rate.
+            </p>
+          </div>
+        </section>
+      )}
+      {answered.length > 0 && (
+        <div
+          data-testid="rate-guard-ack"
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-sm border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800"
+        >
+          <span>
+            {`Billing without confirming today's rate of ${answered.map(nameOf).join(', ')}: the rate on each line is used.`}
+          </span>
+          <button
+            type="button"
+            onClick={() => setWithoutConfirming(new Set())}
+            className="btn-ghost py-1 text-xs"
+          >
+            Ask me again
+          </button>
         </div>
       )}
 
@@ -271,6 +353,7 @@ export default function BillingPOSClient() {
             invoiceDate={invoiceDate}
             role={session.role}
             billsAllowed={billsAllowed}
+            rateGuardOpen={asked.length > 0}
             locked={locked}
             saved={saved}
             onBusyChange={setBusy}

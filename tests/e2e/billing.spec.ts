@@ -917,6 +917,8 @@ test.describe('C13, Z1 to Z3, Y2, R2, R10: what the screen says', () => {
     );
     await expect(save(page)).toBeDisabled();
     await expect(page.getByTestId('line-error')).toContainText('No daily rate is set for Gold 20K');
+    // WEB16: a rate nobody confirmed today asks first (proved in rates.spec.ts); this test bills without confirming
+    await page.getByTestId('rate-guard-skip').click();
     await lineInput(page, 'Metal rate', 'R1').fill('6000');
     await expect(save(page)).toBeEnabled();
     await expect(grandTotal(page)).toHaveText('₹6,300'); // 6,000 + labour 300
@@ -932,6 +934,8 @@ test.describe('C13, Z1 to Z3, Y2, R2, R10: what the screen says', () => {
     await addPiece(page, 'R2'); // 24K gold: 7,500 from two days ago
     await expect(lineInput(page, 'Metal rate', 'R2')).toHaveValue('7500.00');
     await expect(page.getByTestId('rate-note')).toContainText('older than the bill date');
+    // WEB16: a rate nobody confirmed today asks first (proved in rates.spec.ts); this test bills without confirming
+    await page.getByTestId('rate-guard-skip').click();
     await save(page).click();
     await expect(saved(page)).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('warning-rate-stale')).toBeVisible();

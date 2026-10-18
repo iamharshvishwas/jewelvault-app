@@ -53,6 +53,8 @@ interface BillingSummaryPanelProps {
   role: string | null;
   /** C12: the API's pricing.ts is this build's. Save on bills is off while it is not. */
   billsAllowed: boolean;
+  /** WEB16: a rate used on the bill is not confirmed today and the question has not been answered: the first bill of the day waits for it. */
+  rateGuardOpen?: boolean;
   /** A save is on its way, or the bill is saved: nothing can be changed. */
   locked: boolean;
   saved: SavedBill | null;
@@ -88,6 +90,7 @@ export default function BillingSummaryPanel({
   invoiceDate,
   role,
   billsAllowed,
+  rateGuardOpen = false,
   locked,
   saved,
   onBusyChange,
@@ -261,7 +264,7 @@ export default function BillingSummaryPanel({
   // C5 (b): never optimistic. The screen shows a saving state, calls X1 with a fresh Idempotency-Key (the same key when this is the same bill pressed again after a call that did not
   // end well, C6, L5), and shows the bill as saved only from the API's answer, with the API's figures. On a failure it says why, in plain words, and changes nothing.
   const handleSave = async () => {
-    if (inFlight.current || locked || itemCount === 0) return;
+    if (inFlight.current || locked || itemCount === 0 || rateGuardOpen) return;
     if (PREVIEW_MODE) {
       saveInPreview();
       return;
@@ -332,7 +335,7 @@ export default function BillingSummaryPanel({
   const reasonShown = (failure?.cashLimit?.ownerMayGiveReason ?? false) || cashReason !== '';
   // no bill total (a line cannot be priced, a figure is not a number) means nothing can be saved; the reason is under the button
   const saveDisabled =
-    saving || locked || itemCount === 0 || !billsAllowed || preview.bill === null;
+    saving || locked || itemCount === 0 || !billsAllowed || rateGuardOpen || preview.bill === null;
 
   return (
     <div className="space-y-3 sticky top-4">
@@ -717,6 +720,11 @@ export default function BillingSummaryPanel({
               </>
             )}
           </SaveButton>
+          {rateGuardOpen && (
+            <p data-testid="rate-guard-hold" className="text-xs text-amber-700 text-center">
+              Confirm today&apos;s rate above, or choose Bill without confirming.
+            </p>
+          )}
           {itemCount > 0 && preview.error && (
             <p data-testid="preview-error" className="text-xs text-red-600 text-center">
               {preview.error}
