@@ -4,7 +4,8 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Printer, ArrowLeft, Search, FileText } from 'lucide-react';
-import { getInvoiceById, getInvoices } from '@/lib/appStore';
+import OwnerBillActions from '@/components/owner/OwnerBillActions';
+import { getBillFacts, getInvoiceById, getInvoices } from '@/lib/appStore';
 import { BUSINESS_NAME } from '@/lib/businessConfig';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { gramsShown, rupeesShown } from '@/lib/ledgerView';
@@ -13,6 +14,7 @@ import type { Invoice } from '@/lib/mockData';
 // The saved estimates, read-only (task WEB10; spec K1, Y8, C15). A bill is never edited and never re-dated in M1: a correction is a re-issue by the owner (WEB11), so this screen has no date
 // field, no edit mode and no draft, and writes nothing. Every figure on it is the bill's row of V1 in memory (received, pending, the silver pending, the status) as the server worked it out,
 // written the same way as on the customer card and in the ledger (src/lib/ledgerView.ts). It is drawn again whenever memory changes: a poll, or a payment made in this browser or in another.
+// WEB11: the owner (and nobody else) has Cancel and Re-issue on a live bill; a cancelled bill says when and why it was cancelled, and which bill replaced it (or which one it replaces).
 
 const STATUS_COLORS: Record<Invoice['status'], string> = {
   Paid: 'status-badge-instock',
@@ -241,6 +243,7 @@ export default function EstimateViewClient() {
   }
 
   const opening = invoice.openingBalance === true;
+  const facts = getBillFacts(invoice.id);
   const isRetailSilverPrint =
     (invoice.saleType ?? 'Retail') === 'Retail' &&
     invoice.items.length > 0 &&
@@ -255,10 +258,13 @@ export default function EstimateViewClient() {
           <ArrowLeft size={15} />
           Saved Estimates
         </Link>
-        <button onClick={() => window.print()} className="btn-primary py-2">
-          <Printer size={15} />
-          Print / Save PDF
-        </button>
+        <div className="flex items-center gap-2">
+          <OwnerBillActions billId={invoice.id} />
+          <button onClick={() => window.print()} className="btn-primary py-2">
+            <Printer size={15} />
+            Print / Save PDF
+          </button>
+        </div>
       </div>
 
       <section className="print-estimate-sheet bg-white border border-border rounded-xl p-6 text-foreground">
@@ -299,11 +305,48 @@ export default function EstimateViewClient() {
         </div>
 
         {invoice.status === 'Cancelled' && (
-          <p
+          <div
             data-testid="estimate-cancelled"
             className="mb-3 rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700"
           >
-            This estimate was cancelled. Nothing is owed on it.
+            <p>This estimate was cancelled. Nothing is owed on it.</p>
+            {facts?.cancelledOn && (
+              <p data-testid="estimate-cancelled-on" className="font-normal">
+                Cancelled on {displayDate(`${facts.cancelledOn}T12:00:00.000Z`)}.
+              </p>
+            )}
+            {facts?.cancelReason && (
+              <p data-testid="estimate-cancel-reason" className="font-normal">
+                Reason: {facts.cancelReason}
+              </p>
+            )}
+            {facts?.reissuedAs && (
+              <p data-testid="estimate-reissued-as" className="font-normal">
+                Re-issued as{' '}
+                <Link
+                  href={`/estimate?id=${facts.reissuedAs.id}`}
+                  className="font-mono font-bold underline"
+                >
+                  {facts.reissuedAs.billNo}
+                </Link>
+                .
+              </p>
+            )}
+          </div>
+        )}
+        {invoice.status !== 'Cancelled' && facts?.reissueOf && (
+          <p
+            data-testid="estimate-reissue-of"
+            className="mb-3 rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+          >
+            This estimate replaces{' '}
+            <Link
+              href={`/estimate?id=${facts.reissueOf.id}`}
+              className="font-mono font-bold underline"
+            >
+              {facts.reissueOf.billNo}
+            </Link>
+            , which was cancelled.
           </p>
         )}
 

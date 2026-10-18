@@ -3,14 +3,20 @@
 import type {
   BillItemRow,
   BillRow,
+  CancelBillResponse,
   CreateBillResponse,
   CustomerBalanceRow,
   CustomerRow,
+  IssueRefundResponse,
+  OpeningBalanceResponse,
   ReceiptRow,
   RecordPaymentResponse,
+  ReissueBillResponse,
   SettleFineResponse,
+  VoidReceiptResponse,
 } from '@/lib/api/types';
 import type { BillBody } from './billing';
+import type { OpeningBody, ReasonBody, RefundBody, ReissueBody } from './ownerActions';
 import type { RecordPaymentBody, SettleFineBody } from './payments';
 import { rowCache, savingNotAvailable } from './cache/cache';
 import { SaveError, editRow } from './cache/edit';
@@ -584,6 +590,141 @@ export function saveFineSettlement(
 /** The payment panel was closed: the next payment or settlement gets a key of its own, even when it is the same as one that could not be confirmed. */
 export function forgetPaymentTries(): void {
   if (!PREVIEW_MODE) moneyServer.forgetPaymentTries();
+}
+
+// ── The owner's actions (WEB11) ───────────────────────────────────────────────
+
+/**
+ * Cancels a bill: X5 `POST /v1/bills/{id}/cancel` with a reason of 3 to 500 characters. The rules of `savePayment` hold: a key for each action, a double click is one request, pressing the
+ * button again after a call that did not end well sends the same key, nothing is put in memory before the server has answered, and then the bill, the pieces back in stock and the allocation
+ * rows of the cancel and of the rebalance are. A preview build has no server.
+ */
+export function saveCancel(
+  customerId: string,
+  billId: string,
+  body: ReasonBody
+): Promise<CancelBillResponse> {
+  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('A cancellation'));
+  return moneyServer.cancelBill(customerId, billId, body);
+}
+
+/** Voids a receipt: X4 `POST /v1/receipts/{id}/void` with a reason. The receipt is never deleted (S7): it stays, tagged Voided, and the bills it paid owe that money again. */
+export function saveVoid(
+  customerId: string,
+  receiptId: string,
+  body: ReasonBody
+): Promise<VoidReceiptResponse> {
+  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('A void'));
+  return moneyServer.voidReceipt(customerId, receiptId, body);
+}
+
+/** Re-issues a bill: X10 `POST /v1/bills/{id}/reissue` with the corrected bill (no customer) and the reason. The old bill is cancelled and the money it had received moves to the new one. */
+export function saveReissue(
+  customerId: string,
+  billId: string,
+  body: ReissueBody
+): Promise<ReissueBillResponse> {
+  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('A re-issue'));
+  return moneyServer.reissueBill(customerId, billId, body);
+}
+
+/** Hands money back out of the customer's advance: X11 `POST /v1/customers/{id}/refunds`. */
+export function saveRefund(customerId: string, body: RefundBody): Promise<IssueRefundResponse> {
+  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('A refund'));
+  return moneyServer.issueRefund(customerId, body);
+}
+
+/** Adds what a customer owed or had paid on the first day: X12 `POST /v1/customers/{id}/opening-balance`. */
+export function saveOpeningBalance(
+  customerId: string,
+  body: OpeningBody
+): Promise<OpeningBalanceResponse> {
+  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('An opening balance'));
+  return moneyServer.addOpeningBalance(customerId, body);
+}
+
+/** A dialog of the owner was closed: the next action gets a key of its own, even when it is the same as one that could not be confirmed. */
+export function forgetOwnerTries(): void {
+  if (!PREVIEW_MODE) moneyServer.forgetOwnerTries();
+}
+
+export interface BillRef {
+  id: string;
+  billNo: string;
+}
+
+/** What the screens need to know about a bill beyond its figures: whether it can still be cancelled or re-issued, why it was cancelled, and which bill replaced it or it replaces (K6). */
+export interface BillFacts {
+  id: string;
+  billNo: string;
+  customerId: string;
+  status: 'active' | 'cancelled';
+  /** 'estimate', or 'opening_balance' for dues brought forward. */
+  docType: string;
+  cancelReason: string | null;
+  /** The business day it was cancelled on (a date), or null. */
+  cancelledOn: string | null;
+  /** The bill this one replaces, when it is a re-issue. */
+  reissueOf: BillRef | null;
+  /** The bill that replaced this one, when it was re-issued. */
+  reissuedAs: BillRef | null;
+}
+
+/** The facts of a bill, from the bill's own row (a cancel or a re-issue shows here as soon as the answer is merged). Null in a preview build and while the row has not arrived. */
+export function getBillFacts(billId: string): BillFacts | null {
+  if (PREVIEW_MODE) return null;
+  const bill = rowCache.get('bills', billId);
+  if (!bill) return null;
+  const refOf = (row: BillRow | undefined): BillRef | null =>
+    row ? { id: row.id, billNo: row.bill_no } : null;
+  return {
+    id: bill.id,
+    billNo: bill.bill_no,
+    customerId: bill.customer_id,
+    status: bill.status,
+    docType: bill.doc_type,
+    cancelReason: bill.cancel_reason,
+    cancelledOn: bill.cancelled_on,
+    reissueOf: bill.reissue_of ? refOf(rowCache.get('bills', bill.reissue_of)) : null,
+    reissuedAs: refOf(rowCache.rows('bills').find((row) => row.reissue_of === bill.id)),
+  };
+}
+
+/** The bill and its lines exactly as saved (text of money and weight), for the billing screen to start a corrected bill from. Null in a preview build and while the rows have not arrived. */
+export function getBillSource(billId: string): { bill: BillRow; lines: BillItemRow[] } | null {
+  if (PREVIEW_MODE) return null;
+  const bill = rowCache.get('bills', billId);
+  if (!bill) return null;
+  const lines = rowCache
+    .rows('bill-items')
+    .filter((row) => row.bill_id === billId)
+    .sort((a, b) => a.line_no - b.line_no);
+  return { bill, lines };
+}
+
+export interface ReceiptFacts {
+  id: string;
+  customerId: string;
+  /** 'money', 'refund', 'fine_cash' or 'fine_silver'. */
+  kind: string;
+  status: 'active' | 'voided';
+  voidReason: string | null;
+  voidedOn: string | null;
+}
+
+/** The facts of a receipt from its own row (a void shows here as soon as the answer is merged). Null in a preview build and while the row has not arrived. */
+export function getReceiptFacts(receiptId: string): ReceiptFacts | null {
+  if (PREVIEW_MODE) return null;
+  const receipt = rowCache.get('receipts', receiptId);
+  if (!receipt) return null;
+  return {
+    id: receipt.id,
+    customerId: receipt.customer_id,
+    kind: receipt.kind,
+    status: receipt.status,
+    voidReason: receipt.void_reason,
+    voidedOn: receipt.voided_on,
+  };
 }
 
 /**

@@ -2,7 +2,9 @@
 
 import React, { useEffect, useState } from 'react';
 import {
+  Banknote,
   CreditCard,
+  FilePlus,
   Mail,
   MapPin,
   Phone,
@@ -12,6 +14,9 @@ import {
   TrendingUp,
   Wallet,
 } from 'lucide-react';
+import OpeningBalancePanel from '@/components/owner/OpeningBalancePanel';
+import RefundPanel from '@/components/owner/RefundPanel';
+import { useOwnerActions } from '@/components/owner/useOwnerActions';
 import {
   deleteRecordedPayment,
   getBillsOfCustomer,
@@ -20,6 +25,7 @@ import {
   removeCustomer,
 } from '@/lib/appStore';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
+import { WALK_IN_ID } from '@/lib/billing';
 import {
   balanceShown,
   fineBalanceShown,
@@ -32,13 +38,15 @@ import type { Customer, LedgerEntry } from '@/lib/mockData';
 import { PREVIEW_MODE } from '@/lib/previewMode';
 import CustomerInvoiceList from './CustomerInvoiceList';
 import CustomerLedgerTable from './CustomerLedgerTable';
+import CustomerPaymentsTab from './CustomerPaymentsTab';
 import ReceivePaymentPanel from './ReceivePaymentPanel';
 
 // The customer card (task WEB10). In a real build every figure on it is the customer's row of V2 (customer_balances) in memory: outstanding, advance, balance and the silver, written the same
 // way as on the estimate and in the ledger (src/lib/ledgerView.ts), so that the last running balance of the ledger below IS the card's balance (I4). The bills are the customer's rows of V1,
 // the ledger is V3 as the server sent it. The screen is drawn again when memory changes (a poll, a payment of this browser); the ledger, which is read from the server after the card opens and
 // again after a change, has no event of its own, so it is looked at once a second and drawn again only when it is another ledger.
-// The prototype's Delete buttons exist in a preview build only: a bill, a payment and a customer are never deleted on the API (a payment is voided, WEB11).
+// The prototype's Delete buttons exist in a preview build only: a bill, a payment and a customer are never deleted on the API. WEB11: the owner (and nobody else) has "Hand money back" (X11)
+// and "Opening balance" (X12) here, a Void on each receipt of the Payments tab (X4) and Cancel and Re-issue on each bill of the Invoices tab (X5, X10).
 
 const TABS = [
   { id: 'ctab-ledger', label: 'Ledger' },
@@ -69,6 +77,10 @@ interface CustomerDetailProps {
 export default function CustomerDetail({ customer, onDeleted }: CustomerDetailProps) {
   const [activeTab, setActiveTab] = useState('ctab-ledger');
   const [showPaymentPanel, setShowPaymentPanel] = useState(false);
+  const [showRefundPanel, setShowRefundPanel] = useState(false);
+  const [showOpeningPanel, setShowOpeningPanel] = useState(false);
+  const ownerActions = useOwnerActions();
+  const walkIn = customer.id === WALK_IN_ID;
   const [ledger, setLedger] = useState<LedgerEntry[]>(() => getLedgerForCustomer(customer.id));
 
   useRowCacheVersion(...BOOKS);
@@ -115,6 +127,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
 
   const voided = voidedReceipts(ledger);
   const paymentEntries = ledger.filter(isPaymentEntry);
+  const refundEntries = ledger.filter((entry) => entry.kind === 'Refund');
   const owes = customer.outstanding > 0;
   const fineOwed = (customer.outstandingSilverFine ?? 0) > 0;
   // the extra figures of V2 that the prototype's card did not have: while the customer's row has not arrived they are blank, never made up
@@ -223,11 +236,33 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <button onClick={() => setShowPaymentPanel((p) => !p)} className="btn-primary py-2">
               <CreditCard size={14} />
               Receive Payment
             </button>
+            {ownerActions && (
+              <>
+                <button
+                  type="button"
+                  data-testid="open-refund"
+                  onClick={() => setShowRefundPanel((p) => !p)}
+                  className="btn-secondary py-2"
+                >
+                  <Banknote size={14} />
+                  Hand Money Back
+                </button>
+                <button
+                  type="button"
+                  data-testid="open-opening"
+                  onClick={() => setShowOpeningPanel((p) => !p)}
+                  className="btn-secondary py-2"
+                >
+                  <FilePlus size={14} />
+                  Opening Balance
+                </button>
+              </>
+            )}
             {PREVIEW_MODE && (
               <button
                 onClick={handleDeleteCustomer}
@@ -257,6 +292,22 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
 
       {showPaymentPanel && (
         <ReceivePaymentPanel customer={customer} onClose={() => setShowPaymentPanel(false)} />
+      )}
+      {ownerActions && showRefundPanel && (
+        <RefundPanel
+          customerId={customer.id}
+          customerName={customer.name}
+          walkIn={walkIn}
+          onClose={() => setShowRefundPanel(false)}
+        />
+      )}
+      {ownerActions && showOpeningPanel && (
+        <OpeningBalancePanel
+          customerId={customer.id}
+          customerName={customer.name}
+          walkIn={walkIn}
+          onClose={() => setShowOpeningPanel(false)}
+        />
       )}
 
       <div className="jewel-card overflow-hidden">
@@ -291,70 +342,12 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
           {activeTab === 'ctab-ledger' && <CustomerLedgerTable entries={ledger} />}
           {activeTab === 'ctab-invoices' && <CustomerInvoiceList invoices={invoices} />}
           {activeTab === 'ctab-payments' && (
-            <div className="space-y-3">
-              {paymentEntries.length === 0 ? (
-                <div className="text-center py-8 text-sm text-muted-foreground">
-                  No payments recorded yet.
-                </div>
-              ) : (
-                <div className="overflow-x-auto scrollbar-thin">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="bg-muted/60 border-b border-border">
-                        {['Date', 'Description', 'Reference', 'Amount', 'Fine']
-                          .concat(PREVIEW_MODE ? ['Action'] : [])
-                          .map((heading) => (
-                            <th
-                              key={heading}
-                              className="px-3 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap"
-                            >
-                              {heading}
-                            </th>
-                          ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {paymentEntries.map((entry) => (
-                        <tr key={entry.id} className="table-row-hover">
-                          <td className="px-3 py-3 text-muted-foreground whitespace-nowrap">
-                            {new Date(entry.date).toLocaleDateString('en-IN')}
-                          </td>
-                          <td className="px-3 py-3 text-foreground">
-                            {entry.description}
-                            {entry.paymentId && voided.has(entry.paymentId) && (
-                              <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
-                                Voided
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-3 font-mono text-xs text-muted-foreground">
-                            {entry.reference || '-'}
-                          </td>
-                          <td className="px-3 py-3 font-tabular font-bold text-emerald-600 whitespace-nowrap">
-                            {rupeesShown(entry.credit)}
-                          </td>
-                          <td className="px-3 py-3 font-tabular font-bold text-amber-600 whitespace-nowrap">
-                            {(entry.fineCredit ?? 0) > 0 ? gramsShown(entry.fineCredit ?? 0) : '-'}
-                          </td>
-                          {PREVIEW_MODE && (
-                            <td className="px-3 py-3">
-                              <button
-                                type="button"
-                                onClick={() => handleDeletePayment(entry)}
-                                className="inline-flex items-center gap-1 rounded-sm border border-red-200 px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50"
-                              >
-                                <Trash2 size={13} />
-                                Delete
-                              </button>
-                            </td>
-                          )}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+            <CustomerPaymentsTab
+              entries={paymentEntries}
+              refunds={refundEntries}
+              voided={voided}
+              onDeleteInPreview={handleDeletePayment}
+            />
           )}
         </div>
       </div>
