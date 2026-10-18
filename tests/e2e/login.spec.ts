@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
+import { clearLoginCounters } from './clear-counters';
+import { roomInTheMinute } from './pacing';
 import { e2eLane, e2eLogin, ROLES, type E2eLogin, type E2eRole } from './global-setup';
 
 // WEB02. The browser halves of T-E01 (login per role; a wrong password fails; an inactive login; 20 login and logout cycles; the
@@ -199,6 +201,11 @@ function trackApi(page: Page): ApiCall[] {
 }
 
 // ------------------------------------------------------------------------------------------------ T-E01: the login screen
+
+test.beforeEach(async ({ page }) => {
+  await clearLoginCounters();
+  await roomInTheMinute(page);
+});
 
 test.describe('T-E01: the login screen', () => {
   test('shows no credentials, no hints and an empty form (U1)', async ({ page }) => {
