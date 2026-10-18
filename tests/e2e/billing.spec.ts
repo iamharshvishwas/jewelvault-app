@@ -911,6 +911,7 @@ test.describe('C13, Z1 to Z3, Y2, R2, R10: what the screen says', () => {
   }) => {
     await open(page, e2eLogin('owner'));
     await addPiece(page, 'R1'); // 20K gold: no rate
+    await page.getByTestId('rate-guard-skip').click(); // WEB16: the first bill of the day asks about the rates; the person bills with them as they are
     await expect(lineInput(page, 'Metal rate', 'R1')).toHaveValue('');
     await expect(page.getByTestId('rate-note')).toContainText(
       'No daily rate for Gold 20K: enter one'
@@ -930,6 +931,7 @@ test.describe('C13, Z1 to Z3, Y2, R2, R10: what the screen says', () => {
   }) => {
     await open(page, e2eLogin('owner'));
     await addPiece(page, 'R2'); // 24K gold: 7,500 from two days ago
+    await page.getByTestId('rate-guard-skip').click(); // WEB16: the first bill of the day asks about the rates; the person bills with them as they are
     await expect(lineInput(page, 'Metal rate', 'R2')).toHaveValue('7500.00');
     await expect(page.getByTestId('rate-note')).toContainText('older than the bill date');
     await save(page).click();

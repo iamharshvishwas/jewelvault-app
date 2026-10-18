@@ -4,6 +4,7 @@ import CustomerSearchPanel from './CustomerSearchPanel';
 import ScanItemPanel, { type ScanResult } from './ScanItemPanel';
 import BillingItemsTable from './BillingItemsTable';
 import BillingSummaryPanel from './BillingSummaryPanel';
+import RateGuardPanel from './RateGuardPanel';
 import { addCustomer, forgetBillTry, getCustomers, getNextInvoiceNumber } from '@/lib/appStore';
 import { usePricingCheck } from '@/lib/api/connection';
 import { useSession } from '@/lib/authStore';
@@ -20,8 +21,10 @@ import {
   type SaleType,
   type SavedBill,
 } from '@/lib/billing';
+import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { findSkuByCode } from '@/lib/designStore';
 import { PREVIEW_MODE } from '@/lib/previewMode';
+import { isFirstBillOfTheDay, rateConfirmationNeeded } from '@/lib/rateGuard';
 import { businessToday, getDailyRates, getSettings } from '@/lib/settingsStore';
 import type { Customer, Sku } from '@/lib/mockData';
 
@@ -51,6 +54,10 @@ export default function BillingPOSClient() {
   const [problemSkuIds, setProblemSkuIds] = useState<string[]>([]);
   // each new sale starts the scan and summary panels afresh (their own messages, payments and prompts): they are keyed by this
   const [saleNo, setSaleNo] = useState(0);
+  // WEB16: the day the person answered "are today's rates right?" for (confirmed them, or billed with them as they are); kept through New Sale, in memory only (C8)
+  const [rateAnswer, setRateAnswer] = useState<string | null>(null);
+  // the question depends on the daily rates and on whether a bill dated today exists: draw again when a poll or a save changes either
+  useRowCacheVersion('daily-rates', 'bills');
   const session = useSession();
   const pricing = usePricingCheck();
   const billsAllowed = PREVIEW_MODE || pricing.state === 'match';
@@ -149,6 +156,11 @@ export default function BillingPOSClient() {
     setInvoiceDate(businessToday());
   };
 
+  // WEB16: "Confirm today's rates" wrote a rate dated today: the lines that still follow the default take it (a rate the person typed on a line is left alone)
+  const handleRatesConfirmed = () => {
+    setItems((prev) => withBillDate(prev, contextFor(saleType, invoiceDate)));
+  };
+
   const handleCreateCustomer = async (data: Parameters<typeof addCustomer>[0]) => {
     const created = await addCustomer(data);
     setCustomers(getCustomers());
@@ -160,6 +172,18 @@ export default function BillingPOSClient() {
   const preview = previewBill({ items, saleType, discount, additionalCharges, roundOffSetting });
   const locked = busy || saved !== null;
   const today = businessToday();
+  // WEB16 (PLAN.md P3-T2): a rate not confirmed today asks for confirmation before the first bill of the day; Save waits for the answer, the lines stay editable
+  const rateQuestions = locked
+    ? []
+    : rateConfirmationNeeded({
+        items,
+        rates: getDailyRates(),
+        billDate: invoiceDate,
+        today,
+        firstBill: isFirstBillOfTheDay(today),
+        answeredFor: rateAnswer,
+      });
+  const askingForRates = rateQuestions.length > 0;
 
   return (
     <div className="space-y-4">
@@ -243,6 +267,14 @@ export default function BillingPOSClient() {
             onCreateCustomer={handleCreateCustomer}
           />
           <ScanItemPanel key={saleNo} onScan={handleScanSku} onAddHeld={handleAddHeld} />
+          {askingForRates && (
+            <RateGuardPanel
+              entries={rateQuestions}
+              today={today}
+              onConfirmed={handleRatesConfirmed}
+              onAcknowledged={() => setRateAnswer(today)}
+            />
+          )}
           <BillingItemsTable
             items={items}
             preview={preview}
@@ -271,7 +303,7 @@ export default function BillingPOSClient() {
             invoiceDate={invoiceDate}
             role={session.role}
             billsAllowed={billsAllowed}
-            locked={locked}
+            locked={locked || askingForRates}
             saved={saved}
             onBusyChange={setBusy}
             onSaved={setSaved}
