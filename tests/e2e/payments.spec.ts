@@ -130,11 +130,11 @@ const receiptsOf = (name: string) =>
       `FROM receipts r JOIN customers c ON c.id = r.customer_id WHERE c.name = '${name}' AND r.status = 'active' ORDER BY r.created_at, r.id`
   );
 
-/** The allocations to the bills `W09-<prefix>%`, in the order the API made them: bill number, money, fine grams. */
+/** The allocations to the bills `W09-<prefix>%`: bill number, money, fine grams. The allocations of one call carry one stamp, so a tie is broken by the bill number (the older bill has the lower one), never by the random id. */
 const allocationsOf = (prefix: string) =>
   laneSql(
     `SELECT b.bill_no, a.amount, a.fine_grams FROM receipt_allocations a JOIN bills b ON b.id = a.bill_id ` +
-      `WHERE b.bill_no LIKE 'W09-${prefix}%' AND a.released_at IS NULL ORDER BY a.created_at, a.id`
+      `WHERE b.bill_no LIKE 'W09-${prefix}%' AND a.released_at IS NULL ORDER BY a.created_at, b.bill_no`
   );
 
 // ------------------------------------------------------------------------------------------------ the page
