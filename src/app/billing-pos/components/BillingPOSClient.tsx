@@ -1,199 +1,194 @@
 'use client';
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import CustomerSearchPanel from './CustomerSearchPanel';
-import ScanItemPanel from './ScanItemPanel';
+import ScanItemPanel, { type ScanResult } from './ScanItemPanel';
 import BillingItemsTable from './BillingItemsTable';
 import BillingSummaryPanel from './BillingSummaryPanel';
-import { addCustomer, getCustomers, getNextInvoiceNumber } from '@/lib/appStore';
+import { addCustomer, forgetBillTry, getCustomers, getNextInvoiceNumber } from '@/lib/appStore';
+import { usePricingCheck } from '@/lib/api/connection';
+import { useSession } from '@/lib/authStore';
+import {
+  HELD_STATUSES,
+  newBillingItem,
+  previewBill,
+  saleTypeAfterChoosing,
+  withBillDate,
+  withSaleType,
+  type BillingItem,
+  type HeldStatus,
+  type LineContext,
+  type SaleType,
+  type SavedBill,
+} from '@/lib/billing';
 import { findSkuByCode } from '@/lib/designStore';
-import { getSettings } from '@/lib/settingsStore';
-import type { Customer, CustomerType, Sku } from '@/lib/mockData';
+import { PREVIEW_MODE } from '@/lib/previewMode';
+import { businessToday, getDailyRates, getSettings } from '@/lib/settingsStore';
+import type { Customer, Sku } from '@/lib/mockData';
 
-export interface BillingItem {
-  id: string;
-  sku: Sku;
-  metalRate: number;
-  labourAmount: number;
-  labour: number;
-  piroi: number;
-  otherCharges: number;
-  metalAmount: number;
-  fineWeightDue: number;
-  itemTotal: number;
-  quantity: number;
-}
+export type { BillingItem };
 
-type SaleType = CustomerType;
+/** The figures of a line the person can change; each is kept as the text that was typed (S3: no floating point on the way to the server). */
+export type EditableField = 'metalRate' | 'labour' | 'piroi' | 'otherCharges' | 'quantity';
 
-function labourRateForSaleType(sku: Sku, saleType: SaleType) {
-  if (saleType === 'Wholesale') return sku.wholesaleLabour ?? sku.semiWholesaleLabour ?? sku.retailLabour ?? sku.labour;
-  if (saleType === 'Semi-Wholesale') return sku.semiWholesaleLabour ?? sku.wholesaleLabour ?? sku.retailLabour ?? sku.labour;
-  return sku.retailLabour ?? sku.labour;
-}
+const SALE_TYPES: SaleType[] = ['Retail', 'Semi-Wholesale', 'Wholesale'];
 
-function calculateLabourAmount(sku: Sku, labourRate: number, quantity: number) {
-  if (sku.sellingMethod === 'Per Piece') return 0;
-  return sku.sellingMethod === 'By Weight'
-    ? sku.customerNetWeight * labourRate
-    : quantity * labourRate;
-}
-
-function calculateFineWeightDue(sku: Sku, quantity: number, saleType: SaleType) {
-  if (saleType !== 'Wholesale' || sku.material !== 'Silver') return 0;
-  return sku.customerNetWeight * quantity;
-}
-
-function calculateMetalAmount(sku: Sku, metalRate: number, quantity: number, saleType: SaleType) {
-  if (calculateFineWeightDue(sku, quantity, saleType) > 0) return 0;
-  return sku.sellingMethod === 'By Weight'
-    ? sku.customerNetWeight * metalRate
-    : metalRate * quantity;
-}
-
-function calculateItemTotal(item: Omit<BillingItem, 'itemTotal'>) {
-  return item.metalAmount + item.labourAmount + item.piroi + item.otherCharges;
-}
+const isHeld = (status: string): status is HeldStatus =>
+  (HELD_STATUSES as readonly string[]).includes(status);
 
 export default function BillingPOSClient() {
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [items, setItems] = useState<BillingItem[]>([]);
-  const [discount, setDiscount] = useState(0);
-  const [additionalCharges, setAdditionalCharges] = useState(0);
+  const [discount, setDiscount] = useState('');
+  const [additionalCharges, setAdditionalCharges] = useState('');
   const [notes, setNotes] = useState('');
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [invoiceNumber, setInvoiceNumber] = useState('');
-  const [invoiceDate, setInvoiceDate] = useState('');
+  const [customers, setCustomers] = useState<Customer[]>(() => getCustomers());
+  const [invoiceNumber, setInvoiceNumber] = useState(() => getNextInvoiceNumber());
+  const [invoiceDate, setInvoiceDate] = useState(() => businessToday());
   const [saleType, setSaleType] = useState<SaleType>('Retail');
+  // C5 (b), C6: a save is on its way (everything on the left is locked), and what the API answered (the bill is shown as saved only from then on)
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState<SavedBill | null>(null);
+  const [problemSkuIds, setProblemSkuIds] = useState<string[]>([]);
+  // each new sale starts the scan and summary panels afresh (their own messages, payments and prompts): they are keyed by this
+  const [saleNo, setSaleNo] = useState(0);
+  const session = useSession();
+  const pricing = usePricingCheck();
+  const billsAllowed = PREVIEW_MODE || pricing.state === 'match';
 
   useEffect(() => {
-    setCustomers(getCustomers());
-    setInvoiceNumber(getNextInvoiceNumber());
-    setInvoiceDate(new Date().toISOString().slice(0, 10));
     const interval = setInterval(() => setCustomers(getCustomers()), 1000);
     return () => clearInterval(interval);
   }, []);
 
-  const handleScanSku = (skuNumber: string) => {
-    const found = findSkuByCode(skuNumber);
-    const foundSku: Sku | undefined = found?.sku;
+  const contextFor = (type: SaleType, date: string): LineContext => ({
+    saleType: type,
+    billDate: date,
+    rates: getDailyRates(),
+  });
 
-    if (!foundSku) {
-      alert(`SKU "${skuNumber}" not found`);
-      return;
-    }
-
-    if (foundSku.status === 'Sold') {
-      alert(`⚠️ THIS SKU IS ALREADY SOLD\n\nSKU: ${foundSku.skuNumber}\nPlease check the invoice records.`);
-      return;
-    }
-
-    const exists = items.find((i) => i.sku.id === foundSku!.id);
-    if (exists) {
-      alert('This SKU is already on this invoice.');
-      return;
-    }
-
-    const estimateSettings = getSettings().estimate;
-    const labourRate = labourRateForSaleType(foundSku, saleType);
-    const defaultRate = foundSku.sellingMethod === 'Per Piece'
-      ? labourRate
-      : foundSku.material === 'Gold' ? estimateSettings.defaultGoldRate : estimateSettings.defaultSilverRate;
-    const metalAmount = calculateMetalAmount(foundSku, defaultRate, 1, saleType);
-    const fineWeightDue = calculateFineWeightDue(foundSku, 1, saleType);
-    const labourAmount = calculateLabourAmount(foundSku, labourRate, 1);
-
-    const newItem: BillingItem = {
-      id: `bitem-${foundSku.id}`,
-      sku: foundSku,
-      metalRate: defaultRate,
-      labourAmount,
-      labour: labourRate,
-      piroi: foundSku.piroi,
-      otherCharges: 0,
-      metalAmount,
-      fineWeightDue,
-      itemTotal: metalAmount + labourAmount + foundSku.piroi,
-      quantity: 1,
-    };
-
-    setItems((prev) => [...prev, newItem]);
+  const addPiece = (sku: Sku, held: HeldStatus | null) => {
+    setItems((prev) =>
+      prev.some((item) => item.sku.id === sku.id)
+        ? prev
+        : [...prev, newBillingItem(sku, contextFor(saleType, invoiceDate), held)]
+    );
   };
 
-  const handleUpdateItem = (itemId: string, field: keyof BillingItem, value: number) => {
+  const handleScanSku = (code: string): ScanResult => {
+    const foundSku = findSkuByCode(code)?.sku;
+    if (!foundSku) return { kind: 'refused', message: `SKU "${code}" not found.` };
+    if (items.some((i) => i.sku.id === foundSku.id))
+      return { kind: 'refused', message: 'This SKU is already on this bill.' };
+    // R10: In Stock is billed; Reserved and On Approval only after the person has said so; nothing else ever. The API decides again when the bill is saved.
+    if (foundSku.status === 'In Stock') {
+      addPiece(foundSku, null);
+      return { kind: 'added' };
+    }
+    if (foundSku.status === 'Sold') {
+      return {
+        kind: 'refused',
+        message: `This SKU is already sold: ${foundSku.skuNumber}. Please check the bill records.`,
+      };
+    }
+    if (isHeld(foundSku.status)) {
+      return {
+        kind: 'confirm',
+        message: `${foundSku.skuNumber} is ${foundSku.status}. Bill it anyway?`,
+      };
+    }
+    return {
+      kind: 'refused',
+      message: `${foundSku.skuNumber} is ${foundSku.status} and cannot be billed.`,
+    };
+  };
+
+  const handleAddHeld = (code: string) => {
+    const foundSku = findSkuByCode(code)?.sku;
+    if (foundSku && isHeld(foundSku.status)) addPiece(foundSku, foundSku.status);
+  };
+
+  const handleUpdateItem = (itemId: string, field: EditableField, value: string) => {
     setItems((prev) =>
-      prev.map((item) => {
-        if (item.id !== itemId) return item;
-        const updated = { ...item, [field]: value };
-        const rate = updated.metalRate;
-        const metalAmount = calculateMetalAmount(updated.sku, rate, updated.quantity, saleType);
-        updated.metalAmount = metalAmount;
-        updated.fineWeightDue = calculateFineWeightDue(updated.sku, updated.quantity, saleType);
-        updated.labourAmount = calculateLabourAmount(updated.sku, updated.labour, updated.quantity);
-        updated.itemTotal = calculateItemTotal(updated);
-        return updated;
-      })
+      prev.map((item) => (item.id === itemId ? { ...item, [field]: value } : item))
     );
   };
 
   const handleRemoveItem = (itemId: string) => {
     setItems((prev) => prev.filter((i) => i.id !== itemId));
+    setProblemSkuIds([]);
   };
 
   const handleSaleTypeChange = (nextType: SaleType) => {
+    if (nextType === saleType) return;
     setSaleType(nextType);
-    setItems((prev) =>
-      prev.map((item) => {
-        const labour = labourRateForSaleType(item.sku, nextType);
-        const updated = { ...item, labour };
-        if (updated.sku.sellingMethod === 'Per Piece') updated.metalRate = labour;
-        updated.metalAmount = calculateMetalAmount(updated.sku, updated.metalRate, updated.quantity, nextType);
-        updated.fineWeightDue = calculateFineWeightDue(updated.sku, updated.quantity, nextType);
-        updated.labourAmount = calculateLabourAmount(updated.sku, labour, updated.quantity);
-        updated.itemTotal = calculateItemTotal(updated);
-        return updated;
-      })
-    );
+    setItems((prev) => withSaleType(prev, contextFor(nextType, invoiceDate)));
   };
 
+  const handleDateChange = (date: string) => {
+    setInvoiceDate(date);
+    setItems((prev) => withBillDate(prev, contextFor(saleType, date)));
+  };
+
+  // R9: choosing a customer sets the sale type to the customer's, and the labour rate of every line follows it (T-A03, UNIT half)
   const handleSelectCustomer = (nextCustomer: Customer | null) => {
     setCustomer(nextCustomer);
-    if (nextCustomer?.customerType) handleSaleTypeChange(nextCustomer.customerType);
+    handleSaleTypeChange(saleTypeAfterChoosing(nextCustomer, saleType));
   };
 
   const handleNewSale = () => {
+    forgetBillTry(); // the next bill is another action: a key of its own
+    setSaleNo((n) => n + 1);
     setCustomer(null);
     setItems([]);
-    setDiscount(0);
-    setAdditionalCharges(0);
+    setDiscount('');
+    setAdditionalCharges('');
     setNotes('');
+    setSaved(null);
+    setProblemSkuIds([]);
     setInvoiceNumber(getNextInvoiceNumber());
-    setInvoiceDate(new Date().toISOString().slice(0, 10));
+    setInvoiceDate(businessToday());
   };
 
-  const handleCreateCustomer = (data: Parameters<typeof addCustomer>[0]) => {
-    const created = addCustomer(data);
+  const handleCreateCustomer = async (data: Parameters<typeof addCustomer>[0]) => {
+    const created = await addCustomer(data);
     setCustomers(getCustomers());
     return created;
   };
 
-  const subtotal = items.reduce((a, i) => a + i.itemTotal, 0);
-  const discountAmount = discount;
-  const afterDiscount = subtotal - discountAmount + additionalCharges;
-  const settings = getSettings();
-  const gstPercent = 0;
-  const gstAmount = 0;
-  const grandTotal = afterDiscount + gstAmount;
-  const roundOff = settings.estimate.roundOff ? Math.round(grandTotal) - grandTotal : 0;
-  const finalTotal = grandTotal + roundOff;
+  const roundOffSetting = getSettings().estimate.roundOff;
+  // C12: the live total is the same pricing.ts the API runs
+  const preview = previewBill({ items, saleType, discount, additionalCharges, roundOffSetting });
+  const locked = busy || saved !== null;
+  const today = businessToday();
 
   return (
     <div className="space-y-4">
+      {!billsAllowed && (
+        <div
+          role="alert"
+          data-testid="pricing-banner"
+          data-state={pricing.state}
+          className="rounded-sm border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800"
+        >
+          {pricing.state === 'unknown'
+            ? 'Checking that this page and the server work out bills the same way. Saving bills is off until then.'
+            : 'This page and the server do not work out bills the same way, so saving bills is switched off. Reload the page; if this stays, tell the owner.'}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">New Estimate</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Estimate · {invoiceDate ? new Date(`${invoiceDate}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}
+            Estimate ·{' '}
+            {invoiceDate
+              ? new Date(`${invoiceDate}T00:00:00`).toLocaleDateString('en-IN', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric',
+                })
+              : ''}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -202,68 +197,85 @@ export default function BillingPOSClient() {
             <input
               type="date"
               value={invoiceDate}
-              onChange={(event) => setInvoiceDate(event.target.value)}
+              max={today}
+              disabled={locked}
+              onChange={(event) => handleDateChange(event.target.value)}
               className="input-field ml-2 w-36 py-1.5 text-xs"
             />
           </label>
           <div className="flex items-center bg-muted rounded-sm p-1">
-            {(['Retail', 'Semi-Wholesale', 'Wholesale'] as SaleType[]).map((type) => (
+            {SALE_TYPES.map((type) => (
               <button
                 key={type}
                 type="button"
+                disabled={locked}
                 onClick={() => handleSaleTypeChange(type)}
+                aria-pressed={saleType === type}
                 className={`px-3 py-1.5 rounded-sm text-xs font-semibold transition-colors ${
-                  saleType === type ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                  saleType === type
+                    ? 'bg-card text-primary shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 {type}
               </button>
             ))}
           </div>
-          <span className="text-xs text-muted-foreground bg-muted px-3 py-1.5 rounded-full">
-            Draft · {invoiceNumber}
+          <span
+            data-testid="bill-number"
+            className="text-xs text-muted-foreground bg-muted px-3 py-1.5 rounded-full"
+          >
+            {saved ? `Saved · ${saved.billNo}` : `Draft · ${invoiceNumber}`}
           </span>
-          <button onClick={handleNewSale} className="btn-ghost py-2 text-xs">Discard</button>
+          <button onClick={handleNewSale} disabled={busy} className="btn-ghost py-2 text-xs">
+            Discard
+          </button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 2xl:grid-cols-3 gap-4">
-        {/* Left: Customer + Items */}
-        <div className="xl:col-span-2 space-y-4">
+        {/* Left: Customer + Items. While a save runs, and once it has been saved, nothing here can be changed. */}
+        <fieldset disabled={locked} className="xl:col-span-2 space-y-4 min-w-0">
           <CustomerSearchPanel
             customers={customers}
             selectedCustomer={customer}
             onSelectCustomer={handleSelectCustomer}
             onCreateCustomer={handleCreateCustomer}
           />
-          <ScanItemPanel onScan={handleScanSku} />
+          <ScanItemPanel key={saleNo} onScan={handleScanSku} onAddHeld={handleAddHeld} />
           <BillingItemsTable
             items={items}
+            preview={preview}
+            saved={saved}
+            problemSkuIds={problemSkuIds}
             onUpdateItem={handleUpdateItem}
             onRemoveItem={handleRemoveItem}
           />
-        </div>
+        </fieldset>
 
         {/* Right: Summary */}
         <div className="xl:col-span-1">
           <BillingSummaryPanel
-            subtotal={subtotal}
+            key={saleNo}
+            preview={preview}
             discount={discount}
             onDiscountChange={setDiscount}
             additionalCharges={additionalCharges}
             onAdditionalChargesChange={setAdditionalCharges}
-            gstPercent={gstPercent}
-            gstAmount={gstAmount}
-            roundOff={roundOff}
-            finalTotal={finalTotal}
             customer={customer}
             notes={notes}
             onNotesChange={setNotes}
-            itemCount={items.length}
             items={items}
             invoiceNumber={invoiceNumber}
             saleType={saleType}
             invoiceDate={invoiceDate}
+            role={session.role}
+            billsAllowed={billsAllowed}
+            locked={locked}
+            saved={saved}
+            onBusyChange={setBusy}
+            onSaved={setSaved}
+            onProblemPieces={setProblemSkuIds}
             onNewSale={handleNewSale}
           />
         </div>

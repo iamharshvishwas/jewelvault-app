@@ -25,9 +25,10 @@ import { e2eLane, e2eLogin, type E2eLogin, type E2eRole } from './global-setup';
 //
 // "The other browser" cannot be made to change something by a screen yet (the writes come with WEB05 to WEB09), so the change is made where the owner of the
 // shop's other browser would make it: rows written directly in the lane's database as root (a stock change, a sold piece, a long transaction), and the admin
-// door for a user. The halves that need a payment ("after a payment the other browser's pending and balance change", "cancelling an unpaid bill changes the
-// other browser's outstanding", "a money call retried meanwhile with the same key saves once") wait for the money screens of WEB07 and WEB09; the unit tests
-// (tests/unit/poll.test.ts) already prove that the touched bill-summary and customer-balances rows reach memory.
+// door for a user. The halves that need a money screen are proved where the screen is: "after a payment the other browser's pending and balance change" in
+// payments.spec.ts (WEB09), "a money call retried meanwhile with the same key saves once" in billing.spec.ts (WEB08) and payments.spec.ts (WEB09); "cancelling an
+// unpaid bill changes the other browser's outstanding" waits for the owner's screens of WEB11. The unit tests (tests/unit/poll.test.ts) already prove that the touched
+// bill-summary and customer-balances rows reach memory.
 //
 // Run: LANE=b JV_API_DIR=<checkout of jewelvault-api> E2E=1 npx playwright test tests/e2e/poll.spec.ts
 
@@ -321,8 +322,9 @@ test.describe('T-E02: a change made by somebody else shows on the other browser 
     }
   });
 
-  // The money halves need a bill and a payment made through the API: WEB07 puts the money side in memory and WEB09 makes the bill.
-  test.fixme("after a payment the other browser's pending and balance change; cancelling an unpaid bill changes its outstanding within 10 seconds (WEB07, WEB09)", () =>
+  // The money halves: a payment moving the pending of a bill and the balance of the customer on the other browser is proved in payments.spec.ts (WEB09: T-E02 and T-E07 clauses,
+  // through the real panel and the real X2); cancelling an unpaid bill comes with the owner's screens of WEB11.
+  test.fixme("cancelling an unpaid bill changes the other browser's outstanding within 10 seconds (WEB11)", () =>
     undefined);
 });
 
@@ -600,9 +602,7 @@ test.describe('T-E03: offline and "Waking up…" (C7)', () => {
     expect(bad).toBe(4);
   });
 
-  // A money call retried while the banner is up, with the same Idempotency-Key, saves once: the bill function arrives with WEB09.
-  test.fixme('a money call retried meanwhile with the same key saves once (WEB09)', () =>
-    undefined);
+  // A money call retried while the banner is up, with the same Idempotency-Key, saves once: proved on X1 in billing.spec.ts (WEB08) and on X2 in payments.spec.ts (WEB09).
 });
 
 // ---- T-E01 and T-E05: the session

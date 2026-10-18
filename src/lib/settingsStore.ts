@@ -12,6 +12,7 @@ import type { DailyRateRow, UserRow } from '@/lib/api/types';
 import { rowCache, savingNotAvailable } from '@/lib/cache/cache';
 import { SaveError, editRow, insertRow, putSettingValue, sameDecimal } from '@/lib/cache/edit';
 import { stampMicros } from '@/lib/cache/stamp';
+import type { DailyRateLike } from '@/lib/pricing';
 import { PREVIEW_MODE } from '@/lib/previewMode';
 
 // The settings of the screens, and the daily rates.
@@ -433,6 +434,23 @@ const previewRates: DailyRateRow[] = PREVIEW_MODE
 
 const rateRows = (): readonly DailyRateRow[] =>
   PREVIEW_MODE ? previewRates : rowCache.rows('daily-rates');
+
+const ratesLike = (source: readonly DailyRateRow[]): readonly DailyRateLike[] =>
+  source.map((row) => ({
+    material: row.material,
+    purity: row.purity,
+    ratePerGram: row.rate_per_gram,
+    rateDate: row.rate_date,
+  }));
+let cachedRates: { source: readonly DailyRateRow[]; value: readonly DailyRateLike[] } | null = null;
+
+/** R2: the daily rates the billing screen picks a default from (material, purity, rate per gram as text, business date). The same array until the rates change. */
+export function getDailyRates(): readonly DailyRateLike[] {
+  const source = rateRows();
+  if (PREVIEW_MODE) return ratesLike(source); // the preview's rates are changed in place
+  if (cachedRates?.source !== source) cachedRates = { source, value: ratesLike(source) };
+  return cachedRates.value;
+}
 
 /** The rate card for a day: each purity of Gold and Silver in the materials setting, with its rate for the day and the last rate before it. */
 export function getRateSheet(date: string): RateEntry[] {

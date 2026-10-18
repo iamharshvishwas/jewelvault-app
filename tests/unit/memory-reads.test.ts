@@ -102,8 +102,13 @@ const stores = ['designStore', 'catalogStore', 'settingsStore', 'appStore', 'ord
 );
 
 describe('C9 (T-E02 clause): the screens that re-read the stores every second read memory only', () => {
-  it('there are 16 of them, as the spec counts', () => {
-    expect(screens.map((file) => path.relative(root, file))).toHaveLength(16);
+  // WEB10: the spec counted 16 files with a timer in the prototype. The estimate screen was one of them (a one-second tick that redrew it after an edit); a saved bill is read-only now and
+  // the screen is drawn again when memory changes (`useRowCacheVersion`, the way WEB05 hears of a poll), so it keeps no timer and there are 15.
+  it('there are 15 of them (the spec counted 16: the estimate screen now redraws on a change of memory, not on a timer)', () => {
+    expect(screens.map((file) => path.relative(root, file))).toHaveLength(15);
+    expect(screens.map((file) => path.relative(root, file))).not.toContain(
+      'src/app/estimate/components/EstimateViewClient.tsx'
+    );
   });
 
   for (const file of screens) {
