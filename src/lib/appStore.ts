@@ -3,11 +3,14 @@
 import type {
   BillItemRow,
   BillRow,
+  CreateBillResponse,
   CustomerBalanceRow,
   CustomerRow,
   ReceiptRow,
 } from '@/lib/api/types';
+import type { BillBody } from './billing';
 import { rowCache, savingNotAvailable } from './cache/cache';
+import { SaveError, editRow } from './cache/edit';
 import { moneyServer, type LedgerLoadState, type LedgerWireRow } from './cache/moneyServer';
 import { stampMicros } from './cache/stamp';
 import {
@@ -507,6 +510,37 @@ export async function addCustomer(data: NewCustomer): Promise<Customer> {
     notes: data.notes,
   });
   return customerFromRow(row, rowCache.get('customer-balances', row.id));
+}
+
+/**
+ * Saves a bill: X1 `POST /v1/bills` with a fresh Idempotency-Key (C5 (b), C6, L5). Nothing is put in memory before the server has answered; then the rows it returned are. Pressing Save
+ * again for the same bill after a call that did not end well sends the same key, and a double click is one request, so a bill is made once. Resolves with the whole answer; rejects
+ * with the client's error (`code`, `details`, a `message` in plain words). A preview build has no server: its screen saves the prototype's own invoice.
+ */
+export function saveBill(body: BillBody): Promise<CreateBillResponse> {
+  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('A bill'));
+  return moneyServer.createBill(body);
+}
+
+/** The person started over (a new sale, a discard): the next bill gets a key of its own. */
+export function forgetBillTry(): void {
+  if (!PREVIEW_MODE) moneyServer.forgetBill();
+}
+
+/**
+ * Z3: the PAN a customer gave when a bill asked for it. An ordinary edit of a content column (A5): the customer's row is held, shown at once, and replaced by the row the server
+ * returns. A bill touches its customer (D23), so the stamp in memory can be the one from before the bill; a stale answer brings the current row, and the same PAN is sent once more
+ * on it (only this one field is written, so nothing the other person changed is undone). Throws a SaveError whose `message` is the plain text.
+ */
+export async function saveCustomerPan(customerId: string, pan: string): Promise<void> {
+  if (PREVIEW_MODE) return;
+  const edit = () => editRow({ resource: 'customers', id: customerId, changes: { pan } });
+  try {
+    await edit();
+  } catch (error) {
+    if (error instanceof SaveError && error.stale) await edit();
+    else throw error;
+  }
 }
 
 function addCustomerLocal(data: NewCustomer): Customer {

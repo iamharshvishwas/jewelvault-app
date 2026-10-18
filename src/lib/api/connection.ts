@@ -3,7 +3,7 @@
 // The banner of C7 for the screens: is the server reachable, and may a Save control be pressed? The client (client.ts) keeps the state: 'ok', 'waking' (a gateway error or a reply that
 // is not JSON: the app is being started) or 'offline' (the network is unreachable). One successful call clears it. Task WEB04.
 import { useSyncExternalStore } from 'react';
-import { CONNECTION_BANNER, api, type ConnectionStatus } from './client';
+import { CONNECTION_BANNER, api, type ConnectionStatus, type PricingCheck } from './client';
 
 /** C7: every Save control is disabled while there is a banner. */
 export function savingAllowedFor(status: ConnectionStatus): boolean {
@@ -27,4 +27,18 @@ export function useConnectionStatus(): ConnectionStatus {
 /** C7: false while "Offline: changes cannot be saved" or "Waking up…" is on screen. Every control that saves reads this (`SaveButton` does it for a button). */
 export function useSavingAllowed(): boolean {
   return savingAllowedFor(useConnectionStatus());
+}
+
+/** C12: is the API's pricing.ts the one this build was made from? 'unknown' until `me` has answered (the session gate has waited for it before any screen shows). */
+export function usePricingCheck(): PricingCheck {
+  return useSyncExternalStore(
+    api.subscribePricing,
+    api.getPricingCheck,
+    (): PricingCheck => ({ state: 'unknown' })
+  );
+}
+
+/** C12: false while the API's pricing.ts is not this build's (or not known yet): Save on bills stays off. Other Save controls are not affected. */
+export function useSavingBillsAllowed(): boolean {
+  return usePricingCheck().state === 'match';
 }

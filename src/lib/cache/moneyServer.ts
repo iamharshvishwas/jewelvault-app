@@ -8,13 +8,20 @@
 //   stored result and makes nothing new (L5). A double click, the same customer asked for while the first call is on its way, joins that call: one request. A customer with
 //   other details is another action and gets a key of its own. The returned row is merged into the cache as it is, so the id and the stamps are the server's (C11).
 //
+//   CREATING A BILL (X1, `POST /v1/bills`, WEB08). The same rule for the bill the person saves: ONE Idempotency-Key for each user action, where the action is the bill as it is
+//   on the screen (its body, made the same way every time). A double click joins the call on its way; pressing Save again for the SAME bill after a call that did not end well sends
+//   the SAME key, so a bill whose answer was lost is answered from the server's store and never made twice (L5, C6); any change to the cart is another action and a key of its own.
+//   The rows X1 returns (the bill, its lines, the receipts and the allocations of the payment rows) are merged as they are, and only when the server has answered (C5 (b)): a piece
+//   never shows Sold and a bill never shows saved before that (the pieces and the bill's figures V1 arrive with the poll the client makes at once after every write).
+//
 //   THE LEDGER OF A CUSTOMER (V3, `GET /v1/customers/{id}/ledger`). Not part of the hydrate: loaded when a customer card opens (`watchLedger`), in pages of up to 1,000 events
 //   that follow the server's own cursor, and loaded again when that customer's `updated_at` changes (every bill, receipt, cancel and void moves it, D23). The rows are kept as the
 //   server sent them, with the running balance it worked out; nothing is added up here.
 //
 // A logout (U8) forgets all of it: the ledgers, the remembered key, and any load still on its way is thrown away when it arrives.
 import { api as siteApi, isApiError, type ApiClient } from '@/lib/api/client';
-import type { CreateCustomerResponse, CustomerRow } from '@/lib/api/types';
+import type { CreateBillResponse, CreateCustomerResponse, CustomerRow } from '@/lib/api/types';
+import type { BillBody } from '@/lib/billing';
 import { registerLogoutHook as siteRegisterLogoutHook } from '@/lib/authStore';
 import { rowCache, type RowCache } from './cache';
 
@@ -69,6 +76,13 @@ export interface MoneyServerDeps {
 export interface MoneyServer {
   /** X6. Resolves with the row the server made (or answered again), already merged into the cache. Rejects with the client's ApiError. */
   createCustomer(input: NewCustomerBody): Promise<CustomerRow>;
+  /**
+   * X1. Resolves with the answer (the bill, its lines, the receipts, the allocations, the warnings, `advance_applied`), whose rows are merged into the cache first. Rejects with the
+   * client's ApiError, whose `message` is the plain C13 text and whose `idempotencyKey` is kept for the next press of Save for the same bill.
+   */
+  createBill(input: BillBody): Promise<CreateBillResponse>;
+  /** The person started over (a new sale, a discard): the key of the bill that could not be confirmed is forgotten, so the next bill gets a key of its own. */
+  forgetBill(): void;
   /** Reads the whole ledger of the customer now. A second call while one is on its way joins it. Never rejects: a failure is `ledgerState`. */
   loadLedger(customerId: string): Promise<void>;
   /** A customer card is open: load the ledger and keep it current. Returns the way to stop (twice is once). */
@@ -112,6 +126,20 @@ function cleanBody(input: NewCustomerBody): NewCustomerBody {
   if (!body.name) throw new Error('The customer needs a name.');
   if (!body.mobile) throw new Error('The customer needs a mobile number.');
   return body as unknown as NewCustomerBody;
+}
+
+/** JSON with the keys of every object in order and nothing undefined: the same text for the same request however it was put together. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const parts = Object.keys(record)
+      .filter((name) => record[name] !== undefined)
+      .sort()
+      .map((name) => `${JSON.stringify(name)}:${stableJson(record[name])}`);
+    return `{${parts.join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 /** The same text for the same customer whatever order the keys were written in. */
@@ -168,6 +196,46 @@ export function createMoneyServer(deps: MoneyServerDeps): MoneyServer {
       }
     })();
     creating.set(text, call);
+    return call;
+  }
+
+  // ---- X1
+  const billing = new Map<string, Promise<CreateBillResponse>>();
+  /** The bill whose last call did not end well and the key it used: pressing Save again for the same bill sends the same key. */
+  let lastBillTry: { body: string; key: string } | null = null;
+
+  function createBill(input: BillBody): Promise<CreateBillResponse> {
+    const text = stableJson(input);
+    const joined = billing.get(text);
+    if (joined) return joined; // a double click: the same action
+    const reuse = lastBillTry !== null && lastBillTry.body === text ? lastBillTry.key : undefined;
+    const mine = generation;
+    const call = (async () => {
+      try {
+        const answer = await api.post<CreateBillResponse>('/v1/bills', input, {
+          idempotent: true,
+          idempotencyKey: reuse,
+          context: { customerId: input.customer_id },
+        });
+        if (mine === generation) {
+          // C5 (b): only now, and only what the function returned. The pieces' Sold and the bill's V1 figures come with the poll that follows every write.
+          cache.merge('bills', [answer.bill]);
+          cache.merge('bill-items', answer.items);
+          cache.merge('receipts', answer.receipts);
+          cache.merge('receipt-allocations', answer.allocations);
+          if (lastBillTry !== null && lastBillTry.body === text) lastBillTry = null;
+        }
+        return answer;
+      } catch (error) {
+        // the key travels on the error (L5): the next press of Save for this bill sends it again
+        if (mine === generation && isApiError(error) && error.idempotencyKey)
+          lastBillTry = { body: text, key: error.idempotencyKey };
+        throw error;
+      } finally {
+        billing.delete(text);
+      }
+    })();
+    billing.set(text, call);
     return call;
   }
 
@@ -272,6 +340,8 @@ export function createMoneyServer(deps: MoneyServerDeps): MoneyServer {
     slots.clear();
     creating.clear();
     lastTry = null;
+    billing.clear();
+    lastBillTry = null;
     unsubscribe?.();
     unsubscribe = null;
   }
@@ -280,6 +350,10 @@ export function createMoneyServer(deps: MoneyServerDeps): MoneyServer {
 
   return {
     createCustomer,
+    createBill,
+    forgetBill: () => {
+      lastBillTry = null;
+    },
     loadLedger,
     watchLedger,
     ledgerRows: (customerId) => slots.get(customerId)?.rows ?? EMPTY,
