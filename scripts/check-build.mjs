@@ -3,8 +3,9 @@
 // It fails the build when
 //   out/    holds `mysql://`, `mariadb://`, `DB_PASSWORD`, `DATABASE_URL`, `admin123` or `staff123` in any file, or any `.map` file (no source maps, H2, H3);
 //   out/    lacks the static page of a route of src/app, the home page or the 404 page (every route is a static page, C10; a page that touched `window` while it was prerendered would not build);
-//   src/    uses `dangerouslySetInnerHTML` or `innerHTML` (H3: React's escaping is the protection that a static export's policy cannot give, H1), found with the TypeScript parser,
-//           so a comment or a text that merely mentions the word is not a use;
+//   src/    uses `dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write` or `document.writeln` (H3: React's escaping is the protection that a static
+//           export's policy cannot give, H1), found with the TypeScript parser, so a comment or a text that merely mentions the word is not a use. The one exception is named in
+//           RAW_HTML_ALLOWED: the print window of the reports, src/lib/exportUtils.ts, may call document.write (RV1c);
 //   src/    reads a build-time variable other than NEXT_PUBLIC_API_URL (H4, U10), or any variable that does not start with NEXT_PUBLIC_ (it would be empty in the browser, and a secret must
 //           never be written there). NEXT_PUBLIC_PREVIEW_MODE (the preview build) and the NEXT_PUBLIC_SUPABASE_* names of the Supabase build are tolerated and NOTED until WEB15 removes them
 //           (edit TOLERATED below then, and the strict check of H4 is complete);
@@ -27,7 +28,27 @@ export const FORBIDDEN_IN_OUT = [
   'admin123',
   'staff123',
 ];
-export const RAW_HTML_NAMES = ['dangerouslySetInnerHTML', 'innerHTML'];
+/**
+ * The browser's ways to put text into a page as HTML (H3). A name with no dot is found as a word (a property, a destructured name, a JSX attribute, a string key); `document.write`
+ * and `document.writeln` are found as a member of a document: `document`, `window.document`, `frame.contentDocument`, `el.ownerDocument`, by name, by ['name'] or destructured.
+ * The check reads one file at a time and follows no variable, so `const d = document; d.write(x)` is not seen: it stops the plain spellings, not a determined bypass (RV1c).
+ */
+export const RAW_HTML_NAMES = [
+  'dangerouslySetInnerHTML',
+  'innerHTML',
+  'outerHTML',
+  'insertAdjacentHTML',
+  'document.write',
+  'document.writeln',
+];
+/**
+ * The files that may use a raw-HTML name, by path from the project root, each with the names it may use (nothing else in the file is allowed). A test pins this list (PT-RV1c).
+ * src/lib/exportUtils.ts: printPdf writes reportTableHtml(...) into the window it has just opened; every value in that page (a title, a subtitle, a column name, a cell)
+ * passes through escapeHtml, and a test (PT-RV1c) reads reportTableHtml and fails on a value that does not. Put a new file here only with a reason like that one.
+ */
+export const RAW_HTML_ALLOWED = {
+  'src/lib/exportUtils.ts': ['document.write'],
+};
 export const ALLOWED_PUBLIC_ENV = ['NEXT_PUBLIC_API_URL'];
 /** Read today, removed by WEB15 (the Supabase build, the preview build): tolerated, and printed as a note. */
 export const TOLERATED = [
@@ -108,6 +129,48 @@ function checkOut(outDir, routes, problems) {
 
 // ---------------------------------------------------------------- src/
 
+const WORD_NAMES = RAW_HTML_NAMES.filter((n) => !n.includes('.'));
+const DOCUMENT_METHODS = RAW_HTML_NAMES.filter((n) => n.startsWith('document.')).map((n) =>
+  n.slice('document.'.length)
+);
+const DOCUMENT_HOLDERS = ['document', 'contentDocument', 'ownerDocument'];
+
+/** The expression without the casts and brackets around it: `(w as Window)!` is `w`. */
+function unwrap(e) {
+  while (
+    ts.isParenthesizedExpression(e) ||
+    ts.isNonNullExpression(e) ||
+    ts.isAsExpression(e) ||
+    ts.isSatisfiesExpression(e) ||
+    ts.isTypeAssertionExpression(e)
+  )
+    e = e.expression;
+  return e;
+}
+/** Is it a document: `document`, `x.document`, `x['document']`, `x.contentDocument`, `x.ownerDocument`? */
+function isDocument(expression) {
+  const e = unwrap(expression);
+  if (ts.isIdentifier(e)) return e.text === 'document';
+  if (ts.isPropertyAccessExpression(e)) return DOCUMENT_HOLDERS.includes(e.name.text);
+  if (ts.isElementAccessExpression(e))
+    return (
+      ts.isStringLiteralLike(e.argumentExpression) &&
+      DOCUMENT_HOLDERS.includes(e.argumentExpression.text)
+    );
+  return false;
+}
+/** `document.write` or `document.writeln` when the node is a member of a document, as a name or a string key, else undefined. */
+function documentWrite(node) {
+  const member = ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)
+      ? node.argumentExpression.text
+      : undefined;
+  return member !== undefined && DOCUMENT_METHODS.includes(member) && isDocument(node.expression)
+    ? `document.${member}`
+    : undefined;
+}
+
 const KIND = {
   '.tsx': ts.ScriptKind.TSX,
   '.ts': ts.ScriptKind.TS,
@@ -145,17 +208,35 @@ function checkSrc(srcDir, problems, notes) {
       ts.isPropertyAccessExpression(e) &&
       e.expression.getText(sf) === 'process' &&
       e.name.text === 'env';
+    const allowed = RAW_HTML_ALLOWED[rel] ?? [];
+    const rawHtml = (name, node, by = '') => {
+      if (!allowed.includes(name))
+        problems.push(`${rel}:${line(node)}: uses ${name}${by} (H3: no raw HTML)`);
+    };
     const visit = (node) => {
-      if (
-        (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) &&
-        RAW_HTML_NAMES.includes(node.text)
-      )
-        problems.push(`${rel}:${line(node)}: uses ${node.text} (H3: no raw HTML)`);
+      if ((ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) && WORD_NAMES.includes(node.text))
+        rawHtml(node.text, node);
       else if (
         (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
-        RAW_HTML_NAMES.includes(node.text)
+        WORD_NAMES.includes(node.text)
       )
-        problems.push(`${rel}:${line(node)}: uses ${node.text} by name (H3: no raw HTML)`);
+        rawHtml(node.text, node, ' by name');
+      const written = documentWrite(node);
+      if (written) rawHtml(written, node);
+      else if (
+        ts.isVariableDeclaration(node) &&
+        ts.isObjectBindingPattern(node.name) &&
+        node.initializer &&
+        isDocument(node.initializer)
+      ) {
+        // const { write } = document;
+        for (const el of node.name.elements) {
+          const key = el.propertyName ?? el.name;
+          const name = ts.isIdentifier(key) || ts.isStringLiteralLike(key) ? key.text : undefined;
+          if (name !== undefined && DOCUMENT_METHODS.includes(name))
+            rawHtml(`document.${name}`, el);
+        }
+      }
       if (ts.isPropertyAccessExpression(node) && isProcessEnv(node.expression))
         readEnv(node.name.text, node);
       else if (
