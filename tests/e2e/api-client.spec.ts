@@ -15,7 +15,7 @@ import { e2eLane, e2eLogin } from './global-setup';
 // Run: LANE=b JV_API_DIR=<checkout of jewelvault-api> E2E=1 npx playwright test tests/e2e/api-client.spec.ts
 
 const API_SOURCE = path.resolve(__dirname, '../../src/lib/api');
-const MODULES = ['client', 'types', 'pricingHash'];
+const MODULES = ['client', 'types', 'pricingHash', 'errorMap']; // errorMap: split out of client.ts by WEB11
 
 function compile(name: string): string {
   const source = readFileSync(path.join(API_SOURCE, `${name}.ts`), 'utf8');
