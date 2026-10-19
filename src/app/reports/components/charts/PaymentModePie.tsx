@@ -9,14 +9,22 @@ interface DataPoint {
   fill: string;
 }
 
-function CustomTooltip({ active, payload }: { active?: boolean; payload?: { name: string; payload: { amount: number; value: number } }[] }) {
+function CustomTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: { name: string; payload: { amount: number; value: number } }[];
+}) {
   if (!active || !payload || !payload.length) return null;
   const p = payload[0];
   return (
     <div className="jewel-card-elevated px-3 py-2 text-xs">
       <p className="font-semibold text-foreground">{p?.name}</p>
-      <p className="text-muted-foreground">{p?.payload.value}% of transactions</p>
-      <p className="text-primary font-semibold font-tabular">₹{p?.payload.amount.toLocaleString('en-IN')}</p>
+      <p className="text-muted-foreground">{p?.payload.value}% of the money collected</p>
+      <p className="text-primary font-semibold font-tabular">
+        ₹{p?.payload.amount.toLocaleString('en-IN')}
+      </p>
     </div>
   );
 }
@@ -44,7 +52,13 @@ export default function PaymentModePie({ data }: { data: DataPoint[] }) {
           iconType="circle"
           iconSize={8}
           formatter={(value: string) => (
-            <span style={{ fontSize: '11px', color: 'var(--muted-foreground)', fontFamily: 'var(--font-sans)' }}>
+            <span
+              style={{
+                fontSize: '11px',
+                color: 'var(--muted-foreground)',
+                fontFamily: 'var(--font-sans)',
+              }}
+            >
               {value}
             </span>
           )}

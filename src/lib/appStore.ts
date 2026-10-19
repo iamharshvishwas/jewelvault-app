@@ -13,19 +13,23 @@ import type {
   RecordPaymentResponse,
   ReissueBillResponse,
   SettleFineResponse,
+  SyncResource,
   VoidReceiptResponse,
 } from '@/lib/api/types';
 import type { BillBody } from './billing';
 import type { OpeningBody, ReasonBody, RefundBody, ReissueBody } from './ownerActions';
 import type { RecordPaymentBody, SettleFineBody } from './payments';
 import { rowCache, savingNotAvailable } from './cache/cache';
+import { booksServer, type DailyTotalsView, type HealthView } from './cache/booksServer';
 import { SaveError, editRow } from './cache/edit';
 import { moneyServer, type LedgerLoadState, type LedgerWireRow } from './cache/moneyServer';
 import { stampMicros } from './cache/stamp';
 import {
   MOCK_CUSTOMERS,
+  MOCK_HEALTH,
   MOCK_INVOICES,
   MOCK_LEDGER,
+  MOCK_REVIEW,
   type Customer,
   type CustomerType,
   type Invoice,
@@ -39,6 +43,42 @@ import {
 } from './mockData';
 import { getSettings } from './settingsStore';
 import { PREVIEW_MODE } from './previewMode';
+import {
+  billSummaryRows,
+  customerBalanceOf,
+  customerBalanceRows,
+  dailyTotalOf,
+  emptyBalanceOf,
+  soldLineRows,
+} from './books';
+import {
+  businessDateOf,
+  businessMonthOf,
+  cancelledForDate,
+  cancelledForMonth,
+  customerCard,
+  customersWithDues,
+  eveningFigures,
+  lineTotalsByCategory,
+  lineTotalsByMetal,
+  lineTotalsByMonth,
+  paymentModeTotals,
+  pendingBills,
+  salesForDate,
+  salesForMonth,
+  shareOfTotal,
+  totalFineOutstanding,
+  totalOutstanding,
+  type BillSummaryRow as SelectorBillRow,
+  type CustomerBalanceRow as SelectorBalanceRow,
+  type CustomerCard,
+  type DailyTotalRow,
+  type LineTotal,
+  type ModeTotal,
+  type MonthLines,
+  type SalesFigure,
+  type SoldLine,
+} from './selectors';
 
 // The money-side store keeps its names and its synchronous reads. Task WEB07 changes where the data comes from:
 //   - in a real build (spec C1, C3, C8, C9) customers, invoices and the ledger are made from the rows the hydrate and the poll put in memory (src/lib/cache): customers and
@@ -271,6 +311,7 @@ function itemFromRow(row: BillItemRow): InvoiceItem {
     metalAmount: num(row.metal_amount),
     fineWeightDue: num(row.fine_weight_due),
     itemTotal: num(row.item_total),
+    quantity: row.quantity,
     sellingMethod: row.selling_method as SellingMethod,
     // photos are WEB06's: until then every line shows the placeholder image
     imageRef: NO_IMAGE,
@@ -413,7 +454,8 @@ function currentInvoices(): InvoiceView {
 /** The lists the reports and the dashboard read: the prototype's own in a preview, the cache's in a real build. */
 const customerList = (): Customer[] => (PREVIEW_MODE ? _customers : currentCustomers());
 const salesInvoices = (): Invoice[] => (PREVIEW_MODE ? _invoices : currentInvoices().sales);
-const allBills = (): Invoice[] => (PREVIEW_MODE ? _invoices : currentInvoices().all);
+/** The sales (V5): every bill that is neither an opening-balance bill nor cancelled. `salesInvoices()` keeps the cancelled ones (the estimate lists show them as Cancelled). */
+const soldInvoices = (): Invoice[] => salesInvoices().filter((inv) => inv.status !== 'Cancelled');
 
 // the ledger of V3: one row per event of a customer, with the server's running balances. V3's `id` is the id of the bill or receipt, so the invoice and the cancellation of one
 // bill share it: the entry's own id is the rank of the event and that id.
@@ -826,6 +868,11 @@ let _invoiceSeq = _invoices.length + 1;
 /** The sales, in the prototype's `Invoice` shape. An opening-balance bill is dues brought forward, not a sale (C14): it is in the ledger, in the customer's dues and in `getInvoiceById`. */
 export function getInvoices(): Invoice[] {
   return salesInvoices();
+}
+
+/** The bills that count as sales: not cancelled and not dues brought forward (V5, C14). For the lists of what was sold. */
+export function getSoldInvoices(): Invoice[] {
+  return soldInvoices();
 }
 
 export function getInvoiceById(id: string): Invoice | undefined {
@@ -1264,9 +1311,446 @@ export function deleteRecordedPayment(ledgerEntryId: string): void {
   persistAppStore();
 }
 
-// ── Dashboard Stats (computed) ────────────────────────────────────────────────
+// ── The figures: one set of selectors over V1, V2 and V4 (WEB12; spec C14, V5) ──────────────────────────────
+
+// The dashboard, the reports and the customer card take their figures from `src/lib/selectors.ts` over the derived reads, so on the same data they cannot disagree:
+//   V1 bill_summary (the `bill-summary` rows in memory), V2 customer_balances (`customer-balances`), the lines of the bills (`bill-items`) and V4 daily_totals (the cash book,
+//   read from the API by src/lib/cache/booksServer.ts because it is not a sync resource). Sales are active bills that are not opening-balance bills; a cancelled bill is on its own line;
+//   an opening-balance bill is no sale but is still owed. Money is whole paise from the selectors up to the screen; `ledgerView.ts` writes it.
+// A preview build has no server: the same selectors run over rows made from the prototype's sample data (the `preview*` functions below, the only place the prototype's numbers are
+// turned into rows: they are rounded to the paise because the prototype added up floats).
 
 import { getDesigns } from './designStore';
+
+const previewRupees = (n: number): string => (Number.isFinite(n) ? n.toFixed(2) : '0.00');
+const previewGrams = (n: number): string => (Number.isFinite(n) ? n.toFixed(3) : '0.000');
+const previewDay = (stamp: string): string => {
+  const ms = Date.parse(stamp);
+  return Number.isNaN(ms) ? stamp.slice(0, 10) : businessDateOf(ms);
+};
+
+function previewBillRows(): SelectorBillRow[] {
+  return _invoices.map((invoice) => {
+    const cancelled = invoice.status === 'Cancelled';
+    return {
+      id: invoice.id,
+      billNo: invoice.invoiceNumber,
+      customerId: invoice.customerId,
+      billDate: previewDay(invoice.date),
+      docType: invoice.openingBalance ? 'opening_balance' : 'estimate',
+      status: cancelled ? 'cancelled' : 'active',
+      grandTotal: previewRupees(invoice.grandTotal),
+      pending: cancelled ? '0.00' : previewRupees(invoice.pendingAmount),
+      finePending: cancelled ? '0.000' : previewGrams(invoice.fineWeightPending ?? 0),
+    };
+  });
+}
+
+function previewBalanceRow(customer: Customer): SelectorBalanceRow {
+  const fine = previewGrams(customer.outstandingSilverFine ?? 0);
+  return {
+    id: customer.id,
+    totalPurchases: previewRupees(customer.totalPurchases),
+    received: previewRupees(customer.totalReceived),
+    outstanding: previewRupees(customer.outstanding),
+    advance: '0.00',
+    balance: previewRupees(customer.outstanding),
+    fineOutstanding: fine,
+    fineAdvance: '0.000',
+    fineBalance: fine,
+    lastPurchase: customer.lastPurchase ? previewDay(customer.lastPurchase) : null,
+  };
+}
+
+function previewLineRows(): SoldLine[] {
+  return _invoices.flatMap((invoice) =>
+    invoice.items.map((item) => ({
+      billId: invoice.id,
+      category: item.category,
+      material: item.material,
+      quantity: 1,
+      itemTotal: previewRupees(item.itemTotal),
+    }))
+  );
+}
+
+/** The prototype's payments as a cash book: money in on the day of each payment, by mode. */
+function previewDailyTotals(from: string, to: string): DailyTotalsView {
+  const sums = new Map<string, { date: string; mode: string; cents: number }>();
+  for (const invoice of _invoices) {
+    for (const payment of invoice.payments) {
+      const date = previewDay(payment.date);
+      if (date < from || date > to) continue;
+      const key = `${date}|${payment.mode}`;
+      const sum = sums.get(key) ?? { date, mode: payment.mode, cents: 0 };
+      sum.cents += Math.round(payment.amount * 100);
+      sums.set(key, sum);
+    }
+  }
+  const text = (cents: number) => (cents / 100).toFixed(2);
+  const rows = Array.from(sums.values()).map((sum) => ({
+    business_date: sum.date,
+    mode: sum.mode,
+    money_in: text(sum.cents),
+    money_out: '0.00',
+    net: text(sum.cents),
+  }));
+  return { rows, state: 'ready', message: null, loaded: true };
+}
+
+/** V1 for the selectors. The same array until a bill-summary row changes. */
+const billRows = (): readonly SelectorBillRow[] =>
+  PREVIEW_MODE ? previewBillRows() : billSummaryRows();
+/** V2 for the selectors: every customer. */
+const balanceRows = (): readonly SelectorBalanceRow[] =>
+  PREVIEW_MODE ? _customers.map(previewBalanceRow) : customerBalanceRows();
+/** The lines of the bills for the Sales report's split. */
+const lineRows = (): readonly SoldLine[] => (PREVIEW_MODE ? previewLineRows() : soldLineRows());
+
+/** Today's business date (S5): the Asia/Kolkata day of the browser's clock, whatever time zone the computer is in. */
+const businessTodayNow = (): string => businessDateOf(Date.now());
+
+/** A figure made from memory once for each change of the resources it reads and each day (a screen that asks every second costs nothing between changes). A preview has no versions and makes it each time. */
+function memoOf<T>(resources: SyncResource[], make: (today: string) => T): () => T {
+  let held: { key: string; value: T } | null = null;
+  return () => {
+    const today = businessTodayNow();
+    if (PREVIEW_MODE) return make(today);
+    const key = `${rowCache.versionOf(...resources)}|${today}`;
+    if (held === null || held.key !== key) held = { key, value: make(today) };
+    return held.value;
+  };
+}
+
+/** The cash book of a range of business dates (V4), as last read. A real build reads it from the API when a screen watches it; a preview makes it from its sample payments. */
+export function getDailyTotals(from: string, to: string): DailyTotalsView {
+  return PREVIEW_MODE ? previewDailyTotals(from, to) : booksServer.dailyTotals(from, to);
+}
+
+/** A screen shows this range of the cash book: read it, and read it again when the receipts change. Returns the way to stop. */
+export function watchDailyTotals(from: string, to: string): () => void {
+  return PREVIEW_MODE ? () => undefined : booksServer.watchDailyTotals(from, to);
+}
+
+/** Reads the range now (the "Try again" of a cash book that could not be read). Never rejects: see the view. */
+export function reloadDailyTotals(from: string, to: string): Promise<void> {
+  return PREVIEW_MODE ? Promise.resolve() : booksServer.reloadDailyTotals(from, to);
+}
+
+/** The cash book changed (a read began or ended): for `useSyncExternalStore`. */
+export function subscribeBooks(listener: () => void): () => void {
+  return PREVIEW_MODE ? () => undefined : booksServer.subscribe(listener);
+}
+export function booksVersion(): number {
+  return PREVIEW_MODE ? 0 : booksServer.version();
+}
+
+/** The owner's dashboard line as last read from the API (a preview build shows a made-up healthy night). */
+export function getHealthView(): HealthView {
+  if (PREVIEW_MODE) {
+    return {
+      state: 'ready',
+      message: null,
+      health: MOCK_HEALTH,
+      review: MOCK_REVIEW,
+      reviewMessage: null,
+    };
+  }
+  return booksServer.healthView();
+}
+
+/** The dashboard shows the line: read it, and read it again every few minutes. Returns the way to stop. */
+export function watchHealth(): () => void {
+  return PREVIEW_MODE ? () => undefined : booksServer.watchHealth();
+}
+
+/** Reads the line now (the "Try again" of a line that could not be read; WEB12b calls it after a Download everything). Never rejects. */
+export function reloadHealth(): Promise<void> {
+  return PREVIEW_MODE ? Promise.resolve() : booksServer.reloadHealth();
+}
+
+const cashRowsOf = (view: DailyTotalsView): DailyTotalRow[] => view.rows.map(dailyTotalOf);
+/** The cash book can be shown: it has been read and the last read did not fail. A reload in progress shows the rows of the read before it. */
+const cashBookShown = (view: DailyTotalsView): boolean =>
+  view.state === 'ready' || (view.state === 'loading' && view.loaded);
+
+export interface TotalOutstanding {
+  /** The sum of V2 `outstanding` over every customer, the walk-in and opening dues included. */
+  outstandingPaise: number;
+  customersWithDues: number;
+  fineOutstandingMg: number;
+}
+
+const outstandingMemo = memoOf<TotalOutstanding>(['customer-balances'], () => {
+  const rows = balanceRows();
+  return {
+    outstandingPaise: totalOutstanding(rows),
+    customersWithDues: customersWithDues(rows),
+    fineOutstandingMg: totalFineOutstanding(rows),
+  };
+});
+
+/** What the customers owe in all (V2): the Outstanding of the dashboard, the Payments report, the evening check and the header of the customer ledger. */
+export function computeOutstanding(): TotalOutstanding {
+  return outstandingMemo();
+}
+
+export interface PendingPayment {
+  /** The bill's id. */
+  id: string;
+  customerId: string;
+  customerName: string;
+  mobile: string;
+  invoiceNumber: string;
+  amountPaise: number;
+  finePendingMg: number;
+  /** Whole business days from the bill date to today. */
+  daysOld: number;
+}
+
+const pendingMemo = memoOf<PendingPayment[]>(['bill-summary', 'customers'], (today) => {
+  const people = new Map<string, { name: string; mobile: string }>();
+  if (PREVIEW_MODE) {
+    for (const c of _customers) people.set(c.id, { name: c.name, mobile: c.mobile });
+  } else {
+    for (const c of rowCache.rows('customers'))
+      people.set(c.id, { name: c.name, mobile: c.mobile ?? '' });
+  }
+  // opening-balance dues are dues: they are in this list although they are not sales; a cancelled bill is not (its pending is 0)
+  return pendingBills(billRows(), today).map((bill) => ({
+    id: bill.billId,
+    customerId: bill.customerId,
+    customerName: people.get(bill.customerId)?.name ?? '',
+    mobile: people.get(bill.customerId)?.mobile ?? '',
+    invoiceNumber: bill.billNo,
+    amountPaise: bill.pendingPaise,
+    finePendingMg: bill.finePendingMg,
+    daysOld: bill.daysOld,
+  }));
+});
+
+/** The bills with money pending, oldest first (V1 through `pendingBills`). */
+export function computePendingPayments(): PendingPayment[] {
+  return pendingMemo();
+}
+
+interface SalesBoard {
+  today: string;
+  month: string;
+  todaySales: SalesFigure;
+  monthSales: SalesFigure;
+  cancelledToday: SalesFigure;
+  cancelledMonth: SalesFigure;
+}
+const salesBoardMemo = memoOf<SalesBoard>(['bill-summary'], (today) => {
+  const bills = billRows();
+  const month = businessMonthOf(today);
+  return {
+    today,
+    month,
+    todaySales: salesForDate(bills, today),
+    monthSales: salesForMonth(bills, month),
+    cancelledToday: cancelledForDate(bills, today),
+    cancelledMonth: cancelledForMonth(bills, month),
+  };
+});
+
+export interface SalesReport {
+  /** The month the report covers (this month so far): '2026-10'. */
+  month: string;
+  /** V5: the sales of the month (active bills that are not opening-balance bills). */
+  sales: SalesFigure;
+  /** The cancelled bills of the month, on their own line. Not sales. */
+  cancelled: SalesFigure;
+  /** The lines of the sales by metal and by category. */
+  metals: LineTotal[];
+  categories: LineTotal[];
+  /** What the lines add up to. */
+  linesPaise: number;
+  /** The sales less the lines: the discount, other charges, tax and round-off, which belong to the bill and not to a line. Negative when discounts are larger. */
+  adjustmentPaise: number;
+  /** Gold and silver line totals month by month. */
+  monthly: MonthLines[];
+}
+
+const salesReportMemo = memoOf<SalesReport>(['bill-summary', 'bill-items'], (today) => {
+  const bills = billRows();
+  const lines = lineRows();
+  const month = businessMonthOf(today);
+  const sales = salesForMonth(bills, month);
+  const categories = lineTotalsByCategory(lines, bills, month);
+  const linesPaise = categories.reduce((sum, row) => sum + row.totalPaise, 0);
+  return {
+    month,
+    sales,
+    cancelled: cancelledForMonth(bills, month),
+    metals: lineTotalsByMetal(lines, bills, month),
+    categories,
+    linesPaise,
+    adjustmentPaise: sales.totalPaise - linesPaise,
+    monthly: lineTotalsByMonth(lines, bills),
+  };
+});
+
+/** The Sales report: this month so far, from V5 and the lines (the same sales figure as the dashboard's month). */
+export function computeSalesReport(): SalesReport {
+  return salesReportMemo();
+}
+
+export interface DaySales {
+  /** The business date, YYYY-MM-DD. */
+  date: string;
+  /** '15 Oct'. */
+  label: string;
+  /** V5 sales of the day in whole paise: active bills that are not opening-balance bills. */
+  salesPaise: number;
+  bills: number;
+}
+
+const MONTH_NAMES = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+/** The sales of each of the last `days` business days, today last (the chart of the dashboard). Each day is `salesForDate`, so a cancelled bill and dues brought forward are in none. */
+export function computeDailySales(days = 7): DaySales[] {
+  const bills = billRows();
+  const now = Date.now();
+  const out: DaySales[] = [];
+  for (let back = days - 1; back >= 0; back--) {
+    const date = businessDateOf(now - back * 86_400_000);
+    const figure = salesForDate(bills, date);
+    out.push({
+      date,
+      label: `${Number(date.slice(8, 10))} ${MONTH_NAMES[Number(date.slice(5, 7)) - 1]}`,
+      salesPaise: figure.totalPaise,
+      bills: figure.count,
+    });
+  }
+  return out;
+}
+
+export interface PaymentsPeriod {
+  from: string;
+  to: string;
+}
+
+/** The days the Payments report covers: the first of this month to today. The cash book of that range is what a screen watches. */
+export function paymentsPeriod(): PaymentsPeriod {
+  const to = businessTodayNow();
+  return { from: `${businessMonthOf(to)}-01`, to };
+}
+
+export interface PaymentsReport extends PaymentsPeriod {
+  /** The state of the cash book read: modes and `collectedPaise` mean nothing unless it is 'ready' (or a reload of a good read). */
+  state: DailyTotalsView['state'];
+  message: string | null;
+  shown: boolean;
+  /** Money in, money out and net of the five modes (V4) over the period, refunds and voids included. */
+  modes: ModeTotal[];
+  /** Each mode's net as a share of the total collected, one decimal, or null when nothing was collected. */
+  shares: Record<string, string | null>;
+  collectedPaise: number;
+  outstandingPaise: number;
+  customersWithDues: number;
+  /** The bills with money pending and what they add up to (equal to `outstandingPaise`, I10). */
+  pending: PendingPayment[];
+  pendingTotalPaise: number;
+}
+
+/** The Payments report: the cash book of the period (V4), what is owed (V2) and the bills it is owed on (V1). */
+export function computePaymentsReport(period: PaymentsPeriod = paymentsPeriod()): PaymentsReport {
+  const view = getDailyTotals(period.from, period.to);
+  const shown = cashBookShown(view);
+  const modes = paymentModeTotals(shown ? cashRowsOf(view) : [], period);
+  const collectedPaise = modes.reduce((sum, mode) => sum + mode.netPaise, 0);
+  const owed = computeOutstanding();
+  const pending = computePendingPayments();
+  return {
+    ...period,
+    state: view.state,
+    message: view.message,
+    shown,
+    modes,
+    shares: Object.fromEntries(
+      modes.map((m) => [m.mode, shareOfTotal(m.netPaise, collectedPaise)])
+    ),
+    collectedPaise,
+    outstandingPaise: owed.outstandingPaise,
+    customersWithDues: owed.customersWithDues,
+    pending,
+    pendingTotalPaise: pending.reduce((sum, p) => sum + p.amountPaise, 0),
+  };
+}
+
+export interface EveningView {
+  /** The business date the cash figures are for: today. */
+  date: string;
+  /** The state of the cash book of the day. */
+  state: DailyTotalsView['state'];
+  message: string | null;
+  /** Today's Cash net and UPI net (V4), or null while the cash book cannot be shown. */
+  cashNetPaise: number | null;
+  upiNetPaise: number | null;
+  /** The sum of V2 `outstanding`: from memory, always known. */
+  outstandingPaise: number;
+}
+
+/** The owner's evening check (V4, C14): today's Cash net, today's UPI net and the total outstanding. */
+export function computeEvening(date: string = businessTodayNow()): EveningView {
+  const view = getDailyTotals(date, date);
+  if (cashBookShown(view)) {
+    const figures = eveningFigures(cashRowsOf(view), balanceRows(), date);
+    return {
+      date,
+      state: view.state,
+      message: view.message,
+      cashNetPaise: figures.cashNetPaise,
+      upiNetPaise: figures.upiNetPaise,
+      outstandingPaise: figures.outstandingPaise,
+    };
+  }
+  return {
+    date,
+    state: view.state,
+    message: view.message,
+    cashNetPaise: null,
+    upiNetPaise: null,
+    outstandingPaise: computeOutstanding().outstandingPaise,
+  };
+}
+
+/**
+ * The figures of one customer's card: V2 and the counts of V1 (`customerCard`). In a real build they are read from the customer's rows in memory, and a customer whose V2 row has not
+ * arrived has an all-zero card (nothing is made up). A preview build makes the row from the sample customer it is given.
+ */
+export function getCustomerCard(who: Customer | string): CustomerCard {
+  const customerId = typeof who === 'string' ? who : who.id;
+  if (PREVIEW_MODE) {
+    const sample = typeof who === 'string' ? _customers.find((c) => c.id === who) : who;
+    return customerCard(
+      sample ? previewBalanceRow(sample) : emptyBalanceOf(customerId),
+      previewBillRows().filter((row) => row.customerId === customerId)
+    );
+  }
+  const row = rowCache.get('customer-balances', customerId);
+  return customerCard(
+    row ? customerBalanceOf(row) : emptyBalanceOf(customerId),
+    billRows().filter((bill) => bill.customerId === customerId)
+  );
+}
+
+// ── Dashboard Stats (computed) ────────────────────────────────────────────────
 
 export function computeDashboardStats() {
   const designs = getDesigns();
@@ -1284,16 +1768,9 @@ export function computeDashboardStats() {
   const goldStockWeight = goldInStock.reduce((a, s) => a + s.customerNetWeight, 0);
   const silverStockWeight = silverInStock.reduce((a, s) => a + s.customerNetWeight, 0);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const todayInvoices = salesInvoices().filter((inv) => inv.date.slice(0, 10) === today);
-  const todaySales = todayInvoices.reduce((a, inv) => a + inv.grandTotal, 0);
-
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  const monthInvoices = salesInvoices().filter((inv) => new Date(inv.date) >= monthStart);
-  const monthSales = monthInvoices.reduce((a, inv) => a + inv.grandTotal, 0);
-
-  const totalOutstanding = customerList().reduce((a, c) => a + c.outstanding, 0);
+  // sales, the cancelled line and what is owed: the selectors over V1 and V2 (C14, V5), in whole paise
+  const board = salesBoardMemo();
+  const owed = computeOutstanding();
 
   const now = Date.now();
   const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
@@ -1312,27 +1789,18 @@ export function computeDashboardStats() {
     silverStockWeight,
     goldStockCount: goldInStock.length,
     silverStockCount: silverInStock.length,
-    todaySales,
-    monthSales,
-    totalOutstanding,
+    today: board.today,
+    todaySalesPaise: board.todaySales.totalPaise,
+    todayBills: board.todaySales.count,
+    monthSalesPaise: board.monthSales.totalPaise,
+    monthBills: board.monthSales.count,
+    cancelledToday: board.cancelledToday,
+    cancelledMonth: board.cancelledMonth,
+    totalOutstandingPaise: owed.outstandingPaise,
+    customersWithDues: owed.customersWithDues,
     approvalDue: onApproval,
     ageingOver90,
   };
-}
-
-export function computePendingPayments() {
-  const now = Date.now();
-  // opening-balance dues are dues: they are in this list although they are not sales
-  return allBills()
-    .filter((inv) => inv.pendingAmount > 0 && inv.status !== 'Cancelled')
-    .map((inv) => ({
-      id: inv.id,
-      customerName: inv.customerName,
-      mobile: inv.customerMobile,
-      invoiceNumber: inv.invoiceNumber,
-      amount: inv.pendingAmount,
-      daysOld: Math.floor((now - new Date(inv.date).getTime()) / (1000 * 60 * 60 * 24)),
-    }));
 }
 
 export function computeApprovalDue() {
@@ -1383,7 +1851,8 @@ export function computeRecentActivity() {
     amount: number;
   }[] = [];
 
-  const recentInvoices = [...salesInvoices()]
+  // a cancelled bill is not a sale (V5): it is not "recent activity" of the shop's sales
+  const recentInvoices = [...soldInvoices()]
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     .slice(0, 3);
 
@@ -1440,22 +1909,24 @@ export function computeCategoryStockData() {
   }));
 }
 
+/** Gold and silver sales month by month for the charts (rupees, for display only): the lines of the sales (V5) added up in paise by the selectors. */
 export function computeMonthlySalesData() {
-  const monthMap: Record<string, { goldSales: number; silverSales: number }> = {};
-  for (const inv of salesInvoices()) {
-    const month = new Date(inv.date).toLocaleString('en-IN', { month: 'short', year: '2-digit' });
-    if (!monthMap[month]) monthMap[month] = { goldSales: 0, silverSales: 0 };
-    for (const item of inv.items) {
-      if (item.material === 'Gold') monthMap[month].goldSales += item.itemTotal;
-      else monthMap[month].silverSales += item.itemTotal;
-    }
-  }
-  return Object.entries(monthMap).map(([month, data]) => ({ month, ...data }));
+  const label = (month: string) =>
+    new Date(`${month}-15T12:00:00Z`).toLocaleString('en-IN', {
+      month: 'short',
+      year: '2-digit',
+      timeZone: 'UTC',
+    });
+  return lineTotalsByMonth(lineRows(), billRows()).map((row) => ({
+    month: label(row.month),
+    goldSales: row.goldPaise / 100,
+    silverSales: row.silverPaise / 100,
+  }));
 }
 
 export function computeCategorySalesData() {
   const catMap: Record<string, { count: number; value: number }> = {};
-  for (const inv of salesInvoices()) {
+  for (const inv of soldInvoices()) {
     for (const item of inv.items) {
       if (!catMap[item.category]) catMap[item.category] = { count: 0, value: 0 };
       catMap[item.category].count += 1;
@@ -1467,7 +1938,7 @@ export function computeCategorySalesData() {
 
 export function computePaymentModeData() {
   const modeMap: Record<string, number> = {};
-  for (const inv of salesInvoices()) {
+  for (const inv of soldInvoices()) {
     for (const pmt of inv.payments) {
       modeMap[pmt.mode] = (modeMap[pmt.mode] || 0) + pmt.amount;
     }

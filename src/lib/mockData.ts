@@ -1,3 +1,4 @@
+import type { DashboardHealth, ReviewWire } from './api/types';
 import { PREVIEW_MODE } from './previewMode';
 
 export type SkuStatus =
@@ -107,6 +108,8 @@ export interface InvoiceItem {
   metalAmount: number;
   fineWeightDue?: number;
   itemTotal: number;
+  /** How many pieces the line sold (R6: a Per Piece line may be more than one; a By Weight line is always 1). Absent on a line of the prototype's sample data, which means one. */
+  quantity?: number;
   sellingMethod: SellingMethod;
   imageRef: string;
   category: string;
@@ -330,6 +333,56 @@ function sampleDesigns(): Design[] {
       ],
     },
   ];
+}
+
+// ── Mock health line (the owner's dashboard line of a preview build: all well, made up) ─────
+
+/** A preview build has no server: the dashboard line shows this made-up healthy night, under the banner that says the data is a sample. */
+export const MOCK_HEALTH: DashboardHealth | null = PREVIEW_MODE ? sampleHealth() : null;
+export const MOCK_REVIEW: ReviewWire | null = PREVIEW_MODE ? sampleReview() : null;
+
+function sampleHealth(): DashboardHealth {
+  const hoursAgo = (h: number) =>
+    new Date(Date.now() - h * 3600_000).toISOString().replace('Z', '000Z');
+  const day = (n: number) =>
+    new Date(Date.now() + 19_800_000 - n * 86_400_000).toISOString().slice(0, 10);
+  return {
+    level: 'green',
+    reasons: [],
+    check: { last_at: hoursAgo(10), age_hours: 10, ok: true },
+    db_dump: { last_at: hoursAgo(10), age_hours: 10 },
+    photo_copy: { last_at: hoursAgo(10), age_hours: 10 },
+    db_size: {
+      bytes: 41_000_000,
+      data_bytes: 30_000_000,
+      index_bytes: 6_000_000,
+      photo_bytes: 0,
+      overhead_percent: 12,
+      red_line_bytes: 2_147_483_648,
+      injected: false,
+    },
+    download: { state: 'ok', from: 'last_download', reference_date: day(5), age_days: 5 },
+    pull: { state: 'ok', from: 'last_pulled', reference_date: day(2), age_days: 2 },
+    folder: {
+      files: 42,
+      bytes: 120_000_000,
+      free_bytes: null,
+      previous_files: 41,
+      recorded_at: hoursAgo(10),
+      fell: false,
+      fell_at: null,
+    },
+    rights: { delete: false, drop: false, extra: [] },
+    now: new Date().toISOString().replace('Z', '000Z'),
+  };
+}
+
+function sampleReview(): ReviewWire {
+  return {
+    date: new Date(Date.now() + 19_800_000 - 86_400_000).toISOString().slice(0, 10),
+    counts: { discount_over: 1, refunds: 1, walkin_bills: 2 },
+    walkin: { cash_total: '4500.00', bills: 2 },
+  };
 }
 
 // ── Mock Customers ────────────────────────────────────────────────────────────

@@ -13,12 +13,10 @@ import {
   BarChart3,
 } from 'lucide-react';
 import type { AuthRole } from '@/lib/authStore';
+import { billsShown, cancelledShown, paiseShown } from '@/lib/ledgerView';
 
-function fmt(n: number) {
-  if (n >= 100000) return `₹${(n / 100000).toFixed(2)}L`;
-  if (n >= 1000) return `₹${(n / 1000).toFixed(1)}K`;
-  return `₹${n.toLocaleString('en-IN')}`;
-}
+// The sales, the cancelled line and the outstanding are the selectors' figures over V1 and V2 (spec C14, V5; src/lib/selectors.ts through computeDashboardStats), written in whole paise the
+// way the customer card writes them (src/lib/ledgerView.ts): ₹12,900, not ₹12.9K. A cancelled bill is on a line of its own and is not in the sales.
 
 function fmtWt(n: number) {
   return `${n.toFixed(3)} g`;
@@ -46,9 +44,27 @@ export default function DashboardKpiGrid({ role = 'owner' }: { role?: AuthRole }
                 <p className="text-xs font-semibold uppercase tracking-widest text-white/60 mb-1">
                   Today&apos;s Sales
                 </p>
-                <p className="text-4xl font-bold text-white font-tabular">{fmt(s.todaySales)}</p>
+                <p
+                  data-testid="kpi-today-sales"
+                  className="text-4xl font-bold text-white font-tabular"
+                >
+                  {paiseShown(s.todaySalesPaise)}
+                </p>
+                <p
+                  data-testid="kpi-today-bills"
+                  className="text-xs text-white/60 mt-0.5 font-tabular"
+                >
+                  {billsShown(s.todayBills)}
+                </p>
                 <p className="text-sm text-white/70 mt-1 font-tabular">
-                  {fmt(s.monthSales)} this month
+                  <span data-testid="kpi-month-sales">{paiseShown(s.monthSalesPaise)}</span> this
+                  month
+                </p>
+                <p
+                  data-testid="kpi-cancelled-today"
+                  className="text-xs text-white/60 mt-0.5 font-tabular"
+                >
+                  {cancelledShown('Cancelled today', s.cancelledToday)}
                 </p>
               </div>
               <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center">
@@ -59,7 +75,7 @@ export default function DashboardKpiGrid({ role = 'owner' }: { role?: AuthRole }
               <TrendingUp size={14} className="text-emerald-400" />
               <span className="text-xs text-emerald-400 font-semibold">Live from invoices</span>
               <span className="text-xs text-white/40 ml-auto">
-                {s.todaySales > 0 ? 'Active today' : 'No sales yet today'}
+                {s.todaySalesPaise > 0 ? 'Active today' : 'No sales yet today'}
               </span>
             </div>
           </Link>
@@ -79,8 +95,11 @@ export default function DashboardKpiGrid({ role = 'owner' }: { role?: AuthRole }
                 <AlertTriangle size={15} className="text-amber-600" />
               </div>
             </div>
-            <p className="text-2xl font-bold text-amber-700 font-tabular">
-              {fmt(s.totalOutstanding)}
+            <p
+              data-testid="kpi-outstanding"
+              className="text-2xl font-bold text-amber-700 font-tabular"
+            >
+              {paiseShown(s.totalOutstandingPaise)}
             </p>
             <p className="text-xs text-muted-foreground mt-1">Across all customers</p>
           </Link>
@@ -212,11 +231,19 @@ export default function DashboardKpiGrid({ role = 'owner' }: { role?: AuthRole }
                 <BarChart3 size={15} className="text-blue-600" />
               </div>
             </div>
-            <p className="text-2xl font-bold text-foreground font-tabular">{fmt(s.monthSales)}</p>
+            <p
+              data-testid="kpi-month-tile"
+              className="text-2xl font-bold text-foreground font-tabular"
+            >
+              {paiseShown(s.monthSalesPaise)}
+            </p>
             <div className="flex items-center gap-1 mt-1">
               <TrendingUp size={12} className="text-emerald-500" />
               <span className="text-xs text-emerald-600 font-semibold">Current month total</span>
             </div>
+            <p data-testid="kpi-cancelled-month" className="text-xs text-muted-foreground mt-1">
+              {cancelledShown('Cancelled this month', s.cancelledMonth)}
+            </p>
           </Link>
         )}
       </div>

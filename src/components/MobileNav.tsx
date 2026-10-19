@@ -2,7 +2,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Package, ScanLine, ShoppingCart, BookOpen } from 'lucide-react';
+import { LayoutDashboard, Package, ScanLine, ShoppingCart } from 'lucide-react';
 import { canAccessPath, type AuthSession } from '@/lib/authStore';
 
 const MOBILE_NAV = [
@@ -21,7 +21,6 @@ const MOBILE_NAV = [
     isCenter: true,
   },
   { id: 'mnav-sale', label: 'Sale', href: '/billing-pos', icon: <ShoppingCart size={20} /> },
-  { id: 'mnav-catalogue', label: 'Catalogue', href: '/catalogue', icon: <BookOpen size={20} /> },
 ];
 
 export default function MobileNav({ session }: { session: AuthSession }) {

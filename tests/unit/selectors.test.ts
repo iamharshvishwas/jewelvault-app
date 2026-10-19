@@ -29,8 +29,12 @@ import {
   customerCard,
   customersWithDues,
   eveningFigures,
+  lineTotalsByCategory,
+  lineTotalsByMetal,
+  lineTotalsByMonth,
   paymentModeTotals,
   pendingBills,
+  shareOfTotal,
   salesForDate,
   salesForMonth,
   salesInRange,
@@ -44,6 +48,7 @@ import {
   type DailyTotalRow,
   type DocType,
   type PayMode,
+  type SoldLine,
 } from '@/lib/selectors';
 
 // ---------------------------------------------------------------------------------------------------------
@@ -802,6 +807,117 @@ describe('the customer card', () => {
       () => customerCard({ ...CUSTOMERS[0], fineBalance: '0.0005' }, BILLS),
       'fineBalance'
     );
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// WEB12: the lines of the sales (the Sales report's split by metal, category and month) and the share of a total
+// ---------------------------------------------------------------------------------------------------------
+
+/**
+ * The lines of the bills above (bill_items): what a bill's lines add up to is NOT its grand total (the discount, other charges, tax and round-off are on the bill, not on a line). The
+ * cancelled bill (b7) and a line whose bill has no V1 row yet ('ghost') must never count; an opening-balance bill has no lines, and a line that named one would not count either.
+ */
+function line(
+  billId: string,
+  category: string,
+  material: string,
+  quantity: number,
+  itemTotal: DecimalInput
+): SoldLine {
+  return { billId, category, material, quantity, itemTotal };
+}
+const LINES: SoldLine[] = [
+  line('b0', 'Ring', 'Gold', 1, '9999.99'),
+  line('b1', 'Ring', 'Gold', 1, '100000.00'),
+  line('b1', 'Anklet', 'Silver', 2, '49000.00'), // 1,000.00 less than the bill: the bill-level discount
+  line('b2', 'Necklace', 'Gold', 1, 250000),
+  line('b7', 'Ring', 'Gold', 1, '70000.00'), // cancelled
+  line('b3', 'Anklet', 'Silver', 3, '120000.00'),
+  line('b4', 'Anklet', 'Silver', 1, '556.00'),
+  line('b5', 'Ring', 'Gold', 1, '50000.00'),
+  line('b6', 'Anklet', 'Silver', 1, '999.00'),
+  line('ghost', 'Ring', 'Gold', 1, '123456.00'), // its V1 row has not arrived
+  line('ob1', 'Ring', 'Gold', 1, '5000.00'), // an opening-balance bill has no lines; if one did, it still is no sale
+];
+
+describe('WEB12 V5 lines: the sales split by category, metal and month (active, non-opening bills only)', () => {
+  it('by category in a month, in category order: units are the quantities, lines are the lines', () => {
+    // October. Anklet 49,000 (2) + 120,000 (3) + 556 (1) + 999 (1) = 170,555.00 in 7 units on 4 lines; Necklace 250,000.00; Ring 100,000 + 50,000 = 150,000.00 (b7, 70,000, is cancelled)
+    expect(lineTotalsByCategory(LINES, BILLS, '2026-10')).toEqual([
+      { key: 'Anklet', units: 7, lines: 4, totalPaise: 17055500 },
+      { key: 'Necklace', units: 1, lines: 1, totalPaise: 25000000 },
+      { key: 'Ring', units: 2, lines: 2, totalPaise: 15000000 },
+    ]);
+  });
+
+  it('by metal in a month: Gold first, then Silver', () => {
+    expect(lineTotalsByMetal(LINES, BILLS, '2026-10')).toEqual([
+      { key: 'Gold', units: 3, lines: 3, totalPaise: 40000000 },
+      { key: 'Silver', units: 7, lines: 4, totalPaise: 17055500 },
+    ]);
+    // September holds one gold line
+    expect(lineTotalsByMetal(LINES, BILLS, '2026-09')).toEqual([
+      { key: 'Gold', units: 1, lines: 1, totalPaise: 999999 },
+    ]);
+  });
+
+  it('by month, oldest first, gold and silver apart', () => {
+    expect(lineTotalsByMonth(LINES, BILLS)).toEqual([
+      { month: '2026-09', goldPaise: 999999, silverPaise: 0 },
+      { month: '2026-10', goldPaise: 40000000, silverPaise: 17055500 },
+    ]);
+  });
+
+  it('a month with nothing is an empty list, and the bill-level difference is the sales figure less the lines', () => {
+    expect(lineTotalsByCategory(LINES, BILLS, '2026-11')).toEqual([]);
+    expect(lineTotalsByMetal(LINES, BILLS, '2026-11')).toEqual([]);
+    const lines = lineTotalsByMetal(LINES, BILLS, '2026-10').reduce(
+      (sum, row) => sum + row.totalPaise,
+      0
+    );
+    // sales of October are 571,555.00; the lines are 570,555.00; the 1,000.00 is b1's discount
+    expect(salesForMonth(BILLS, '2026-10').totalPaise - lines).toBe(100000);
+  });
+
+  it('a cancelled bill, a bill with no V1 row and an opening-balance bill add nothing (negative control: they WOULD add if the filter were gone)', () => {
+    const everything = lineTotalsByMetal(LINES, BILLS, '2026-10').reduce(
+      (sum, row) => sum + row.totalPaise,
+      0
+    );
+    expect(everything).toBe(57055500);
+    // the same lines taken with every bill counted as a sale would add the cancelled 70,000.00 and the opening line
+    const naive = LINES.filter((row) => row.billId !== 'ghost').reduce(
+      (sum, row) => sum + Math.round(Number(row.itemTotal) * 100),
+      0
+    );
+    expect(naive).toBeGreaterThan(everything);
+  });
+
+  it('reads money exactly and names a column that is not a number', () => {
+    const odd = [line('b1', 'Ring', 'Gold', 1, 0.1), line('b1', 'Ring', 'Gold', 1, 0.2)];
+    expect(lineTotalsByCategory(odd, BILLS, '2026-10')).toEqual([
+      { key: 'Ring', units: 2, lines: 2, totalPaise: 30 },
+    ]);
+    expectInvalid(
+      () => lineTotalsByCategory([line('b1', 'Ring', 'Gold', 1, 'abc')], BILLS, '2026-10'),
+      'itemTotal'
+    );
+    expectInvalid(() => lineTotalsByCategory(LINES, BILLS, '2026-13'), 'month');
+  });
+});
+
+describe('WEB12 share of a total, in tenths of a percent, exact', () => {
+  it('rounds half up and gives null when there is nothing to share', () => {
+    expect(shareOfTotal(1, 3)).toBe('33.3');
+    expect(shareOfTotal(2, 3)).toBe('66.7');
+    expect(shareOfTotal(1, 8)).toBe('12.5');
+    expect(shareOfTotal(1, 16)).toBe('6.3'); // 6.25 rounds half up
+    expect(shareOfTotal(5, 5)).toBe('100.0');
+    expect(shareOfTotal(0, 5)).toBe('0.0');
+    expect(shareOfTotal(-1, 8)).toBe('-12.5');
+    expect(shareOfTotal(5, 0)).toBeNull();
+    expect(shareOfTotal(5, -5)).toBeNull();
   });
 });
 

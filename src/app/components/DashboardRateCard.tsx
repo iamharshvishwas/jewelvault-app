@@ -6,6 +6,7 @@ import SaveButton from '@/components/ui/SaveButton';
 import { useSession } from '@/lib/authStore';
 import { sameDecimal } from '@/lib/cache/edit';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
+import { dayLabel } from '@/lib/rateGuard';
 import {
   businessToday,
   getRateSheet,
@@ -17,15 +18,8 @@ import {
 // The daily metal rates (spec D4, R2, Y8; task WEB05). A rate is one row for a day, a material and a purity. The owner may enter the rates of any day up to today and correct
 // today's; a biller enters today's, once for each purity, and cannot correct it. The API decides (this card only does not offer what it would refuse). A rate that is typed is
 // sent, a rate that is only shown (the last one, to start from) is not: nothing is saved that the person did not type. Memory shows a correction at once; a new rate is shown
-// when the server has made its row.
-
-const dayLabel = (date: string) =>
-  new Date(`${date}T00:00:00Z`).toLocaleDateString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
+// when the server has made its row. WEB16: every purity says which day its rate is from (the prototype's "Last updated" always said today), and a rate that is not from today says that it
+// is not confirmed today: the billing screen asks before the first bill of the day (src/lib/rateGuard.ts).
 
 const keyOf = (entry: Pick<RateEntry, 'material' | 'purity'>) =>
   `${entry.material}|${entry.purity}`;
@@ -64,6 +58,26 @@ export default function DashboardRateCard() {
     if (!isOwner) return 'Already set for today. Only the owner can correct it.';
     if (date !== today) return 'The rate of an earlier day cannot be corrected.';
     return null;
+  };
+
+  /** Which day the rate shown for a purity is from: a rate of this day, the last rate before it (to start from), or none. */
+  const dateNote = (
+    entry: RateEntry
+  ): { text: string; state: 'today' | 'day' | 'stale' | 'missing' } => {
+    if (entry.row) {
+      return date === today
+        ? { text: 'Set today', state: 'today' }
+        : { text: `Set on ${dayLabel(entry.row.rate_date)}`, state: 'day' };
+    }
+    if (entry.suggestion) {
+      return {
+        text: `Last set ${dayLabel(entry.suggestion.rate_date)}${
+          date === today ? ' · not confirmed today' : ' · no rate for this day'
+        }`,
+        state: 'stale',
+      };
+    }
+    return { text: 'No rate yet', state: 'missing' };
   };
 
   const shownValue = (entry: RateEntry): string =>
@@ -164,6 +178,7 @@ export default function DashboardRateCard() {
             <span className="w-14 pb-2 text-xs font-bold text-foreground">{material}</span>
             {entries.map((entry) => {
               const locked = lockedReason(entry);
+              const note = dateNote(entry);
               return (
                 <label
                   key={keyOf(entry)}
@@ -186,6 +201,19 @@ export default function DashboardRateCard() {
                       className="input-field w-32 pl-7 py-2 font-tabular"
                     />
                   </div>
+                  <p
+                    data-testid={`rate-date-${idOf(entry).slice('rate-'.length)}`}
+                    data-state={note.state}
+                    className={`mt-1 text-[10px] font-semibold ${
+                      note.state === 'stale'
+                        ? 'text-amber-700'
+                        : note.state === 'missing'
+                          ? 'text-red-600'
+                          : 'text-muted-foreground'
+                    }`}
+                  >
+                    {note.text}
+                  </p>
                 </label>
               );
             })}

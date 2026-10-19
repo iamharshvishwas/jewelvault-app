@@ -21,16 +21,19 @@ import {
   deleteRecordedPayment,
   getBillsOfCustomer,
   getCustomerBooks,
+  getCustomerCard,
   getLedgerForCustomer,
   removeCustomer,
 } from '@/lib/appStore';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { WALK_IN_ID } from '@/lib/billing';
 import {
-  balanceShown,
-  fineBalanceShown,
-  gramsShown,
+  balancePaiseShown,
+  billsShown,
+  fineBalanceMgShown,
   isPaymentEntry,
+  mgShown,
+  paiseShown,
   rupeesShown,
   voidedReceipts,
 } from '@/lib/ledgerView';
@@ -42,7 +45,9 @@ import CustomerPaymentsTab from './CustomerPaymentsTab';
 import ReceivePaymentPanel from './ReceivePaymentPanel';
 
 // The customer card (task WEB10). In a real build every figure on it is the customer's row of V2 (customer_balances) in memory: outstanding, advance, balance and the silver, written the same
-// way as on the estimate and in the ledger (src/lib/ledgerView.ts), so that the last running balance of the ledger below IS the card's balance (I4). The bills are the customer's rows of V1,
+// way as on the estimate and in the ledger (src/lib/ledgerView.ts), so that the last running balance of the ledger below IS the card's balance (I4). Since WEB12 the figures come through the
+// selectors (`getCustomerCard`: the V2 row in whole paise and the counts of V1, the same selectors as the dashboard and the reports, C14), a cancelled bill is counted on its own and an
+// opening-balance bill is no purchase. The bills are the customer's rows of V1,
 // the ledger is V3 as the server sent it. The screen is drawn again when memory changes (a poll, a payment of this browser); the ledger, which is read from the server after the card opens and
 // again after a change, has no event of its own, so it is looked at once a second and drawn again only when it is another ledger.
 // The prototype's Delete buttons exist in a preview build only: a bill, a payment and a customer are never deleted on the API. WEB11: the owner (and nobody else) has "Hand money back" (X11)
@@ -128,29 +133,31 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
   const voided = voidedReceipts(ledger);
   const paymentEntries = ledger.filter(isPaymentEntry);
   const refundEntries = ledger.filter((entry) => entry.kind === 'Refund');
-  const owes = customer.outstanding > 0;
-  const fineOwed = (customer.outstandingSilverFine ?? 0) > 0;
+  // the figures of the card: the customer's V2 row and the counts of V1, through the selectors (whole paise)
+  const card = getCustomerCard(customer);
+  const owes = card.outstandingPaise > 0;
+  const fineOwed = card.fineOutstandingMg > 0;
   // the extra figures of V2 that the prototype's card did not have: while the customer's row has not arrived they are blank, never made up
-  const holds = books ? Number(books.advance) > 0 : false;
+  const holds = books ? card.advancePaise > 0 : false;
   const stats = [
     {
       id: 'cs-purchases',
       label: 'Total Purchases',
-      value: rupeesShown(customer.totalPurchases),
+      value: paiseShown(card.totalPurchasesPaise),
       icon: <TrendingUp size={14} className="text-blue-600" />,
       color: 'bg-blue-50',
     },
     {
       id: 'cs-received',
       label: 'Amount Received',
-      value: rupeesShown(customer.totalReceived),
+      value: paiseShown(card.receivedPaise),
       icon: <TrendingUp size={14} className="text-emerald-600" />,
       color: 'bg-emerald-50',
     },
     {
       id: 'cs-outstanding',
       label: 'Outstanding',
-      value: rupeesShown(customer.outstanding),
+      value: paiseShown(card.outstandingPaise),
       icon: <TrendingDown size={14} className={owes ? 'text-amber-600' : 'text-emerald-600'} />,
       color: owes ? 'bg-amber-50' : 'bg-emerald-50',
     },
@@ -160,7 +167,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
           {
             id: 'cs-advance',
             label: 'Advance',
-            value: books ? rupeesShown(Number(books.advance)) : '-',
+            value: books ? paiseShown(card.advancePaise) : '-',
             icon: (
               <Wallet size={14} className={holds ? 'text-emerald-600' : 'text-muted-foreground'} />
             ),
@@ -169,7 +176,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
           {
             id: 'cs-balance',
             label: 'Balance',
-            value: books ? balanceShown(Number(books.balance)) : '-',
+            value: books ? balancePaiseShown(card.balancePaise) : '-',
             icon: <Wallet size={14} className="text-muted-foreground" />,
             color: 'bg-muted',
           },
@@ -177,7 +184,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
     {
       id: 'cs-fine',
       label: 'Silver Fine Due',
-      value: gramsShown(customer.outstandingSilverFine ?? 0),
+      value: mgShown(card.fineOutstandingMg),
       icon: <TrendingDown size={14} className={fineOwed ? 'text-amber-600' : 'text-emerald-600'} />,
       color: fineOwed ? 'bg-amber-50' : 'bg-emerald-50',
     },
@@ -187,7 +194,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
           {
             id: 'cs-fine-balance',
             label: 'Silver Fine Balance',
-            value: books ? fineBalanceShown(Number(books.fineBalance)) : '-',
+            value: books ? fineBalanceMgShown(card.fineBalanceMg) : '-',
             icon: <Wallet size={14} className="text-muted-foreground" />,
             color: 'bg-muted',
           },
@@ -195,8 +202,8 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
     {
       id: 'cs-last',
       label: 'Last Purchase',
-      value: customer.lastPurchase
-        ? new Date(customer.lastPurchase).toLocaleDateString('en-IN')
+      value: card.lastPurchase
+        ? new Date(`${card.lastPurchase}T12:00:00.000Z`).toLocaleDateString('en-IN')
         : '-',
       icon: <RotateCcw size={14} className="text-muted-foreground" />,
       color: 'bg-muted',
@@ -288,6 +295,10 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
             </div>
           ))}
         </div>
+        <p data-testid="cs-bills" className="mt-3 text-xs text-muted-foreground">
+          {billsShown(card.billCount)} · {card.cancelledBillCount} cancelled ·{' '}
+          {card.pendingBillCount} pending
+        </p>
       </div>
 
       {showPaymentPanel && (

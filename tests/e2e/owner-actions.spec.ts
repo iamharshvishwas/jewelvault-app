@@ -136,7 +136,7 @@ function fixtureSql(): string {
     total: string
   ) =>
     `INSERT INTO bills (id, bill_no, customer_id, bill_date, sale_type, subtotal, grand_total, created_at) VALUES ` +
-    `('${id}', '${number}', '${ids.customers[customerKey]}', CURDATE() - INTERVAL ${daysAgo} DAY, 'Retail', ${total}, ${total}, TIMESTAMP(CURDATE() - INTERVAL ${daysAgo} DAY, '12:0${daysAgo}:00'));`;
+    `('${id}', '${number}', '${ids.customers[customerKey]}', CURDATE() - INTERVAL ${daysAgo} DAY, 'Retail', ${total}, ${total}, TIMESTAMP(CURDATE() - INTERVAL ${daysAgo} DAY, '00:0${daysAgo}:00'));`;
   // a line of 1.000 g of 22K gold at 6,920 with labour 300 a gram: 7,220.00
   const line = (billId: string, skuNo: string) =>
     `INSERT INTO bill_items (id, bill_id, line_no, sku_id, design_no, sku_no, category, material, purity, selling_method, gross_weight, customer_net_weight, quantity, ` +
@@ -152,7 +152,7 @@ function fixtureSql(): string {
     daysAgo = 0
   ) =>
     `INSERT INTO receipts (id, customer_id, kind, mode, amount, paid_on, created_at) VALUES ('${id}', '${ids.customers[customerKey]}', '${kind}', '${mode}', ${amount}, ` +
-    `CURDATE() - INTERVAL ${daysAgo} DAY, TIMESTAMP(CURDATE() - INTERVAL ${daysAgo} DAY, '12:3${daysAgo}:00'));`;
+    `CURDATE() - INTERVAL ${daysAgo} DAY, TIMESTAMP(CURDATE() - INTERVAL ${daysAgo} DAY, '00:1${daysAgo}:00'));`; // early in the day (a bill 00:0x, a receipt 00:1x), so that whatever the test makes at the time it runs is later (12:xx made the order depend on the hour the suite ran at)
   const allocation = (
     receiptId: string,
     billId: string,

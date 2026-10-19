@@ -514,6 +514,14 @@ export interface OpeningBalanceResponse {
   allocations: ReceiptAllocationRow[];
 }
 
+/**
+ * `POST /v1/owner/download-record` (200; the owner's "Download everything", B3; handoff API35). The body is `{ date, counts }`: today's or yesterday's Asia/Kolkata date and the rows of the
+ * twelve files of the zip by table name (`DOWNLOAD_FILES` of src/lib/downloadEverything.ts), whole numbers. The API stores `at` (its clock) and `by` (the caller), never the screen's.
+ */
+export interface DownloadRecordResponse {
+  last_download: { at: string; by: UuidText; counts: Record<string, number> };
+}
+
 /** X7 `POST /v1/bills/quote` (200, read-only; handoff API18). The figures are the API's own pricing.ts. */
 export interface QuoteBillResponse {
   pricing_version: number;
@@ -536,4 +544,106 @@ export interface QuoteBillResponse {
     metal_rate_date: DateText | null;
   }>;
   warnings: string[];
+}
+
+// ------------------------------------------------------------------------------------------------ the cash book and the dashboard line (WEB12; API12, API32, API35)
+
+/** One row of V4, the way `GET /v1/daily-totals?from=&to=` sends it (money as text). The owner reads up to 400 days, the biller today and yesterday. */
+export interface DailyTotalWire {
+  business_date: DateText;
+  mode: string;
+  money_in: MoneyText;
+  money_out: MoneyText;
+  net: MoneyText;
+}
+
+export interface DailyTotalsResponse {
+  rows: DailyTotalWire[];
+}
+
+/** How old something is and when it happened: an instant in the wire form, and the hours since it at the API's clock. */
+export interface HealthAge {
+  last_at: TimestampText | null;
+  age_hours: number | null;
+}
+
+/**
+ * `GET /v1/dashboard/health` (the owner's dashboard line, spec section 12, I12; `readHealth` of the API). The API works out `level` and `reasons`; the screen repeats them and never
+ * decides a threshold. A reason this build does not know is still shown (see `healthLine.ts`).
+ */
+export interface DashboardHealth {
+  level: 'red' | 'amber' | 'green';
+  reasons: string[];
+  check: HealthAge & { ok: boolean | null };
+  db_dump: HealthAge;
+  photo_copy: HealthAge;
+  db_size: {
+    bytes: number;
+    data_bytes: number;
+    index_bytes: number;
+    photo_bytes: number;
+    overhead_percent: number;
+    red_line_bytes: number;
+    injected: boolean;
+  };
+  download: {
+    state: 'ok' | 'amber' | 'red' | 'unknown';
+    from: 'last_download' | 'first_night' | null;
+    reference_date: DateText | null;
+    age_days: number | null;
+  };
+  pull: {
+    state: 'ok' | 'amber' | 'unknown';
+    from: 'last_pulled' | 'first_export' | null;
+    reference_date: DateText | null;
+    age_days: number | null;
+  };
+  folder: {
+    files: number;
+    bytes: number;
+    free_bytes: number | null;
+    previous_files: number | null;
+    recorded_at: TimestampText;
+    fell: boolean;
+    fell_at: TimestampText | null;
+  } | null;
+  rights: { delete: boolean; drop: boolean; extra: string[] };
+  now: TimestampText;
+}
+
+/** The eleven lists of the review line (I11, API32). */
+export const REVIEW_LISTS = [
+  'below_list_lines',
+  'discount_over',
+  'cash_overrides',
+  'cancellations',
+  'reissues',
+  'voids',
+  'refunds',
+  'walkin_bills',
+  'fine_cash_rate_away',
+  'biller_rate_moves',
+  'sale_type_differs',
+] as const;
+export type ReviewListName = (typeof REVIEW_LISTS)[number];
+
+/** The review line of one business day as the nightly check stored it (`check_runs.details.review`); the lists themselves (up to 50 rows each) are not used by the dashboard line. */
+export interface ReviewWire {
+  date: DateText;
+  counts: Partial<Record<ReviewListName, number>>;
+  walkin: { cash_total: MoneyText; bills: number };
+}
+
+/** A row of `check_runs` as `GET /v1/health/checks` sends it. */
+export interface CheckRunWire {
+  id: number;
+  ran_at: TimestampText;
+  ok: boolean;
+  details: { date?: DateText; review?: ReviewWire } | null;
+}
+
+/** `GET /v1/health/checks?limit=` (owner only). The dashboard line asks for one row. */
+export interface HealthChecksResponse {
+  check_runs: CheckRunWire[];
+  backup_runs: Array<Record<string, unknown>>;
 }

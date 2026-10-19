@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { getDesigns } from '@/lib/designStore';
 import { downloadCsv, downloadExcel, printPdf, type ExportRow } from '@/lib/exportUtils';
+import { inventoryExportRows } from '@/lib/inventoryExport';
 import { useSession } from '@/lib/authStore';
 
 export default function InventoryHeader() {
@@ -37,35 +38,7 @@ export default function InventoryHeader() {
     return () => clearInterval(interval);
   }, []);
 
-  const inventoryRows = (): ExportRow[] =>
-    getDesigns().flatMap((design) =>
-      design.skus.map((sku) => ({
-        'Design No.': design.designNumber,
-        'Design Name': design.designName,
-        Category: design.category,
-        Subcategory: design.subcategory,
-        SKU: sku.skuNumber,
-        Barcode: sku.barcode,
-        Material: sku.material,
-        Purity: sku.purity,
-        'Selling Method': sku.sellingMethod,
-        Status: sku.status,
-        Location: sku.location,
-        'Gross Weight (g)': sku.grossWeight,
-        'Original Net Weight (g)': sku.originalNetWeight,
-        'Customer Net Weight (g)': sku.customerNetWeight,
-        Stones: sku.stones,
-        'Stone Weight': sku.stoneWeight,
-        Kundan: sku.kundan,
-        'Kundan Weight': sku.kundanWeight,
-        Piroi: sku.piroi,
-        'Retail Labour/Rate': sku.retailLabour ?? sku.labour,
-        'Semi-Wholesale Labour/Rate': sku.semiWholesaleLabour ?? '',
-        'Wholesale Labour/Rate': sku.wholesaleLabour ?? sku.labour,
-        'Created At': new Date(sku.createdAt).toLocaleString('en-IN'),
-        Notes: sku.notes,
-      }))
-    );
+  const inventoryRows = (): ExportRow[] => inventoryExportRows(getDesigns(), role);
 
   const exportInventory = (format: 'csv' | 'excel' | 'pdf') => {
     const rows = inventoryRows();

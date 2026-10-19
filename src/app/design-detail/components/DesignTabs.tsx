@@ -1,39 +1,16 @@
-'use client';
-import React, { useState } from 'react';
+import React from 'react';
 import DesignSkuTable from './DesignSkuTable';
-import DesignSalesHistory from './DesignSalesHistory';
-import DesignAuditLog from './DesignAuditLog';
 
-const TABS = [
-  { id: 'tab-skus', label: 'SKUs & Stock' },
-  { id: 'tab-sales', label: 'Sales History' },
-  { id: 'tab-audit', label: 'Audit Log' },
-];
-
+// C15: the sample "Sales History" and "Audit Log" tabs (hard-coded to the made-up design SET-00572) are not connected and not reachable in M1; the real ones are M2 (INV-04 to INV-08).
+// What is left is the design's own pieces, under a heading in the place the tab bar was.
 export default function DesignTabs() {
-  const [activeTab, setActiveTab] = useState('tab-skus');
-
   return (
     <div className="jewel-card overflow-hidden">
-      {/* Tab Bar */}
       <div className="flex border-b border-border px-4 bg-muted/20">
-        {TABS?.map((tab) => (
-          <button
-            key={tab?.id}
-            onClick={() => setActiveTab(tab?.id)}
-            className={`px-4 py-3 text-sm transition-colors ${
-              activeTab === tab?.id ? 'tab-active' : 'tab-inactive'
-            }`}
-          >
-            {tab?.label}
-          </button>
-        ))}
+        <h2 className="px-4 py-3 text-sm tab-active">SKUs &amp; Stock</h2>
       </div>
-      {/* Tab Content */}
       <div className="p-4">
-        {activeTab === 'tab-skus' && <DesignSkuTable />}
-        {activeTab === 'tab-sales' && <DesignSalesHistory />}
-        {activeTab === 'tab-audit' && <DesignAuditLog />}
+        <DesignSkuTable />
       </div>
     </div>
   );
