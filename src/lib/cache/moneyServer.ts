@@ -23,6 +23,14 @@
 //   (the receipt and its allocations) are merged as they are, and only when the server has answered (C5 (b)); the figures of V1 and V2 come with the poll the client makes at once after
 //   every write (C17).
 //
+//   THE OWNER'S ACTIONS (WEB11): CANCELLING A BILL (X5 `POST /v1/bills/{id}/cancel`), VOIDING A RECEIPT (X4 `.../receipts/{id}/void`), RE-ISSUING A BILL (X10 `.../bills/{id}/reissue`), HANDING
+//   MONEY BACK (X11 `.../customers/{id}/refunds`) AND ADDING AN OPENING BALANCE (X12 `.../customers/{id}/opening-balance`). The same rule once more: ONE Idempotency-Key for each user action, the
+//   action being the path (the bill, the receipt or the customer is in it) and the body (the reason, the figures, the corrected bill); a double click joins the call on its way; pressing the
+//   button again after a call that did not end well sends the SAME key (an answer lost on its way is answered from the server's store: one cancel, one void, one refund); a changed reason or
+//   figure is another action. What the answer returned is merged as it is, only when the server has answered: the bill, the pieces back in stock, the allocation rows the call released and the
+//   ones the rebalance made, the receipt, the new bill and its lines; the figures of V1 and V2 come with the poll the client makes at once after EVERY write, also one that ended unconfirmed
+//   (C13, C17: "Could not confirm that this was saved." and the books are read again).
+//
 //   THE LEDGER OF A CUSTOMER (V3, `GET /v1/customers/{id}/ledger`). Not part of the hydrate: loaded when a customer card opens (`watchLedger`), in pages of up to 1,000 events
 //   that follow the server's own cursor, and loaded again when that customer's `updated_at` changes (every bill, receipt, cancel and void moves it, D23). The rows are kept as the
 //   server sent them, with the running balance it worked out; nothing is added up here.
@@ -30,15 +38,21 @@
 // A logout (U8) forgets all of it: the ledgers, the remembered key, and any load still on its way is thrown away when it arrives.
 import { api as siteApi, isApiError, type ApiClient } from '@/lib/api/client';
 import type {
+  CancelBillResponse,
   CreateBillResponse,
   CreateCustomerResponse,
   CustomerRow,
+  IssueRefundResponse,
+  OpeningBalanceResponse,
   ReceiptAllocationRow,
   ReceiptRow,
   RecordPaymentResponse,
+  ReissueBillResponse,
   SettleFineResponse,
+  VoidReceiptResponse,
 } from '@/lib/api/types';
 import type { BillBody } from '@/lib/billing';
+import type { OpeningBody, ReasonBody, RefundBody, ReissueBody } from '@/lib/ownerActions';
 import type { RecordPaymentBody, SettleFineBody } from '@/lib/payments';
 import { registerLogoutHook as siteRegisterLogoutHook } from '@/lib/authStore';
 import { rowCache, type RowCache } from './cache';
@@ -110,6 +124,25 @@ export interface MoneyServer {
   settleFine(customerId: string, input: SettleFineBody): Promise<SettleFineResponse>;
   /** The payment panel was closed: the keys of payments and settlements that could not be confirmed are forgotten, so the next one gets a key of its own. */
   forgetPaymentTries(): void;
+  /**
+   * X5. Resolves with the answer (the cancelled bill, the pieces back in stock, the allocation rows the cancel released and the ones the rebalance made), merged into the cache first.
+   * Rejects with the client's ApiError (`message` is the plain C13 text, `idempotencyKey` is kept for the next press for the same bill and reason).
+   */
+  cancelBill(customerId: string, billId: string, input: ReasonBody): Promise<CancelBillResponse>;
+  /** X4. The voided receipt and the allocation rows of the rebalance are merged; the affected bills' figures (V1) come with the poll. */
+  voidReceipt(
+    customerId: string,
+    receiptId: string,
+    input: ReasonBody
+  ): Promise<VoidReceiptResponse>;
+  /** X10. The old bill (cancelled), the new bill and its lines, the new payments and the carried-over and released allocation rows are merged. */
+  reissueBill(customerId: string, billId: string, input: ReissueBody): Promise<ReissueBillResponse>;
+  /** X11. The refund receipt is merged; the advance left (V2) comes with the poll and in the answer. */
+  issueRefund(customerId: string, input: RefundBody): Promise<IssueRefundResponse>;
+  /** X12. The opening bill (when there are dues), the opening advances and the allocation rows of the rebalance are merged. */
+  addOpeningBalance(customerId: string, input: OpeningBody): Promise<OpeningBalanceResponse>;
+  /** A dialog of the owner was closed: the keys of actions that could not be confirmed are forgotten, so the next one gets a key of its own. */
+  forgetOwnerTries(): void;
   /** Reads the whole ledger of the customer now. A second call while one is on its way joins it. Never rejects: a failure is `ledgerState`. */
   loadLedger(customerId: string): Promise<void>;
   /** A customer card is open: load the ledger and keep it current. Returns the way to stop (twice is once). */
@@ -266,9 +299,9 @@ export function createMoneyServer(deps: MoneyServerDeps): MoneyServer {
     return call;
   }
 
-  // ---- X2 and X3
+  // ---- X2 and X3, and the owner's X4, X5, X10, X11, X12
   const paying = new Map<string, Promise<unknown>>();
-  /** The payments and settlements whose last call did not end well: the action (path and body) -> the key it used. Pressing Save again for the same action sends the same key. */
+  /** The actions whose last call did not end well: the action (path and body) -> the key it used. Pressing the button again for the same action sends the same key. */
   const failedTries = new Map<string, string>();
   const MOST_TRIES = 20;
 
@@ -279,13 +312,18 @@ export function createMoneyServer(deps: MoneyServerDeps): MoneyServer {
       failedTries.delete(failedTries.keys().next().value as string);
   }
 
-  /** One money call with a customer in its path: a key for each action, the rows it returns merged only when the server has answered. */
-  function moneyCall<Answer extends { receipt: ReceiptRow; allocations: ReceiptAllocationRow[] }>(
+  /**
+   * One money call with a key for each action: the action is the path and the body (the customer, the bill or the receipt is in the path, so one key never serves two). A double click joins
+   * the call on its way; a call that did not end well leaves its key for the next press of the same action. `merge` puts what the function returned into memory, only when the server has
+   * answered (C5 (b)) and only if no logout came meanwhile; V1 and V2 come with the poll that follows every write (C17).
+   */
+  function keyedCall<Answer>(
     path: string,
     customerId: string,
-    body: RecordPaymentBody | SettleFineBody
+    body: object,
+    merge: (answer: Answer) => void
   ): Promise<Answer> {
-    const action = stableJson({ path, body }); // the customer is in the path: one key never pays two customers
+    const action = stableJson({ path, body });
     const joined = paying.get(action);
     if (joined) return joined as Promise<Answer>; // a double click: the same action
     const reuse = failedTries.get(action);
@@ -298,14 +336,12 @@ export function createMoneyServer(deps: MoneyServerDeps): MoneyServer {
           context: { customerId },
         });
         if (mine === generation) {
-          // C5 (b): only now, and only what the function returned. V1 and V2 come with the poll that follows every write.
-          cache.merge('receipts', [answer.receipt]);
-          cache.merge('receipt-allocations', answer.allocations);
+          merge(answer);
           failedTries.delete(action);
         }
         return answer;
       } catch (error) {
-        // the key travels on the error (L5): the next press of Save for this payment sends it again
+        // the key travels on the error (L5): the next press of the button for this action sends it again
         if (mine === generation && isApiError(error) && error.idempotencyKey)
           remember(action, error.idempotencyKey);
         throw error;
@@ -317,13 +353,65 @@ export function createMoneyServer(deps: MoneyServerDeps): MoneyServer {
     return call;
   }
 
+  const mergeReceipt = (answer: { receipt: ReceiptRow; allocations: ReceiptAllocationRow[] }) => {
+    cache.merge('receipts', [answer.receipt]);
+    cache.merge('receipt-allocations', answer.allocations);
+  };
+
   const recordPayment = (customerId: string, input: RecordPaymentBody) =>
-    moneyCall<RecordPaymentResponse>(`/v1/customers/${customerId}/payments`, customerId, input);
+    keyedCall<RecordPaymentResponse>(
+      `/v1/customers/${customerId}/payments`,
+      customerId,
+      input,
+      mergeReceipt
+    );
   const settleFine = (customerId: string, input: SettleFineBody) =>
-    moneyCall<SettleFineResponse>(
+    keyedCall<SettleFineResponse>(
       `/v1/customers/${customerId}/fine-settlements`,
       customerId,
-      input
+      input,
+      mergeReceipt
+    );
+
+  const cancelBill = (customerId: string, billId: string, input: ReasonBody) =>
+    keyedCall<CancelBillResponse>(`/v1/bills/${billId}/cancel`, customerId, input, (answer) => {
+      cache.merge('bills', [answer.bill]);
+      cache.merge('skus', answer.skus);
+      cache.merge('receipt-allocations', [...answer.released_allocations, ...answer.allocations]);
+    });
+  const voidReceipt = (customerId: string, receiptId: string, input: ReasonBody) =>
+    keyedCall<VoidReceiptResponse>(
+      `/v1/receipts/${receiptId}/void`,
+      customerId,
+      input,
+      mergeReceipt
+    );
+  const reissueBill = (customerId: string, billId: string, input: ReissueBody) =>
+    keyedCall<ReissueBillResponse>(`/v1/bills/${billId}/reissue`, customerId, input, (answer) => {
+      cache.merge('bills', [answer.old_bill, answer.new_bill]);
+      cache.merge('bill-items', answer.items);
+      cache.merge('receipts', answer.receipts);
+      cache.merge('receipt-allocations', [...answer.released_allocations, ...answer.allocations]);
+    });
+  const issueRefund = (customerId: string, input: RefundBody) =>
+    keyedCall<IssueRefundResponse>(
+      `/v1/customers/${customerId}/refunds`,
+      customerId,
+      input,
+      (answer) => {
+        cache.merge('receipts', [answer.receipt]);
+      }
+    );
+  const addOpeningBalance = (customerId: string, input: OpeningBody) =>
+    keyedCall<OpeningBalanceResponse>(
+      `/v1/customers/${customerId}/opening-balance`,
+      customerId,
+      input,
+      (answer) => {
+        if (answer.bill) cache.merge('bills', [answer.bill]);
+        cache.merge('receipts', answer.receipts);
+        cache.merge('receipt-allocations', answer.allocations);
+      }
     );
 
   // ---- the ledgers
@@ -446,6 +534,14 @@ export function createMoneyServer(deps: MoneyServerDeps): MoneyServer {
     recordPayment,
     settleFine,
     forgetPaymentTries: () => {
+      failedTries.clear();
+    },
+    cancelBill,
+    voidReceipt,
+    reissueBill,
+    issueRefund,
+    addOpeningBalance,
+    forgetOwnerTries: () => {
       failedTries.clear();
     },
     loadLedger,

@@ -29,9 +29,11 @@ import {
   getNextInvoiceNumber,
   saveBill,
   saveCustomerPan,
+  saveReissue,
 } from '@/lib/appStore';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { updateSkuStatus } from '@/lib/designStore';
+import { buildReissueBody, reissueAsCreated, reissueFailure } from '@/lib/ownerActions';
 import { PREVIEW_MODE } from '@/lib/previewMode';
 import { formatGrams, formatRupees } from '@/lib/pricing';
 
@@ -60,6 +62,17 @@ interface BillingSummaryPanelProps {
   onSaved: (saved: SavedBill) => void;
   onProblemPieces: (skuIds: string[]) => void;
   onNewSale: () => void;
+  /**
+   * A re-issue (X10, WEB11): the corrected bill is sent to the old bill's re-issue instead of being saved as a new bill. The customer is the old bill's and is not sent (K6); the
+   * reason (3 to 500 characters) is typed on the screen.
+   */
+  reissue?: {
+    billId: string;
+    billNo: string;
+    customerId: string;
+    walkIn: boolean;
+    reason: string;
+  } | null;
 }
 
 interface PanState {
@@ -94,6 +107,7 @@ export default function BillingSummaryPanel({
   onSaved,
   onProblemPieces,
   onNewSale,
+  reissue = null,
 }: BillingSummaryPanelProps) {
   const [payments, setPayments] = useState<PaymentEntry[]>([
     { id: 'pmt-1', mode: 'UPI', amount: '' },
@@ -281,16 +295,36 @@ export default function BillingSummaryPanel({
       setFailure({ message: built.error, cashLimit: null, pieceIds: [], unconfirmed: false });
       return;
     }
+    // X10: the same bill, without its customer, with the reason; checked before any call so that a missing reason says so at once
+    const reissueBody = reissue ? buildReissueBody(built.body, reissue.reason) : null;
+    if (reissueBody && 'error' in reissueBody) {
+      setFailure({ message: reissueBody.error, cashLimit: null, pieceIds: [], unconfirmed: false });
+      return;
+    }
     inFlight.current = true;
     setSaving(true);
     onBusyChange(true);
     setFailure(null);
     onProblemPieces([]);
     try {
-      const answer = await saveBill(built.body);
-      onSaved(savedBillFrom(answer, preview, items, customer?.name ?? 'Walk-in Customer'));
+      if (reissue && reissueBody && 'body' in reissueBody) {
+        const answer = await saveReissue(reissue.customerId, reissue.billId, reissueBody.body);
+        onSaved(
+          savedBillFrom(
+            reissueAsCreated(answer),
+            preview,
+            items,
+            customer?.name ?? 'Walk-in Customer'
+          )
+        );
+      } else {
+        const answer = await saveBill(built.body);
+        onSaved(savedBillFrom(answer, preview, items, customer?.name ?? 'Walk-in Customer'));
+      }
     } catch (error) {
-      const found = billSaveFailure(error, { role, walkIn: customer === null });
+      const found = reissue
+        ? reissueFailure(error, { role, walkIn: reissue.walkIn })
+        : billSaveFailure(error, { role, walkIn: customer === null });
       setFailure(found);
       onProblemPieces(found.pieceIds);
     } finally {
@@ -572,6 +606,12 @@ export default function BillingSummaryPanel({
             <span data-testid="saved-bill-no">{saved.billNo}</span> ·{' '}
             {saved.lines.length === 1 ? 'SKU' : 'SKUs'} marked as Sold
           </p>
+          {reissue && (
+            <p data-testid="reissue-saved" className="mt-1 text-xs text-emerald-700">
+              {reissue.billNo} is cancelled; {saved.billNo} replaces it. The money already received
+              moved to the new estimate.
+            </p>
+          )}
           {saved.differences.length > 0 && (
             <div
               role="status"
@@ -708,12 +748,13 @@ export default function BillingSummaryPanel({
             {saving ? (
               <>
                 <Loader2 size={16} className="animate-spin" />
-                Saving Estimate...
+                {reissue ? 'Saving corrected estimate...' : 'Saving Estimate...'}
               </>
             ) : (
               <>
                 <CheckCircle size={16} />
-                Save Estimate{shown && bill ? ` · ${inr(shown.grand, false)}` : ''}
+                {reissue ? 'Save corrected estimate' : 'Save Estimate'}
+                {shown && bill ? ` · ${inr(shown.grand, false)}` : ''}
               </>
             )}
           </SaveButton>

@@ -1,5 +1,7 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import CustomerSearchPanel from './CustomerSearchPanel';
 import ScanItemPanel, { type ScanResult } from './ScanItemPanel';
 import BillingItemsTable from './BillingItemsTable';
@@ -23,8 +25,10 @@ import {
 } from '@/lib/billing';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { findSkuByCode } from '@/lib/designStore';
+import { REASON_MAX, REASON_MIN } from '@/lib/ownerActions';
 import { PREVIEW_MODE } from '@/lib/previewMode';
 import { isFirstBillOfTheDay, rateConfirmationNeeded } from '@/lib/rateGuard';
+import { freedByCancel, prepareReissue, type ReissueReady, type ReissueSetup } from '@/lib/reissue';
 import { businessToday, getDailyRates, getSettings } from '@/lib/settingsStore';
 import type { Customer, Sku } from '@/lib/mockData';
 
@@ -38,16 +42,71 @@ const SALE_TYPES: SaleType[] = ['Retail', 'Semi-Wholesale', 'Wholesale'];
 const isHeld = (status: string): status is HeldStatus =>
   (HELD_STATUSES as readonly string[]).includes(status);
 
+// The billing screen, and the same screen in RE-ISSUE mode (X10, WEB11): `/billing-pos?reissue=<bill id>` opens it with the lines of that bill in it, for the owner to correct. The
+// customer is the old bill's and cannot change (K6); the pieces the old bill sold may be scanned again (the cancel frees them in the same transaction); the person gives a reason; Save
+// sends the corrected bill to the old bill's re-issue instead of making a new bill, and the old bill is cancelled in the same step. For anyone but the owner, and for a bill that cannot
+// be re-issued, the screen says why and shows no form.
 export default function BillingPOSClient() {
-  const [customer, setCustomer] = useState<Customer | null>(null);
-  const [items, setItems] = useState<BillingItem[]>([]);
-  const [discount, setDiscount] = useState('');
-  const [additionalCharges, setAdditionalCharges] = useState('');
-  const [notes, setNotes] = useState('');
+  return (
+    <Suspense
+      fallback={<div className="jewel-card p-6 text-sm text-muted-foreground">Loading…</div>}
+    >
+      <BillingRoute />
+    </Suspense>
+  );
+}
+
+function BillingRoute() {
+  const reissueId = useSearchParams().get('reissue');
+  // a new key for each bill asked for: leaving re-issue mode (or choosing another bill) starts the screen afresh
+  return <BillingEntry key={reissueId ?? 'new'} reissueId={reissueId} />;
+}
+
+function BillingEntry({ reissueId }: { reissueId: string | null }) {
+  const session = useSession();
+  // decided once, when the screen opens: after the re-issue is saved the old bill is cancelled, and the screen must stay on the saved bill
+  const [setup] = useState<ReissueSetup | null>(() =>
+    reissueId ? prepareReissue(reissueId, session.role) : null
+  );
+  if (setup && !setup.ok) {
+    return (
+      <div className="jewel-card p-8 text-center space-y-3">
+        <h1 className="text-xl font-bold text-foreground">This estimate cannot be re-issued</h1>
+        <p data-testid="reissue-refused" className="text-sm text-muted-foreground">
+          {setup.message}
+        </p>
+        <div className="flex justify-center gap-2">
+          {setup.link && (
+            <Link href={`/estimate?id=${setup.link}`} className="btn-primary py-2 text-xs">
+              View the new estimate
+            </Link>
+          )}
+          <Link href="/estimate" className="btn-secondary py-2 text-xs">
+            Back to Saved Estimates
+          </Link>
+        </div>
+      </div>
+    );
+  }
+  return <BillingScreen reissue={setup && setup.ok ? setup : null} />;
+}
+
+function BillingScreen({ reissue }: { reissue: ReissueReady | null }) {
+  const router = useRouter();
+  const [customer, setCustomer] = useState<Customer | null>(reissue ? reissue.customer : null);
+  const [items, setItems] = useState<BillingItem[]>(reissue ? reissue.items : []);
+  const [discount, setDiscount] = useState(reissue ? reissue.discount : '');
+  const [additionalCharges, setAdditionalCharges] = useState(
+    reissue ? reissue.additionalCharges : ''
+  );
+  const [notes, setNotes] = useState(reissue ? reissue.notes : '');
+  const [reissueReason, setReissueReason] = useState('');
   const [customers, setCustomers] = useState<Customer[]>(() => getCustomers());
   const [invoiceNumber, setInvoiceNumber] = useState(() => getNextInvoiceNumber());
-  const [invoiceDate, setInvoiceDate] = useState(() => businessToday());
-  const [saleType, setSaleType] = useState<SaleType>('Retail');
+  const [invoiceDate, setInvoiceDate] = useState(() =>
+    reissue ? reissue.billDate : businessToday()
+  );
+  const [saleType, setSaleType] = useState<SaleType>(reissue ? reissue.saleType : 'Retail');
   // C5 (b), C6: a save is on its way (everything on the left is locked), and what the API answered (the bill is shown as saved only from then on)
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<SavedBill | null>(null);
@@ -87,7 +146,8 @@ export default function BillingPOSClient() {
     if (items.some((i) => i.sku.id === foundSku.id))
       return { kind: 'refused', message: 'This SKU is already on this bill.' };
     // R10: In Stock is billed; Reserved and On Approval only after the person has said so; nothing else ever. The API decides again when the bill is saved.
-    if (foundSku.status === 'In Stock') {
+    // A re-issue (X10): a piece the bill being corrected sold is Sold now and is freed by the cancel in the same transaction, so it may be put on the corrected bill.
+    if (foundSku.status === 'In Stock' || (reissue && freedByCancel(reissue, foundSku))) {
       addPiece(foundSku, null);
       return { kind: 'added' };
     }
@@ -143,6 +203,11 @@ export default function BillingPOSClient() {
   };
 
   const handleNewSale = () => {
+    if (reissue) {
+      // leaving re-issue mode: a plain new sale (the route starts the screen afresh); before the bill is saved this is Discard and takes the owner back to the estimate
+      router.push(saved ? '/billing-pos' : `/estimate?id=${reissue.billId}`);
+      return;
+    }
     forgetBillTry(); // the next bill is another action: a key of its own
     setSaleNo((n) => n + 1);
     setCustomer(null);
@@ -203,9 +268,11 @@ export default function BillingPOSClient() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">New Estimate</h1>
+          <h1 className="text-2xl font-bold text-foreground">
+            {reissue ? `Re-issue ${reissue.billNo}` : 'New Estimate'}
+          </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Estimate ·{' '}
+            {reissue ? 'Corrected estimate' : 'Estimate'} ·{' '}
             {invoiceDate
               ? new Date(`${invoiceDate}T00:00:00`).toLocaleDateString('en-IN', {
                   day: 'numeric',
@@ -251,7 +318,11 @@ export default function BillingPOSClient() {
           >
             {saved ? `Saved · ${saved.billNo}` : `Draft · ${invoiceNumber}`}
           </span>
-          <button onClick={handleNewSale} disabled={busy} className="btn-ghost py-2 text-xs">
+          <button
+            onClick={handleNewSale}
+            disabled={busy || (reissue !== null && saved !== null)}
+            className="btn-ghost py-2 text-xs"
+          >
             Discard
           </button>
         </div>
@@ -260,10 +331,38 @@ export default function BillingPOSClient() {
       <div className="grid grid-cols-1 xl:grid-cols-3 2xl:grid-cols-3 gap-4">
         {/* Left: Customer + Items. While a save runs, and once it has been saved, nothing here can be changed. */}
         <fieldset disabled={locked} className="xl:col-span-2 space-y-4 min-w-0">
+          {reissue && (
+            <div data-testid="reissue-banner" className="jewel-card p-4 space-y-2 border-amber-200">
+              <p className="text-sm font-semibold text-foreground">
+                You are correcting {reissue.billNo}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Change what was wrong and save. {reissue.billNo} is cancelled and the corrected
+                estimate replaces it; money already received moves to the new estimate and its
+                pieces are put back and billed again. Nothing is edited in place.
+              </p>
+              <label className="text-xs font-semibold text-foreground block">
+                Reason for the correction (required)
+                <textarea
+                  data-testid="reissue-reason"
+                  value={reissueReason}
+                  onChange={(event) => setReissueReason(event.target.value)}
+                  placeholder={`${REASON_MIN} to ${REASON_MAX} characters`}
+                  rows={2}
+                  className="input-field resize-none text-sm mt-1.5 font-normal"
+                />
+              </label>
+            </div>
+          )}
           <CustomerSearchPanel
             customers={customers}
             selectedCustomer={customer}
             onSelectCustomer={handleSelectCustomer}
+            locked={
+              reissue
+                ? { name: reissue.customerName, mobile: reissue.customer?.mobile ?? '' }
+                : null
+            }
             onCreateCustomer={handleCreateCustomer}
           />
           <ScanItemPanel key={saleNo} onScan={handleScanSku} onAddHeld={handleAddHeld} />
@@ -309,6 +408,17 @@ export default function BillingPOSClient() {
             onSaved={setSaved}
             onProblemPieces={setProblemSkuIds}
             onNewSale={handleNewSale}
+            reissue={
+              reissue
+                ? {
+                    billId: reissue.billId,
+                    billNo: reissue.billNo,
+                    customerId: reissue.customerId,
+                    walkIn: reissue.walkIn,
+                    reason: reissueReason,
+                  }
+                : null
+            }
           />
         </div>
       </div>

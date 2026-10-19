@@ -1,5 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
+import OwnerBillActions from '@/components/owner/OwnerBillActions';
 import type { Invoice } from '@/lib/mockData';
 import { gramsShown, rupeesShown } from '@/lib/ledgerView';
 
@@ -106,12 +107,15 @@ export default function CustomerInvoiceList({ invoices }: CustomerInvoiceListPro
                   </span>
                 </td>
                 <td className="px-3 py-3">
-                  <Link
-                    href={`/estimate?id=${inv.id}`}
-                    className="text-xs text-primary hover:underline font-semibold"
-                  >
-                    View
-                  </Link>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      href={`/estimate?id=${inv.id}`}
+                      className="text-xs text-primary hover:underline font-semibold"
+                    >
+                      View
+                    </Link>
+                    <OwnerBillActions billId={inv.id} compact />
+                  </div>
                 </td>
               </tr>
             );

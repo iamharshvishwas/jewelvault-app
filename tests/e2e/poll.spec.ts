@@ -27,8 +27,8 @@ import { e2eLane, e2eLogin, type E2eLogin, type E2eRole } from './global-setup';
 // shop's other browser would make it: rows written directly in the lane's database as root (a stock change, a sold piece, a long transaction), and the admin
 // door for a user. The halves that need a money screen are proved where the screen is: "after a payment the other browser's pending and balance change" in
 // payments.spec.ts (WEB09), "a money call retried meanwhile with the same key saves once" in billing.spec.ts (WEB08) and payments.spec.ts (WEB09); "cancelling an
-// unpaid bill changes the other browser's outstanding" waits for the owner's screens of WEB11. The unit tests (tests/unit/poll.test.ts) already prove that the touched
-// bill-summary and customer-balances rows reach memory.
+// unpaid bill changes the other browser's outstanding within 10 seconds" in owner-actions.spec.ts (WEB11, through the owner's real cancel screen). The unit tests
+// (tests/unit/poll.test.ts) already prove that the touched bill-summary and customer-balances rows reach memory.
 //
 // Run: LANE=b JV_API_DIR=<checkout of jewelvault-api> E2E=1 npx playwright test tests/e2e/poll.spec.ts
 
@@ -323,9 +323,8 @@ test.describe('T-E02: a change made by somebody else shows on the other browser 
   });
 
   // The money halves: a payment moving the pending of a bill and the balance of the customer on the other browser is proved in payments.spec.ts (WEB09: T-E02 and T-E07 clauses,
-  // through the real panel and the real X2); cancelling an unpaid bill comes with the owner's screens of WEB11.
-  test.fixme("cancelling an unpaid bill changes the other browser's outstanding within 10 seconds (WEB11)", () =>
-    undefined);
+  // through the real panel and the real X2); cancelling an unpaid bill moving the other browser's outstanding within 10 seconds is proved in owner-actions.spec.ts (WEB11: T-E07
+  // clause, through the owner's real cancel dialog and the real X5, with a biller as the other browser).
 });
 
 // ---- T-E07
