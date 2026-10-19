@@ -158,13 +158,35 @@ export function withSaleType(items: readonly BillingItem[], context: LineContext
   });
 }
 
-/** R2: the bill date changed. A By Weight line whose rate is still the one the default filled in follows the date; a rate the person typed is left alone. */
-export function withBillDate(items: readonly BillingItem[], context: LineContext): BillingItem[] {
-  return items.map((item) => {
+/**
+ * R2: the bill date changed, or the daily rates did (a poll brought a rate, "Confirm today's rates" wrote one; task WEB17). A By Weight line whose rate is still the one the default filled in
+ * follows: it takes the rate of ITS material and purity dated on or before the bill date (a rate that has arrived for a purity the line was waiting for, or a rate of today that replaces the
+ * stale one it started from). A rate the person typed is left alone, and so is a Per Piece line (its price is not a daily rate). The same array comes back when no line changed, so a
+ * screen that calls this whenever the rates change is not drawn again for nothing.
+ */
+export function withRates(
+  items: readonly BillingItem[],
+  context: LineContext
+): readonly BillingItem[] {
+  let changed = false;
+  const next = items.map((item) => {
     if (item.sku.sellingMethod === 'Per Piece' || item.metalRate !== item.rateDefault) return item;
     const metal = metalDefault(item.sku, context);
+    if (
+      metal.text === item.metalRate &&
+      metal.note.status === item.rate.status &&
+      metal.note.date === item.rate.date
+    )
+      return item;
+    changed = true;
     return { ...item, metalRate: metal.text, rateDefault: metal.text, rate: metal.note };
   });
+  return changed ? next : items;
+}
+
+/** R2: the bill date changed. The lines that are still on their default take the rate of the new day (see `withRates`, which is the same rule). */
+export function withBillDate(items: readonly BillingItem[], context: LineContext): BillingItem[] {
+  return [...withRates(items, context)];
 }
 
 /** R9: choosing a customer sets the bill's sale type to the customer's; with no customer the type stays. The biller may change it afterwards. */
