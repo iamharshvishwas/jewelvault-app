@@ -6,8 +6,16 @@ import ReportSales from './ReportSales';
 import ReportPayments from './ReportPayments';
 import ReportJewelleryMetrics from './ReportJewelleryMetrics';
 import { getDesigns } from '@/lib/designStore';
-import { computeAgeingStock, computeCategorySalesData, computeCategoryStockData, computeMonthlySalesData, computePaymentModeData, computePendingPayments, getInvoices } from '@/lib/appStore';
+import {
+  computeAgeingStock,
+  computeCategorySalesData,
+  computeCategoryStockData,
+  computePaymentModeData,
+  computePendingPayments,
+  getSoldInvoices,
+} from '@/lib/appStore';
 import { downloadCsv, downloadExcel, printPdf, type ExportRow } from '@/lib/exportUtils';
+import { formatRupees } from '@/lib/pricing';
 
 const REPORT_TABS = [
   { id: 'rtab-inventory', label: 'Inventory' },
@@ -60,7 +68,7 @@ export default function ReportsClient() {
   };
 
   const salesRows = (): ExportRow[] => {
-    const invoiceRows = getInvoices()
+    const invoiceRows = getSoldInvoices()
       .filter((invoice) => inDateRange(invoice.date))
       .flatMap((invoice) =>
         invoice.items.map((item) => ({
@@ -106,7 +114,7 @@ export default function ReportsClient() {
   };
 
   const paymentRows = (): ExportRow[] => {
-    const invoicePaymentRows = getInvoices()
+    const invoicePaymentRows = getSoldInvoices()
       .filter((invoice) => inDateRange(invoice.date))
       .flatMap((invoice) =>
         invoice.payments.map((payment) => ({
@@ -138,7 +146,7 @@ export default function ReportsClient() {
       Mobile: row.mobile,
       'Estimate No.': row.invoiceNumber,
       Mode: 'Pending',
-      Amount: row.amount,
+      Amount: formatRupees(row.amountPaise),
       Reference: '',
       Notes: `${row.daysOld} days pending`,
       Status: 'Pending',
@@ -147,7 +155,7 @@ export default function ReportsClient() {
   };
 
   const jewelleryRows = (): ExportRow[] =>
-    getInvoices()
+    getSoldInvoices()
       .filter((invoice) => inDateRange(invoice.date))
       .flatMap((invoice) =>
         invoice.items.map((item) => ({
@@ -178,7 +186,10 @@ export default function ReportsClient() {
   const exportReport = (format: 'excel' | 'csv' | 'pdf') => {
     const rows = getRowsForActiveReport();
     const title = `${reportName} Report`;
-    const subtitle = activeTab === 'rtab-inventory' ? 'Current inventory' : `${dateFrom || 'Start'} to ${dateTo || 'Today'}`;
+    const subtitle =
+      activeTab === 'rtab-inventory'
+        ? 'Current inventory'
+        : `${dateFrom || 'Start'} to ${dateTo || 'Today'}`;
     if (format === 'excel') downloadExcel(title, rows, subtitle);
     if (format === 'csv') downloadCsv(title, rows);
     if (format === 'pdf') printPdf(title, rows, subtitle);
@@ -190,7 +201,9 @@ export default function ReportsClient() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Reports</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Business analytics and data exports</p>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Business analytics and data exports
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-2 bg-card border border-border rounded-lg px-3 py-2">

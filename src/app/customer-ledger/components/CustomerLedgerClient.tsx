@@ -3,12 +3,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   getCustomers,
   addCustomer,
+  computeOutstanding,
   getLedgerForCustomer,
   getLedgerStatus,
   loadLedgerForCustomer,
   watchCustomerLedger,
 } from '@/lib/appStore';
 import SaveButton from '@/components/ui/SaveButton';
+import { paiseShown } from '@/lib/ledgerView';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import CustomerList from './CustomerList';
 import CustomerDetail from './CustomerDetail';
@@ -85,7 +87,8 @@ export default function CustomerLedgerClient() {
     return watchCustomerLedger(selectedCustomer.id);
   }, [selectedCustomer?.id]);
 
-  const totalOutstanding = customers.reduce((a, c) => a + c.outstanding, 0);
+  // what the customers owe in all: the sum of V2 `outstanding` in whole paise (the selectors, C14), the same figure as the dashboard, not a sum of the floats on the list
+  const totalOutstanding = computeOutstanding().outstandingPaise;
 
   const validate = (): boolean => {
     const errs: Partial<AddCustomerForm> = {};
@@ -141,8 +144,9 @@ export default function CustomerLedgerClient() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Customer Ledger</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {customers.length} customer{customers.length !== 1 ? 's' : ''} · ₹
-            {totalOutstanding.toLocaleString('en-IN')} total outstanding
+            {customers.length} customer{customers.length !== 1 ? 's' : ''} ·{' '}
+            <span data-testid="ledger-total-outstanding">{paiseShown(totalOutstanding)}</span> total
+            outstanding
           </p>
         </div>
         <button onClick={() => setShowAddForm(true)} className="btn-primary py-2">

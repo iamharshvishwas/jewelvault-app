@@ -7,6 +7,8 @@ import RecentDesignsGrid from './components/RecentDesignsGrid';
 import DashboardActivityPanels from './components/DashboardActivityPanels';
 import DashboardQuickActions from './components/DashboardQuickActions';
 import DashboardRateCard from './components/DashboardRateCard';
+import DashboardHealthLine from './components/DashboardHealthLine';
+import DashboardEveningCheck from './components/DashboardEveningCheck';
 import { BUSINESS_LOCATION, BUSINESS_NAME } from '@/lib/businessConfig';
 import { useSession } from '@/lib/authStore';
 
@@ -42,6 +44,9 @@ export default function HomePage() {
           </div>
         </div>
 
+        {/* The owner's health line: the nightly check, the backups, the Download everything reminder (spec section 12) */}
+        {role === 'owner' && <DashboardHealthLine />}
+
         {/* Quick Actions */}
         <DashboardQuickActions role={role} />
 
@@ -50,6 +55,9 @@ export default function HomePage() {
 
         {/* KPI Grid */}
         <DashboardKpiGrid role={role} />
+
+        {/* The owner's evening check: today's Cash net, today's UPI net, the total outstanding (V4, V2) */}
+        {role === 'owner' && <DashboardEveningCheck />}
 
         {/* Charts */}
         {role === 'owner' && <DashboardCharts />}

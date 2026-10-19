@@ -15,10 +15,56 @@ import type { LedgerEntry, LedgerKind } from './mockData';
 const paiseOf = (rupees: number): number => Math.round(rupees * 100);
 const mgOf = (grams: number): number => Math.round(grams * 1000);
 
+/**
+ * ₹22,000 or ₹1,000.50 from whole paise (paise only when there are some); -₹40 for a negative amount. The dashboard, the reports and the card take whole paise from the selectors
+ * (src/lib/selectors.ts, WEB12) and write them here, so a figure reads the same wherever it stands.
+ */
+export function paiseShown(paise: number): string {
+  return inr(paise, paise % 100 !== 0);
+}
+
 /** ₹22,000 or ₹1,000.50 (paise only when there are some); -₹40 for a negative amount. */
 export function rupeesShown(rupees: number): string {
-  const paise = paiseOf(rupees);
-  return inr(paise, paise % 100 !== 0);
+  return paiseShown(paiseOf(rupees));
+}
+
+/** A balance in whole paise: what the customer owes, or "₹2,000 advance" below zero. */
+export function balancePaiseShown(paise: number): string {
+  return paise < 0 ? `${paiseShown(-paise)} advance` : paiseShown(paise);
+}
+
+/** A weight in whole milligrams: 3.500 g. */
+export function mgShown(mg: number): string {
+  return `${formatGrams(mg)} g`;
+}
+
+/** The silver balance in whole milligrams: "3.500 g", or "1.000 g advance" below zero. */
+export function fineBalanceMgShown(mg: number): string {
+  return mg < 0 ? `${mgShown(-mg)} advance` : mgShown(mg);
+}
+
+/** Paise per piece, rounded half up in integers: 440000 paise over 7 pieces is ₹628.57. Nothing sold is a dash. */
+export function perUnitShown(totalPaise: number, units: number): string {
+  if (units <= 0) return '-';
+  const negative = totalPaise < 0;
+  const total = negative ? -totalPaise : totalPaise;
+  const each = Math.floor((2 * total + units) / (2 * units));
+  return paiseShown(negative ? -each : each);
+}
+
+/** "1 bill" or "3 bills". */
+export function billsShown(count: number): string {
+  return `${count} ${count === 1 ? 'bill' : 'bills'}`;
+}
+
+/** "Cancelled today: none" or "Cancelled today: 1 bill · ₹3,000": the cancelled bills have a line of their own, apart from the sales (V5). */
+export function cancelledShown(
+  label: string,
+  figure: { count: number; totalPaise: number }
+): string {
+  return figure.count === 0
+    ? `${label}: none`
+    : `${label}: ${billsShown(figure.count)} · ${paiseShown(figure.totalPaise)}`;
 }
 
 /** 3.500 g */

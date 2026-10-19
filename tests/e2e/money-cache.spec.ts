@@ -253,7 +253,8 @@ test.describe('T-E04 clause (C1, C3, C14): the customer card shows the figures o
     )[0];
     expect(Number(v2[0])).toBe(112000); // by hand
     const listItem = page.locator('button', { hasText: PRIYA.name });
-    await expect(listItem).toContainText(`₹${(Number(v2[0]) / 1000).toFixed(1)}K`);
+    // the list writes the exact figure the card writes (WEB12, C14), not a rounded K
+    await expect(listItem).toContainText(`₹${inr(v2[0])}`);
     await listItem.click();
     await expect(page.getByRole('heading', { name: PRIYA.name })).toBeVisible();
 
@@ -295,7 +296,7 @@ test.describe('T-E04 clause (C1, C3, C14): the customer card shows the figures o
     await laneSql(paySql());
     await expect(page.locator('tbody tr')).toHaveCount(8, { timeout: 30_000 });
     await expect(page.locator('tfoot tr')).toContainText('₹1,00,000');
-    await expect(listItem).toContainText('₹100.0K');
+    await expect(listItem).toContainText('₹1,00,000');
     await page.getByRole('button', { name: 'Invoices' }).click();
     const paid = page.locator('tbody tr').filter({ hasText: 'W07-0003' });
     await expect(paid).toContainText('Paid');

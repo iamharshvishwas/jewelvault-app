@@ -287,7 +287,7 @@ describe('C14: an opening-balance bill is dues brought forward, not a sale', () 
     expect(app.getInvoiceById('OB-0001')?.pendingAmount).toBe(20000);
     const pending = app.computePendingPayments();
     expect(pending.map((p) => p.invoiceNumber).sort()).toEqual(['JV-0001', 'JV-0004', 'OB-0001']);
-    expect(pending.find((p) => p.invoiceNumber === 'OB-0001')?.amount).toBe(20000);
+    expect(pending.find((p) => p.invoiceNumber === 'OB-0001')?.amountPaise).toBe(2000000);
   });
 
   it("today's sales do not hold it", async () => {
@@ -296,7 +296,7 @@ describe('C14: an opening-balance bill is dues brought forward, not a sale', () 
     const { cache, app } = await load();
     fill(cache);
     // the only bill dated the 1st is the opening one
-    expect(app.computeDashboardStats().todaySales).toBe(0);
+    expect(app.computeDashboardStats().todaySalesPaise).toBe(0);
   });
 });
 

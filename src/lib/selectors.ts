@@ -23,6 +23,11 @@
  * not a sale and so leaves the day it was billed on. An opening-balance bill is dues brought forward, not a
  * sale: it is left out of sales, and a cancelled opening-balance bill is not a cancelled sale either. Opening
  * dues are still dues: they count in outstanding and in the pending list.
+ *
+ * LINES (WEB12). The Sales report also splits the sales by metal, category and month. That needs the lines of the bills (bill_items), which
+ * V1 does not have, so the line selectors take them beside V1 and count a line only when its bill is a sale by the rule above: a line of a
+ * cancelled bill, of an opening-balance bill or of a bill whose V1 row has not arrived adds nothing. What the lines of a bill add up to is not
+ * its grand total (the discount, other charges, tax and round-off belong to the bill): the report shows the difference, it never hides it.
  */
 import {
   PricingError,
@@ -281,6 +286,171 @@ export function cancelledInRange(
     isCancelledSale,
     inRange(assertBusinessDate(fromDate, 'fromDate'), assertBusinessDate(toDate, 'toDate'))
   );
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// V5: the lines of the sales (the split by metal, category and month)
+// ---------------------------------------------------------------------------------------------------------
+
+/** One line of a bill (bill_items): the columns the Sales report needs. */
+export interface SoldLine {
+  billId: string;
+  category: string;
+  material: string;
+  /** Pieces on the line (a Per Piece line can hold several). */
+  quantity: number;
+  itemTotal: DecimalInput;
+}
+
+/** What the lines of one key (a category, a metal) add up to. */
+export interface LineTotal {
+  key: string;
+  /** Pieces sold: the sum of the quantities. */
+  units: number;
+  lines: number;
+  totalPaise: number;
+}
+
+/** Gold and silver line totals of one month. */
+export interface MonthLines {
+  month: string;
+  goldPaise: number;
+  silverPaise: number;
+}
+
+interface JoinedLine {
+  line: SoldLine;
+  month: string;
+  paise: number;
+  units: number;
+}
+
+/** The lines whose bill is a sale (V5), with the month of the bill and the exact paise of the line. */
+function linesOfSales(lines: readonly SoldLine[], bills: readonly BillSummaryRow[]): JoinedLine[] {
+  const sales = new Map<string, string>();
+  for (const bill of bills) if (isSale(bill)) sales.set(bill.id, bill.billDate.slice(0, 7));
+  const joined: JoinedLine[] = [];
+  for (const line of lines) {
+    const month = sales.get(line.billId);
+    if (month === undefined) continue;
+    if (!Number.isSafeInteger(line.quantity) || line.quantity < 0) {
+      throw new PricingError('quantity', 'must be a whole number of pieces');
+    }
+    joined.push({
+      line,
+      month,
+      paise: paiseOf(line.itemTotal, 'itemTotal'),
+      units: line.quantity,
+    });
+  }
+  return joined;
+}
+
+const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+function totalsBy(
+  joined: readonly JoinedLine[],
+  keyOf: (row: JoinedLine) => string,
+  order: (a: string, b: string) => number
+): LineTotal[] {
+  const groups = new Map<string, { units: number; lines: number; total: bigint }>();
+  for (const row of joined) {
+    const key = keyOf(row);
+    const group = groups.get(key) ?? { units: 0, lines: 0, total: ZERO };
+    group.units += row.units;
+    group.lines += 1;
+    group.total += BigInt(row.paise);
+    groups.set(key, group);
+  }
+  return Array.from(groups.keys())
+    .sort(order)
+    .map((key) => {
+      const group = groups.get(key) as { units: number; lines: number; total: bigint };
+      return {
+        key,
+        units: group.units,
+        lines: group.lines,
+        totalPaise: exact(group.total, 'totalPaise'),
+      };
+    });
+}
+
+/** Gold first, then Silver, then any other metal by name. */
+const metalOrder = (a: string, b: string) => {
+  const rank = (metal: string) => (metal === 'Gold' ? 0 : metal === 'Silver' ? 1 : 2);
+  return rank(a) - rank(b) || byText(a, b);
+};
+
+/** The lines of the sales of one month ('2026-10') added up by category, in category order. */
+export function lineTotalsByCategory(
+  lines: readonly SoldLine[],
+  bills: readonly BillSummaryRow[],
+  month: string
+): LineTotal[] {
+  const wanted = assertBusinessMonth(month, 'month');
+  return totalsBy(
+    linesOfSales(lines, bills).filter((row) => row.month === wanted),
+    (row) => row.line.category,
+    byText
+  );
+}
+
+/** The lines of the sales of one month added up by metal: Gold, then Silver. */
+export function lineTotalsByMetal(
+  lines: readonly SoldLine[],
+  bills: readonly BillSummaryRow[],
+  month: string
+): LineTotal[] {
+  const wanted = assertBusinessMonth(month, 'month');
+  return totalsBy(
+    linesOfSales(lines, bills).filter((row) => row.month === wanted),
+    (row) => row.line.material,
+    metalOrder
+  );
+}
+
+/** Gold and silver line totals of every month that has a sale, oldest month first. */
+export function lineTotalsByMonth(
+  lines: readonly SoldLine[],
+  bills: readonly BillSummaryRow[]
+): MonthLines[] {
+  const joined = linesOfSales(lines, bills);
+  const months = new Map<string, { gold: bigint; silver: bigint }>();
+  for (const row of joined) {
+    const month = months.get(row.month) ?? { gold: ZERO, silver: ZERO };
+    if (row.line.material === 'Gold') month.gold += BigInt(row.paise);
+    else month.silver += BigInt(row.paise);
+    months.set(row.month, month);
+  }
+  return Array.from(months.keys())
+    .sort(byText)
+    .map((month) => {
+      const sums = months.get(month) as { gold: bigint; silver: bigint };
+      return {
+        month,
+        goldPaise: exact(sums.gold, 'goldPaise'),
+        silverPaise: exact(sums.silver, 'silverPaise'),
+      };
+    });
+}
+
+/**
+ * The share of `partPaise` in `totalPaise` as a percentage with one decimal ('33.3'), rounded half up, worked in integers. Null when
+ * there is no (positive) total to share. A negative part gives a negative share: '-12.5'.
+ */
+export function shareOfTotal(partPaise: number, totalPaise: number): string | null {
+  if (!Number.isSafeInteger(partPaise) || !Number.isSafeInteger(totalPaise)) {
+    throw new PricingError('share', 'must be made of whole paise');
+  }
+  if (totalPaise <= 0) return null;
+  const negative = partPaise < 0;
+  const part = BigInt(negative ? -partPaise : partPaise);
+  const total = BigInt(totalPaise);
+  const two = BigInt(2);
+  const tenths = (part * BigInt(2000) + total) / (two * total); // part / total * 1000, half up
+  const whole = tenths / BigInt(10);
+  const fraction = tenths % BigInt(10);
+  return `${negative && tenths > ZERO ? '-' : ''}${whole}.${fraction}`;
 }
 
 // ---------------------------------------------------------------------------------------------------------
