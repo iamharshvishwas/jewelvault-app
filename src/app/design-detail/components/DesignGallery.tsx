@@ -1,32 +1,14 @@
 'use client';
-import React, { useState, useSyncExternalStore } from 'react';
+import React, { useState } from 'react';
 import AppImage from '@/components/ui/AppImage';
-import { useRowCacheVersion } from '@/lib/cache/useRowCache';
-import { getDesigns } from '@/lib/designStore';
+import type { Design } from '@/lib/mockData';
 import { ChevronLeft, ChevronRight, ZoomIn } from 'lucide-react';
 
 // The photos of a design (P2, P3; task WEB06). They come from the API: the design holds photo ids (P4) and the store turns them into addresses on the API's origin
 // (NEXT_PUBLIC_API_URL): the full pictures here, the 320 px thumbnails in the strip under the main picture. A design with no photo shows the placeholder.
 
-const noSubscription = () => () => {};
-/** The `id` of the address, read when the page is drawn (the page is left and opened again for another design). */
-const readIdFromUrl = () => new URLSearchParams(window.location.search).get('id');
-
-export default function DesignGallery() {
-  // drawn again when a poll or an edit changes a design
-  useRowCacheVersion('designs', 'skus');
-  const wantedId = useSyncExternalStore(noSubscription, readIdFromUrl, () => null);
-  const designs = getDesigns();
-  const design = designs.find((d) => d.id === wantedId) ?? designs[0] ?? null;
+export default function DesignGallery({ design }: { design: Design }) {
   const [picked, setPicked] = useState(0);
-
-  if (!design) {
-    return (
-      <div className="jewel-card overflow-hidden relative aspect-square image-placeholder flex items-center justify-center bg-muted">
-        <span className="text-muted-foreground text-sm">No design selected</span>
-      </div>
-    );
-  }
 
   const images = design.images?.length
     ? design.images
