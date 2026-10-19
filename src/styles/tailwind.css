@@ -445,44 +445,56 @@
 }
 
 @media print {
+  /* WEB13 (PLAN.md P3-T1; QA UI-03 and UI-04). Everything that is printed flows over as many pages as it needs. The paper is A4 with 8mm margins, as it was printed before (the estimate used
+     to ask for an A5 landscape page by name, which a box taken out of the flow never got: the paper was A4 and the sheet a 198 x 136mm box at its top, clipped at that height). */
   @page {
     size: A4;
     margin: 8mm;
   }
-  @page estimate-half-sheet {
-    size: A5 landscape;
-    margin: 6mm;
-  }
   html,
   body {
     background: #ffffff !important;
+    height: auto !important;
+    overflow: visible !important;
   }
   body * {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
-  body:has(.print-estimate-sheet) {
-    margin: 0 !important;
+
+  /* The print shell. On screen the application is as tall as the window and its page scrolls inside it (AppLayout); on paper that cut every page at the window's height and printed the side
+     bar, the top bar and the phone navigation with it. The bars are not printed and the shell takes the height of what it holds. */
+  .app-chrome {
+    display: none !important;
+  }
+  .app-shell,
+  .app-main-column,
+  .app-scroll {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
     background: #ffffff !important;
   }
-  body:has(.print-estimate-sheet) * {
-    visibility: hidden;
+  .app-page {
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
-  body:has(.print-estimate-sheet) .print-estimate-sheet,
-  body:has(.print-estimate-sheet) .print-estimate-sheet * {
-    visibility: visible;
-  }
+
+  /* The estimate: one sheet that flows. No fixed height, no clipping, no position of its own; the table may be cut between two lines, never inside one; its header row comes back on every page;
+     the totals block is never split. */
   .print-estimate-sheet {
-    page: estimate-half-sheet;
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 198mm !important;
-    min-height: 136mm !important;
-    max-height: 136mm !important;
-    overflow: hidden !important;
-    padding: 6mm !important;
-    border: 1px solid #d8d8d8 !important;
+    position: static !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
     border-radius: 0 !important;
     box-shadow: none !important;
     color: #111111 !important;
@@ -500,7 +512,14 @@
     color: #111111 !important;
   }
   .print-estimate-sheet table {
+    width: 100% !important;
     border-collapse: collapse !important;
+  }
+  .print-estimate-sheet thead {
+    display: table-header-group;
+  }
+  .print-estimate-sheet tr {
+    break-inside: avoid;
     page-break-inside: avoid;
   }
   .print-estimate-sheet th {
@@ -517,21 +536,42 @@
     padding: 2mm 1.6mm !important;
     vertical-align: top !important;
   }
-  .print-estimate-sheet > div:first-child {
+  .print-estimate-head {
     padding-bottom: 3mm !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
-  .print-estimate-sheet > div:nth-child(2) {
+  .print-estimate-party {
     padding-top: 3mm !important;
     padding-bottom: 3mm !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
-  .print-estimate-sheet > div:last-child {
+  .print-estimate-totals {
     margin-top: 4mm !important;
     max-width: 75mm !important;
     font-size: 8.5pt !important;
     line-height: 1.25 !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    /* and never alone: when the block does not fit under the last lines, the last line goes over to its page with it */
+    break-before: avoid;
+    page-break-before: avoid;
+  }
+
+  /* The tags: a grid that runs over as many pages as there are tags; a tag is never cut. */
+  .print-tags-grid {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-content: flex-start !important;
+    gap: 2mm !important;
+    height: auto !important;
+    overflow: visible !important;
   }
   .print-tag-wrap {
     box-shadow: none !important;
     margin: 0 !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 }

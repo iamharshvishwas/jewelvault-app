@@ -81,10 +81,13 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
   const allowed = canAccessPath(role, pathname || '/');
 
+  // WEB13 (QA UI-03): the print shell. On screen the shell is as tall as the window and `main` scrolls inside it; on paper that would cut a page at the window's height and print the bars.
+  // The names app-shell, app-main-column, app-scroll, app-page and app-chrome are the hooks of the print rules in src/styles/tailwind.css (@media print): the bars are not printed, the
+  // shell lets go of the height, and the page is as long as what is on it, whatever the page is (the estimate, the tags, any other screen a person prints).
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="app-shell flex h-screen overflow-hidden bg-background">
       {/* Desktop Sidebar */}
-      <div className="hidden lg:flex flex-shrink-0">
+      <div className="app-chrome hidden lg:flex flex-shrink-0">
         <Sidebar
           collapsed={sidebarCollapsed}
           onToggle={() => setSidebarCollapsed((p) => !p)}
@@ -93,14 +96,18 @@ export default function AppLayout({ children }: AppLayoutProps) {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="app-main-column flex-1 flex flex-col overflow-hidden">
         {/* C7: "Offline: changes cannot be saved" or "Waking up…"; every Save control is off while it shows */}
-        <ConnectionBanner />
-        <Topbar onMenuClick={() => setSidebarCollapsed((p) => !p)} session={session} />
-        <main className="flex-1 overflow-y-auto scrollbar-thin">
+        <div className="app-chrome contents">
+          <ConnectionBanner />
+        </div>
+        <div className="app-chrome contents">
+          <Topbar onMenuClick={() => setSidebarCollapsed((p) => !p)} session={session} />
+        </div>
+        <main className="app-scroll flex-1 overflow-y-auto scrollbar-thin">
           <div
             key={epoch}
-            className="max-w-screen-2xl mx-auto px-4 lg:px-6 xl:px-8 2xl:px-10 py-5 pb-24 lg:pb-6"
+            className="app-page max-w-screen-2xl mx-auto px-4 lg:px-6 xl:px-8 2xl:px-10 py-5 pb-24 lg:pb-6"
           >
             {allowed ? (
               children
@@ -120,12 +127,14 @@ export default function AppLayout({ children }: AppLayoutProps) {
       </div>
 
       {/* Mobile Bottom Nav */}
-      <MobileNav session={session} />
+      <div className="app-chrome contents">
+        <MobileNav session={session} />
+      </div>
 
       {PREVIEW_MODE && (
         <div
           role="note"
-          className="fixed bottom-16 lg:bottom-2 left-1/2 -translate-x-1/2 z-50 rounded-full bg-amber-100 border border-amber-300 px-3 py-0.5 text-[11px] font-semibold text-amber-900 shadow-sm pointer-events-none"
+          className="app-chrome fixed bottom-16 lg:bottom-2 left-1/2 -translate-x-1/2 z-50 rounded-full bg-amber-100 border border-amber-300 px-3 py-0.5 text-[11px] font-semibold text-amber-900 shadow-sm pointer-events-none"
         >
           Preview: sample data, kept only in this browser. Nothing is saved to a server.
         </div>

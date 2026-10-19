@@ -94,6 +94,7 @@ describe('T-E04 clause (C1): getInvoices() returns the Invoice shape on the rows
       metalAmount: 245106.4,
       fineWeightDue: 0,
       itemTotal: 257611.66,
+      quantity: 1, // WEB13: how many pieces the line sold (the row's quantity)
       sellingMethod: 'By Weight',
       imageRef: '/assets/images/no_image.png',
       category: 'Ring',

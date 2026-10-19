@@ -108,6 +108,8 @@ export interface InvoiceItem {
   metalAmount: number;
   fineWeightDue?: number;
   itemTotal: number;
+  /** How many pieces the line sold (R6: a Per Piece line may be more than one; a By Weight line is always 1). Absent on a line of the prototype's sample data, which means one. */
+  quantity?: number;
   sellingMethod: SellingMethod;
   imageRef: string;
   category: string;

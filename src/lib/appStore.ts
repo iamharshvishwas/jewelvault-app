@@ -311,6 +311,7 @@ function itemFromRow(row: BillItemRow): InvoiceItem {
     metalAmount: num(row.metal_amount),
     fineWeightDue: num(row.fine_weight_due),
     itemTotal: num(row.item_total),
+    quantity: row.quantity,
     sellingMethod: row.selling_method as SellingMethod,
     // photos are WEB06's: until then every line shows the placeholder image
     imageRef: NO_IMAGE,
