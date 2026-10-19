@@ -41,6 +41,7 @@ interface NavItem {
   children?: NavItem[];
 }
 
+// C15: Order Book, the public catalogue and its admin screen are not connected and not reachable in M1, so the menu does not offer them (the route table in authStore closes them as well).
 const NAV_ITEMS: NavItem[] = [
   {
     id: 'nav-dashboard',
@@ -58,12 +59,6 @@ const NAV_ITEMS: NavItem[] = [
         label: 'Designs',
         href: '/inventory-management',
         icon: <Gem size={15} />,
-      },
-      {
-        id: 'nav-catalogue',
-        label: 'Customer Catalogue',
-        href: '/catalogue',
-        icon: <ShoppingCart size={15} />,
       },
       {
         id: 'nav-all-skus',
@@ -98,12 +93,6 @@ const NAV_ITEMS: NavItem[] = [
     icon: <ShoppingCart size={18} />,
     children: [
       { id: 'nav-new-sale', label: 'New Estimate', href: '/billing-pos', icon: <Plus size={15} /> },
-      {
-        id: 'nav-order-book',
-        label: 'Order Book',
-        href: '/order-book',
-        icon: <FileText size={15} />,
-      },
       {
         id: 'nav-invoices',
         label: 'Saved Estimates',

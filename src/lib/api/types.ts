@@ -514,6 +514,14 @@ export interface OpeningBalanceResponse {
   allocations: ReceiptAllocationRow[];
 }
 
+/**
+ * `POST /v1/owner/download-record` (200; the owner's "Download everything", B3; handoff API35). The body is `{ date, counts }`: today's or yesterday's Asia/Kolkata date and the rows of the
+ * twelve files of the zip by table name (`DOWNLOAD_FILES` of src/lib/downloadEverything.ts), whole numbers. The API stores `at` (its clock) and `by` (the caller), never the screen's.
+ */
+export interface DownloadRecordResponse {
+  last_download: { at: string; by: UuidText; counts: Record<string, number> };
+}
+
 /** X7 `POST /v1/bills/quote` (200, read-only; handoff API18). The figures are the API's own pricing.ts. */
 export interface QuoteBillResponse {
   pricing_version: number;

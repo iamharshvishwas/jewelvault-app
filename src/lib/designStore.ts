@@ -742,11 +742,6 @@ export function removeDesigns(ids: Set<string>): void {
   _designs = _designs.filter((d) => !ids.has(d.id));
 }
 
-export function clearInventory(): void {
-  assertWritable('Clearing the inventory');
-  _designs = [];
-}
-
 export function removeSku(skuId: string): { removed: boolean; removedDesignId?: string } {
   assertWritable('Removing a piece');
   let removed = false;

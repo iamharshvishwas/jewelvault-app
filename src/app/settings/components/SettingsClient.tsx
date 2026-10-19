@@ -2,7 +2,6 @@
 
 import React, { useState, useSyncExternalStore } from 'react';
 import SaveButton from '@/components/ui/SaveButton';
-import { PREVIEW_MODE } from '@/lib/authStore';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import {
   createCategory,
@@ -15,7 +14,7 @@ import {
   suggestCategoryPrefix,
 } from '@/lib/catalogStore';
 import { getDesigns } from '@/lib/designStore';
-import { getSettings, resetSettings, saveSettings, type AppSettings } from '@/lib/settingsStore';
+import { getSettings, saveSettings, type AppSettings } from '@/lib/settingsStore';
 
 // Settings (spec D3, C5 (a), SEC-04; task WEB05). Every section is one row of the shop's settings and is saved on its own with its own Save button: a value is sent when
 // the person says so, not on each key press (the last write wins, so a half-typed value must never be what is stored). The categories and sub-categories are rows of their own
@@ -267,16 +266,6 @@ export default function SettingsClient() {
             >
               {message}
             </span>
-          )}
-          {/* only a preview has defaults to go back to: in a real build the settings are the shop's and are never reset to sample values */}
-          {PREVIEW_MODE && (
-            <SaveButton
-              disabled={busy}
-              onClick={() => void run(() => saveSettings(resetSettings()), 'Settings reset.')}
-              className="btn-secondary py-2 text-xs"
-            >
-              Reset Defaults
-            </SaveButton>
           )}
         </div>
       </div>

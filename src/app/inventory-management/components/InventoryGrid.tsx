@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import AppImage from '@/components/ui/AppImage';
-import { clearInventory, getDesigns, removeDesign, removeDesigns } from '@/lib/designStore';
+import { getDesigns, removeDesign, removeDesigns } from '@/lib/designStore';
 import StatusBadge from '@/components/ui/StatusBadge';
 import MaterialBadge from '@/components/ui/MaterialBadge';
 import InventoryTable from './InventoryTable';
@@ -190,20 +190,6 @@ export default function InventoryGrid() {
     setSelectedIds(new Set());
   };
 
-  const handleClearInventory = () => {
-    const skuCount = designs.reduce((total, design) => total + design.skus.length, 0);
-    if (
-      !window.confirm(
-        `Delete ALL inventory: ${designs.length} design(s) and ${skuCount} SKU(s)? This cannot be undone.`
-      )
-    )
-      return;
-    clearInventory();
-    setDesigns([]);
-    setSelectedIds(new Set());
-    setPage(1);
-  };
-
   // ── Empty State ──────────────────────────────────────────────────────────────
   if (designs.length === 0) {
     return (
@@ -251,15 +237,6 @@ export default function InventoryGrid() {
         </div>
 
         <div className="flex items-center bg-muted rounded-lg p-1">
-          {isAdmin && (
-            <button
-              onClick={handleClearInventory}
-              className="mr-2 flex items-center gap-1.5 text-xs bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 px-3 py-1.5 rounded-md transition-colors"
-            >
-              <Trash2 size={13} />
-              Delete All Inventory
-            </button>
-          )}
           <button
             onClick={() => setView('grid')}
             className={`p-1.5 rounded-md transition-colors ${view === 'grid' ? 'bg-card shadow-sm text-primary' : 'text-muted-foreground'}`}

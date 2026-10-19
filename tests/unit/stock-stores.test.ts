@@ -445,7 +445,7 @@ describe('T-E05 a change that cannot be saved yet is refused, never shown as if 
   // WEB05 put the ordinary edits on the API (tests/unit/stores.test.ts): upsertDesign, renameSubcategory, removeSubcategory and saveSettings are writes now.
   // What is left says "cannot be saved yet" until the task that owns it (WEB06: a new design, a status, a removal; WEB08: the sale) puts it on the API.
   it('every writing function that is not on the API yet says so and changes nothing, and nothing goes to the browser', async () => {
-    const { fake, cache, designs, catalog, settings } = await load();
+    const { fake, cache, designs, catalog } = await load();
     fillStock(cache);
     const before = designs.getDesigns();
     const design = before[0];
@@ -453,14 +453,12 @@ describe('T-E05 a change that cannot be saved yet is refused, never shown as if 
       ['addDesign', () => designs.addDesign(design)],
       ['removeDesign', () => designs.removeDesign(design.id)],
       ['removeDesigns', () => designs.removeDesigns(new Set([design.id]))],
-      ['clearInventory', () => designs.clearInventory()],
       ['removeSku', () => designs.removeSku(uuid(1001))],
       ['updateSkuStatus', () => designs.updateSkuStatus(uuid(1001), 'Reserved')],
       ['resetLocalDesignData', () => designs.resetLocalDesignData()],
       ['addCategory', () => catalog.addCategory('Anklet')],
       ['addSubcategory', () => catalog.addSubcategory('Ring', 'Plain')],
       ['clearAllSubcategories', () => catalog.clearAllSubcategories()],
-      ['resetSettings', () => settings.resetSettings()],
     ];
     for (const [name, attempt] of attempts) {
       expect(attempt, name).toThrow(/not saved|cannot be saved/i);

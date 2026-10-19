@@ -9,7 +9,7 @@ import {
 } from '@/lib/businessConfig';
 import { DEFAULT_CATEGORIES, DEFAULT_CATEGORY_PREFIXES } from '@/lib/catalogStore';
 import type { DailyRateRow, UserRow } from '@/lib/api/types';
-import { rowCache, savingNotAvailable } from '@/lib/cache/cache';
+import { rowCache } from '@/lib/cache/cache';
 import { SaveError, editRow, insertRow, putSettingValue, sameDecimal } from '@/lib/cache/edit';
 import { stampMicros } from '@/lib/cache/stamp';
 import type { DailyRateLike } from '@/lib/pricing';
@@ -383,12 +383,6 @@ export async function saveSettings(next: AppSettings): Promise<AppSettings> {
     }
   }
   return getSettings();
-}
-
-export function resetSettings(): AppSettings {
-  if (!PREVIEW_MODE) throw savingNotAvailable('Resetting the settings');
-  previewSettings = DEFAULT_SETTINGS;
-  return previewSettings;
 }
 
 // ── the daily rates (WEB05, D4, R2, Y8) ──────────────────────────────────────

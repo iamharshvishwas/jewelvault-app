@@ -331,3 +331,63 @@ export function buildHealthLine(view: HealthView): HealthLineModel {
     reviewMessage: view.reviewMessage,
   };
 }
+
+// ---- the "Download everything" card (B3, I12, O53; task WEB12b)
+
+export interface DownloadCardModel {
+  state: 'loading' | 'ready' | 'failed';
+  /** The colour: the API's verdict on the last download (green up to day 27, amber from day 28, red from day 36). */
+  tone: Tone;
+  /** 'Today', 'Yesterday', '5 days ago', or 'Not done yet' when there is no download on record. */
+  last: string;
+  /** The day of the last download, '10 Oct 2026'; null when there is none. */
+  date: string | null;
+  /** With no download yet: '28 days since the first night' (the first one is due 28 days after the first night the system ran). */
+  since: string | null;
+  /** The sentence for an amber or a red card; null while it is green. */
+  reminder: string | null;
+}
+
+/**
+ * The card on the owner's dashboard, from the same read as the line. The API counts whole Asia/Kolkata days and says the state of the download; the card repeats it and decides no
+ * threshold. The sentences are those of the line, so the two never say different things.
+ */
+export function buildDownloadCard(view: HealthView): DownloadCardModel {
+  const health = view.health;
+  if (health === null) {
+    return {
+      state: view.state === 'failed' ? 'failed' : 'loading',
+      tone: 'unknown',
+      last: view.state === 'failed' ? 'Not known' : 'Reading the date…',
+      date: null,
+      since: null,
+      reminder: null,
+    };
+  }
+  const download = health.download;
+  const done = download.from === 'last_download' && download.age_days !== null;
+  const tone: Tone =
+    download.state === 'ok'
+      ? 'ok'
+      : download.state === 'amber'
+        ? 'amber'
+        : download.state === 'red'
+          ? 'red'
+          : 'unknown';
+  return {
+    state: 'ready',
+    tone,
+    last: done ? daysAgo(download.age_days as number) : 'Not done yet',
+    date: done && download.reference_date ? longDay(download.reference_date) : null,
+    since:
+      !done && download.age_days !== null
+        ? `${plural(download.age_days, 'day')} since the first night`
+        : null,
+    reminder:
+      tone === 'red'
+        ? RED_REASONS.download_red
+        : tone === 'amber'
+          ? AMBER_REASONS.download_amber
+          : null,
+  };
+}

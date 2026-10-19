@@ -8,6 +8,7 @@ import DashboardActivityPanels from './components/DashboardActivityPanels';
 import DashboardQuickActions from './components/DashboardQuickActions';
 import DashboardRateCard from './components/DashboardRateCard';
 import DashboardHealthLine from './components/DashboardHealthLine';
+import DashboardDownloadCard from './components/DashboardDownloadCard';
 import DashboardEveningCheck from './components/DashboardEveningCheck';
 import { BUSINESS_LOCATION, BUSINESS_NAME } from '@/lib/businessConfig';
 import { useSession } from '@/lib/authStore';
@@ -46,6 +47,9 @@ export default function HomePage() {
 
         {/* The owner's health line: the nightly check, the backups, the Download everything reminder (spec section 12) */}
         {role === 'owner' && <DashboardHealthLine />}
+
+        {/* The owner's monthly Download everything: the date of the last one, the reminder, the button (spec B3, O53) */}
+        {role === 'owner' && <DashboardDownloadCard />}
 
         {/* Quick Actions */}
         <DashboardQuickActions role={role} />
