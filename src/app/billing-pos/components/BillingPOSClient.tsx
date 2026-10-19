@@ -16,6 +16,7 @@ import {
   previewBill,
   saleTypeAfterChoosing,
   withBillDate,
+  withRates,
   withSaleType,
   type BillingItem,
   type HeldStatus,
@@ -131,6 +132,20 @@ function BillingScreen({ reissue }: { reissue: ReissueReady | null }) {
     billDate: date,
     rates: getDailyRates(),
   });
+
+  // WEB17 (R2): a rate that arrives or changes after a piece was scanned (the owner typed it on the rate card in another browser and a poll brought it) reaches the lines that are still on
+  // their default: the line that waited for a rate has it, a stale rate gives way to the rate of today. A rate the person typed is left alone. Without this the question of WEB16 would
+  // go away (a rate dated today exists) and the line would still carry the old rate. A bill that is being saved or has been saved keeps the figures it was sent with, and a re-issue keeps
+  // the rates of the bill it corrects (they catch up when a failed save frees the screen). It is done while drawing, from the rates as text (React's way to answer a change of what the screen
+  // reads, without a frame that shows the old rate; and a preview build, which makes a new array on every read, does not run this again and again).
+  const ratesKey = getDailyRates()
+    .map((r) => `${r.material}|${r.purity}|${r.rateDate}|${r.ratePerGram}`)
+    .join(';');
+  const [followedRates, setFollowedRates] = useState(ratesKey);
+  if (followedRates !== ratesKey && !reissue && !busy && saved === null) {
+    setFollowedRates(ratesKey);
+    setItems((prev) => withRates(prev, contextFor(saleType, invoiceDate)) as BillingItem[]);
+  }
 
   const addPiece = (sku: Sku, held: HeldStatus | null) => {
     setItems((prev) =>

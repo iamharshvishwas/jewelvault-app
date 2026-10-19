@@ -41,10 +41,16 @@ function Tag({ sku }: { sku: Sku }) {
   const settings = getSettings();
   const tag = settings.tagTemplate;
   const detailLines = [
-    tag.showCategory ? sku.subcategory ? `${sku.category} / ${sku.subcategory}` : sku.category : '',
+    tag.showCategory
+      ? sku.subcategory
+        ? `${sku.category} / ${sku.subcategory}`
+        : sku.category
+      : '',
     tag.showMaterial ? `${sku.material} ${sku.purity}` : sku.purity,
     tag.showGrossWeight && sku.grossWeight > 0 ? `GW ${sku.grossWeight.toFixed(3)}g` : '',
-    tag.showCustomerNetWeight && sku.customerNetWeight > 0 ? `NW ${sku.customerNetWeight.toFixed(3)}g` : '',
+    tag.showCustomerNetWeight && sku.customerNetWeight > 0
+      ? `NW ${sku.customerNetWeight.toFixed(3)}g`
+      : '',
     tag.showPiroi && sku.piroi > 0 ? `Piroi ${sku.piroi.toFixed(2)}` : '',
   ].filter(Boolean);
   const tagWidth = Math.max(tag.widthMm, 58);
@@ -74,9 +80,16 @@ function Tag({ sku }: { sku: Sku }) {
       <div className="print-tag-end print-tag-barcode" style={{ width: `${endWidth}mm` }}>
         <div className="tag-code-text">{sku.barcode}</div>
         <div className="tag-scan-row">
-          <div className="tag-barcode-bars" style={{ height: `${Math.max(tag.barcodeHeightMm, 8)}mm` }} aria-label={`Barcode ${sku.barcode}`}>
+          <div
+            className="tag-barcode-bars"
+            style={{ height: `${Math.max(tag.barcodeHeightMm, 8)}mm` }}
+            aria-label={`Barcode ${sku.barcode}`}
+          >
             {barcodeBits(sku.barcode).map((bit, index) => (
-              <span key={`${sku.id}-bar-${index}`} style={{ width: bit ? 2 : 1, opacity: bit ? 1 : 0.22 }} />
+              <span
+                key={`${sku.id}-bar-${index}`}
+                style={{ width: bit ? 2 : 1, opacity: bit ? 1 : 0.22 }}
+              />
             ))}
           </div>
           <SmallQrCode value={sku.barcode || sku.skuNumber} />
@@ -106,13 +119,15 @@ export default function PrintTagsClient() {
   );
 
   const filtered = skus.filter((sku) => {
-    const haystack = `${sku.designNumber} ${sku.skuNumber} ${sku.barcode} ${sku.category} ${sku.material} ${sku.purity}`.toLowerCase();
+    const haystack =
+      `${sku.designNumber} ${sku.skuNumber} ${sku.barcode} ${sku.category} ${sku.material} ${sku.purity}`.toLowerCase();
     return haystack.includes(query.toLowerCase());
   });
 
   const copies = Math.max(1, getSettings().tagTemplate.copiesPerSku);
-  const printable = (selected.size > 0 ? filtered.filter((sku) => selected.has(sku.id)) : filtered)
-    .flatMap((sku) => Array.from({ length: copies }, (_, index) => ({ sku, copy: index })));
+  const printable = (
+    selected.size > 0 ? filtered.filter((sku) => selected.has(sku.id)) : filtered
+  ).flatMap((sku) => Array.from({ length: copies }, (_, index) => ({ sku, copy: index })));
 
   const toggle = (skuId: string) => {
     setSelected((prev) => {
@@ -140,7 +155,10 @@ export default function PrintTagsClient() {
 
       <div className="jewel-card p-4 print:hidden">
         <div className="relative">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Search
+            size={15}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+          />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -151,16 +169,23 @@ export default function PrintTagsClient() {
         <div className="mt-3 max-h-80 overflow-y-auto scrollbar-thin divide-y divide-border">
           {filtered.map((sku) => (
             <label key={sku.id} className="flex items-center gap-3 py-2 cursor-pointer">
-              <input type="checkbox" checked={selected.has(sku.id)} onChange={() => toggle(sku.id)} />
+              <input
+                type="checkbox"
+                checked={selected.has(sku.id)}
+                onChange={() => toggle(sku.id)}
+              />
               <span className="font-mono text-xs font-bold text-primary">{sku.skuNumber}</span>
-              <span className="text-xs text-muted-foreground">{sku.category} · {sku.material} {sku.purity}</span>
+              <span className="text-xs text-muted-foreground">
+                {sku.category} · {sku.material} {sku.purity}
+              </span>
               <span className="ml-auto text-xs text-muted-foreground">{sku.status}</span>
             </label>
           ))}
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-3 print:gap-2">
+      {/* WEB13 (QA UI-03): the grid runs over as many pages as there are tags (the print rules: the application's bars are not printed, the shell is as long as its content, a tag is never cut) */}
+      <div className="print-tags-grid flex flex-wrap gap-3 print:gap-2">
         {printable.map(({ sku, copy }) => (
           <Tag key={`${sku.id}-${copy}`} sku={sku} />
         ))}

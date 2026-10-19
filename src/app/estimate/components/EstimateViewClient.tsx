@@ -10,11 +10,15 @@ import { BUSINESS_NAME } from '@/lib/businessConfig';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { gramsShown, rupeesShown } from '@/lib/ledgerView';
 import type { Invoice } from '@/lib/mockData';
+import { getSettings } from '@/lib/settingsStore';
 
 // The saved estimates, read-only (task WEB10; spec K1, Y8, C15). A bill is never edited and never re-dated in M1: a correction is a re-issue by the owner (WEB11), so this screen has no date
 // field, no edit mode and no draft, and writes nothing. Every figure on it is the bill's row of V1 in memory (received, pending, the silver pending, the status) as the server worked it out,
 // written the same way as on the customer card and in the ledger (src/lib/ledgerView.ts). It is drawn again whenever memory changes: a poll, or a payment made in this browser or in another.
 // WEB11: the owner (and nobody else) has Cancel and Re-issue on a live bill; a cancelled bill says when and why it was cancelled, and which bill replaced it (or which one it replaces).
+// WEB13 (PLAN.md P3-T1; QA UI-04): the paper. The sheet flows over as many pages as the lines need (the print rules are in src/styles/tailwind.css: no fixed height, the header row of the table on
+// every page, a line never cut, the totals block kept whole on the last page). The shop's name, address and phone are the Settings' (`business`; layout only, every figure is still V1's), and a
+// bill with a Per Piece line of more than one piece has a Qty column, on screen and on paper (the price of one piece, how many, the line's total as the API worked it out).
 
 const STATUS_COLORS: Record<Invoice['status'], string> = {
   Paid: 'status-badge-instock',
@@ -34,6 +38,7 @@ const BILLS = [
   'bill-items',
   'receipts',
   'receipt-allocations',
+  'settings',
 ] as const;
 
 function pendingDays(invoice: Invoice) {
@@ -244,6 +249,13 @@ export default function EstimateViewClient() {
 
   const opening = invoice.openingBalance === true;
   const facts = getBillFacts(invoice.id);
+  // the shop on the paper: the Settings' own words, the prototype's name only while none is set; a blank address or phone is not printed
+  const { business } = getSettings();
+  const shopName = business.legalName.trim() || BUSINESS_NAME;
+  const shopAddress = business.address.trim();
+  const shopPhone = business.phone.trim();
+  // a Qty column only when some line is more than one piece (Per Piece, R6): a bill of single pieces prints as it always did
+  const showQuantity = invoice.items.some((item) => (item.quantity ?? 1) > 1);
   const isRetailSilverPrint =
     (invoice.saleType ?? 'Retail') === 'Retail' &&
     invoice.items.length > 0 &&
@@ -268,9 +280,24 @@ export default function EstimateViewClient() {
       </div>
 
       <section className="print-estimate-sheet bg-white border border-border rounded-xl p-6 text-foreground">
-        <div className="flex justify-between gap-4 border-b border-border pb-4">
+        <div className="print-estimate-head flex justify-between gap-4 border-b border-border pb-4">
           <div>
-            <h1 className="text-2xl font-bold">{BUSINESS_NAME}</h1>
+            <h1 data-testid="estimate-shop-name" className="text-2xl font-bold">
+              {shopName}
+            </h1>
+            {shopAddress && (
+              <p
+                data-testid="estimate-shop-address"
+                className="whitespace-pre-line text-sm text-muted-foreground"
+              >
+                {shopAddress}
+              </p>
+            )}
+            {shopPhone && (
+              <p data-testid="estimate-shop-phone" className="text-sm text-muted-foreground">
+                Phone: {shopPhone}
+              </p>
+            )}
             <p className="text-sm text-muted-foreground">
               {opening
                 ? 'Opening balance: dues brought forward.'
@@ -288,7 +315,7 @@ export default function EstimateViewClient() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 py-4">
+        <div className="print-estimate-party grid grid-cols-2 gap-4 py-4">
           <div>
             <p className="text-xs text-muted-foreground uppercase tracking-wider">Customer</p>
             <p className="font-semibold">{invoice.customerName}</p>
@@ -362,6 +389,7 @@ export default function EstimateViewClient() {
                       'GW',
                       'Customer NW',
                       'Purity',
+                      ...(showQuantity ? ['Qty'] : []),
                       'Rate',
                       'Labour/g',
                       'Labour Total',
@@ -385,6 +413,7 @@ export default function EstimateViewClient() {
                       <td className="px-3 py-3">{gramsShown(item.grossWeight)}</td>
                       <td className="px-3 py-3">{gramsShown(item.customerNetWeight)}</td>
                       <td className="px-3 py-3">{item.purity}</td>
+                      {showQuantity && <td className="px-3 py-3">{item.quantity ?? 1}</td>}
                       <td className="px-3 py-3">{rupeesShown(item.metalRate)}</td>
                       <td className="px-3 py-3">{rupeesShown(Math.round(labourPerGram(item)))}</td>
                       <td className="px-3 py-3">{rupeesShown(item.labour)}</td>
@@ -396,12 +425,12 @@ export default function EstimateViewClient() {
               </table>
             </div>
 
-            <div className="hidden print:block">
+            <div className="print-estimate-lines hidden print:block">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-muted/60 border-y border-border">
                     {(isRetailSilverPrint
-                      ? ['Design', 'SKU', 'Purity', 'Total']
+                      ? ['Design', 'SKU', 'Purity', ...(showQuantity ? ['Qty'] : []), 'Total']
                       : showLabourPerGramOnPrint
                         ? [
                             'Design',
@@ -409,6 +438,7 @@ export default function EstimateViewClient() {
                             'GW',
                             'Customer NW',
                             'Purity',
+                            ...(showQuantity ? ['Qty'] : []),
                             'Rate',
                             'Labour/g',
                             'Labour Total',
@@ -421,6 +451,7 @@ export default function EstimateViewClient() {
                             'GW',
                             'Customer NW',
                             'Purity',
+                            ...(showQuantity ? ['Qty'] : []),
                             'Rate',
                             'Labour',
                             'Piroi',
@@ -444,6 +475,7 @@ export default function EstimateViewClient() {
                       {isRetailSilverPrint ? (
                         <>
                           <td className="px-3 py-3">{item.purity}</td>
+                          {showQuantity && <td className="px-3 py-3">{item.quantity ?? 1}</td>}
                           <td className="px-3 py-3 font-bold">{rupeesShown(item.itemTotal)}</td>
                         </>
                       ) : (
@@ -451,6 +483,7 @@ export default function EstimateViewClient() {
                           <td className="px-3 py-3">{gramsShown(item.grossWeight)}</td>
                           <td className="px-3 py-3">{gramsShown(item.customerNetWeight)}</td>
                           <td className="px-3 py-3">{item.purity}</td>
+                          {showQuantity && <td className="px-3 py-3">{item.quantity ?? 1}</td>}
                           <td className="px-3 py-3">{rupeesShown(item.metalRate)}</td>
                           <td className="px-3 py-3">
                             {rupeesShown(
@@ -474,7 +507,7 @@ export default function EstimateViewClient() {
           </>
         )}
 
-        <div className="mt-5 ml-auto max-w-xs space-y-2 text-sm">
+        <div className="print-estimate-totals mt-5 ml-auto max-w-xs space-y-2 text-sm">
           <div className="flex justify-between">
             <span>Subtotal</span>
             <strong>{rupeesShown(invoice.subtotal)}</strong>
