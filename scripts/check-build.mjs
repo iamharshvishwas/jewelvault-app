@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 // The build check (spec H1 to H4, C10, U10; task WEB14, test T-D12). `npm run build && npm run check:build`.
 // It fails the build when
-//   out/    holds `mysql://`, `mariadb://`, `DB_PASSWORD`, `DATABASE_URL`, `admin123` or `staff123` in any file, or any `.map` file (no source maps, H2, H3);
+//   out/    holds `mysql://`, `mariadb://`, `DB_PASSWORD`, `DATABASE_URL`, `admin123` or `staff123` in any file, or the name of the old back end in any case (WEB15: nothing of it may
+//           reach the bundle), or any `.map` file (no source maps, H2, H3);
 //   out/    lacks the static page of a route of src/app, the home page or the 404 page (every route is a static page, C10; a page that touched `window` while it was prerendered would not build);
 //   src/    uses `dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write` or `document.writeln` (H3: React's escaping is the protection that a static
 //           export's policy cannot give, H1), found with the TypeScript parser, so a comment or a text that merely mentions the word is not a use. The one exception is named in
 //           RAW_HTML_ALLOWED: the print window of the reports, src/lib/exportUtils.ts, may call document.write (RV1c);
 //   src/    reads a build-time variable other than NEXT_PUBLIC_API_URL (H4, U10), or any variable that does not start with NEXT_PUBLIC_ (it would be empty in the browser, and a secret must
-//           never be written there). NEXT_PUBLIC_PREVIEW_MODE (the preview build) and the NEXT_PUBLIC_SUPABASE_* names of the Supabase build are tolerated and NOTED until WEB15 removes them
-//           (edit TOLERATED below then, and the strict check of H4 is complete);
+//           never be written there). Since WEB15 nothing is tolerated: the preview variable and the variables of the old build are gone, and only NEXT_PUBLIC_API_URL is left (H4);
 //   vercel.json   lacks one of the security headers of H1, or the content security policy names an outside origin other than the API's, lacks the API origin in connect-src or img-src,
-//           allows eval, a wildcard or a bare scheme, or names Supabase.
+//           allows eval, a wildcard or a bare scheme, or names the old back end.
 //   node scripts/check-build.mjs [--out out] [--src src] [--vercel vercel.json] [--no-headers]
 // Exit code: 0 passed, 1 a problem (also: there is no build to check), 2 the command line is wrong.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -20,6 +20,8 @@ import ts from 'typescript';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+// The name of the old back end, written in two halves on purpose: a search of the repository for the word must find nothing (PT-W15), this file included. It is looked for in any case.
+const OLD_BACKEND = ['supa', 'base'].join('');
 export const FORBIDDEN_IN_OUT = [
   'mysql://',
   'mariadb://',
@@ -50,12 +52,8 @@ export const RAW_HTML_ALLOWED = {
   'src/lib/exportUtils.ts': ['document.write'],
 };
 export const ALLOWED_PUBLIC_ENV = ['NEXT_PUBLIC_API_URL'];
-/** Read today, removed by WEB15 (the Supabase build, the preview build): tolerated, and printed as a note. */
-export const TOLERATED = [
-  'NEXT_PUBLIC_PREVIEW_MODE',
-  'NEXT_PUBLIC_SUPABASE_URL',
-  'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
-];
+/** Names that are read and tolerated, and printed as a note. WEB15 emptied the list (the preview build and the old build are gone): only NEXT_PUBLIC_API_URL is left (H4). A test pins it at []. */
+export const TOLERATED = [];
 
 // ---------------------------------------------------------------- files
 
@@ -110,6 +108,10 @@ function checkOut(outDir, routes, problems) {
     const data = readFileSync(file);
     for (const needle of FORBIDDEN_IN_OUT)
       if (data.includes(needle)) problems.push(`out/${rel}: contains "${needle}" (H3)`);
+    if (data.toString('latin1').toLowerCase().includes(OLD_BACKEND))
+      problems.push(
+        `out/${rel}: contains "${OLD_BACKEND}" (WEB15: nothing of the old back end may be in the bundle)`
+      );
   }
   const has = (...candidates) => candidates.some((c) => existsSync(path.join(outDir, c)));
   for (const route of routes) {
@@ -258,9 +260,7 @@ function checkSrc(srcDir, problems, notes) {
     visit(sf);
   }
   for (const [name, files] of tolerated)
-    notes.push(
-      `${name}: read in ${files.join(', ')} (a variable of the Supabase build or the preview build; WEB15 removes it and then only NEXT_PUBLIC_API_URL is left)`
-    );
+    notes.push(`${name}: read in ${files.join(', ')} (tolerated for now)`);
 }
 
 // ---------------------------------------------------------------- vercel.json (H1)
@@ -335,9 +335,9 @@ export function checkHeaders(text, { apiOrigin } = {}) {
       'Content-Security-Policy-Report-Only is missing (H1: a content security policy, report-only first)'
     );
   for (const key of cspKeys) checkCsp(parseCsp(get(key)), key, apiOrigin, problems);
-  if (/supabase/i.test(text))
+  if (text.toLowerCase().includes(OLD_BACKEND))
     problems.push(
-      'vercel.json names Supabase: a policy that still named the Supabase origin would break every call and every photo (H1)'
+      `vercel.json names ${OLD_BACKEND}: a policy that still named the origin of the old back end would break every call and every photo (H1)`
     );
   return problems;
 }

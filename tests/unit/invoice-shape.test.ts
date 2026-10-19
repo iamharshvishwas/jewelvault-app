@@ -18,9 +18,8 @@ import {
 } from './support/money-rows';
 import { FakeMoneyApi } from './support/money-server';
 
-async function load({ preview = false } = {}) {
+async function load() {
   vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', preview ? '1' : '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.test');
   const [cache, app] = await Promise.all([import('@/lib/cache/cache'), import('@/lib/appStore')]);
   return { cache: cache.rowCache, app };
@@ -382,49 +381,26 @@ describe('getCustomers() on the rows of customers and customer-balances (V2)', (
   });
 });
 
-describe('a real build cannot save a money change yet: it says so and changes nothing (WEB08 to WEB11 put each kind of save on the API)', () => {
-  it('every writing function throws and the lists stay as they were', async () => {
+describe("the prototype's local writing functions are gone: money data changes only by a call to the API (WEB15)", () => {
+  it('the store has none of them, so no screen can change the lists in this page', async () => {
     const { cache, app } = await load();
     fill(cache);
-    const before = app.getInvoices();
-    const customers = app.getCustomers();
-    const invoice = invoiceOf(app, 'JV-0004');
-    const writes: Array<[string, () => unknown]> = [
-      ['addInvoice', () => app.addInvoice({ ...invoice, id: 'new', invoiceNumber: 'JV-NEW' })],
-      ['updateInvoice', () => app.updateInvoice(invoice.id, { notes: 'changed' })],
-      ['updateInvoiceDate', () => app.updateInvoiceDate(invoice.id, '2026-10-01')],
-      ['updateCustomer', () => app.updateCustomer(id.priya, { name: 'X' })],
-      ['removeCustomer', () => app.removeCustomer(id.priya)],
-      [
-        'recordPayment',
-        () =>
-          app.recordPayment(id.priya, {
-            mode: 'Cash',
-            amount: 100,
-            date: '2026-10-15',
-            reference: '',
-            notes: '',
-          }),
-      ],
-      ['settleSilverFine', () => app.settleSilverFine(id.priya, 1, 'Silver')],
-      ['deleteRecordedPayment', () => app.deleteRecordedPayment('x')],
-      [
-        'addLedgerEntry',
-        () =>
-          app.addLedgerEntry({
-            customerId: id.priya,
-            date: '2026-10-15',
-            type: 'Payment',
-            description: 'x',
-            debit: 0,
-            credit: 1,
-            reference: '',
-          }),
-      ],
-    ];
-    for (const [name, write] of writes) expect(write, name).toThrow(/cannot be saved yet/);
-    expect(app.getInvoices()).toBe(before);
-    expect(app.getCustomers()).toBe(customers);
+    for (const name of [
+      'addInvoice',
+      'updateInvoice',
+      'updateInvoiceDate',
+      'updateCustomer',
+      'removeCustomer',
+      'recordPayment',
+      'settleSilverFine',
+      'deleteRecordedPayment',
+      'addLedgerEntry',
+    ]) {
+      expect(app, name).not.toHaveProperty(name);
+    }
+    // the lists are the same arrays until a row they are made of changes
+    expect(app.getInvoices()).toBe(app.getInvoices());
+    expect(app.getCustomers()).toBe(app.getCustomers());
   });
 
   it('the next invoice number is not made up: the server gives it when the bill is saved (C11)', async () => {
@@ -454,25 +430,6 @@ describe('a real build cannot save a money change yet: it says so and changes no
     app.getInvoices();
     app.getCustomers();
     expect(touched).toEqual([]);
-  });
-});
-
-describe('preview build: the prototype keeps its own sample data and local behaviour', () => {
-  it('starts from the sample customers and still makes a customer locally', async () => {
-    const { app } = await load({ preview: true });
-    const before = app.getCustomers().length;
-    expect(before).toBeGreaterThan(0);
-    const made = await app.addCustomer({
-      name: 'Local',
-      mobile: '9000000000',
-      email: '',
-      address: '',
-      gstNumber: '',
-      notes: '',
-    });
-    expect(made.id).toMatch(/^cust-/);
-    expect(app.getCustomers()).toHaveLength(before + 1);
-    expect(app.getNextInvoiceNumber()).toMatch(/-\d{4}-\d{4}$/);
   });
 });
 

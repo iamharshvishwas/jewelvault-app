@@ -20,7 +20,6 @@ import { sendCreateDesign, sendSkuStatus } from './cache/stock';
 import { stampMicros } from './cache/stamp';
 import { PHOTO_RULES, photoUrl, uploadPhoto, type PhotoToUpload } from './photos';
 import {
-  MOCK_DESIGNS,
   type Design,
   type Material,
   type Purity,
@@ -28,94 +27,19 @@ import {
   type Sku,
   type SkuStatus,
 } from './mockData';
-import { PREVIEW_MODE } from './previewMode';
 
 // The design store keeps its names and its synchronous reads. Where the data comes from, and where a change goes:
-//   - in a real build (spec C2, C8, C9) the designs and their pieces are made from the rows the hydrate put in memory (src/lib/cache): `getDesigns()` answers
+//   - the designs and their pieces are made (spec C2, C8, C9) from the rows the hydrate put in memory (src/lib/cache): `getDesigns()` answers
 //     from memory after the loading gate, the list is the same array until a row it is made of changes, and nothing is read from or written to browser storage.
 //     Before the gate has opened, or after a logout, memory is empty and so is the list: there is never sample data (D20);
 //   - the ordinary edit of a design and its pieces (`upsertDesign`, WEB05, C5 (a)) is shown in memory at once and written to the API: one write for each row that
 //     changed, with only the fields that changed and the exact `updated_at` text of the row the person started from (src/lib/cache/edit.ts);
 //   - a NEW design (`createDesign`, WEB06, X8) uploads its photos first and then makes one call with the ids and the person's own entries: nothing is shown until the API has
 //     answered, with ITS design number, piece numbers and barcodes (L3, C11); a change of status (`setSkuStatus`, WEB06, X9) is one call for the pieces asked, shown the same
-//     way. A removal, and the Sold of the billing screen (WEB08), still say they cannot be saved yet and change nothing;
-//   - in a preview build (src/lib/previewMode.ts, until WEB15) the store is the prototype's: sample data, in this page only. Nothing is kept in browser storage in either.
+//     way. A removal still says it cannot be saved yet and changes nothing.
 // The shapes are the prototype's (src/lib/mockData.ts): weights and amounts are numbers made from the API's text, for display; money is never worked out from them.
 
-/** The prototype's sample designs, with the three labour rates and no picture that only existed in one browser. A preview shows these; a real build never does. */
-function normalizeLabourRates(designs: Design[]): Design[] {
-  return designs.map((design) => {
-    const images = design.images.filter((image) => !image.startsWith('blob:'));
-    const primaryImage = design.primaryImage.startsWith('blob:')
-      ? images[0] || '/assets/images/no_image.png'
-      : design.primaryImage;
-
-    const skus = design.skus.map((sku) => {
-      let nextSku = sku;
-      if (sku.sellingMethod === 'By Weight' && sku.labour > 5000 && sku.customerNetWeight > 0) {
-        nextSku = { ...sku, labour: Math.round((sku.labour / sku.customerNetWeight) * 100) / 100 };
-      }
-      if (
-        nextSku.retailLabour === undefined ||
-        nextSku.semiWholesaleLabour === undefined ||
-        nextSku.wholesaleLabour === undefined
-      ) {
-        const retail = nextSku.retailLabour ?? nextSku.labour;
-        const wholesale = nextSku.wholesaleLabour ?? nextSku.labour;
-        nextSku = {
-          ...nextSku,
-          retailLabour: retail,
-          semiWholesaleLabour:
-            nextSku.semiWholesaleLabour ?? Math.round(((retail + wholesale) / 2) * 100) / 100,
-          wholesaleLabour: wholesale,
-        };
-      }
-      return nextSku;
-    });
-    const firstSkuRate = skus.find((sku) => sku.labour > 0)?.labour || design.labour;
-    const labour =
-      design.sellingMethod === 'By Weight' && design.labour > 5000 ? firstSkuRate : design.labour;
-    const retail = design.retailLabour ?? labour;
-    const wholesale = design.wholesaleLabour ?? labour;
-    return {
-      ...design,
-      images,
-      primaryImage,
-      labour,
-      retailLabour: retail,
-      semiWholesaleLabour:
-        design.semiWholesaleLabour ?? Math.round(((retail + wholesale) / 2) * 100) / 100,
-      wholesaleLabour: wholesale,
-      skus,
-    };
-  });
-}
-
-// the preview's own sample data, in this page only; a real build keeps its designs in the cache
-let _designs: Design[] = PREVIEW_MODE ? normalizeLabourRates([...MOCK_DESIGNS]) : [];
-
-function assertUniqueDesign(design: Design, existingDesigns: Design[]) {
-  if (existingDesigns.some((d) => d.id !== design.id && d.designNumber === design.designNumber)) {
-    throw new Error(`Design Number already exists: ${design.designNumber}`);
-  }
-
-  const usedSkus = new Set<string>();
-  const usedBarcodes = new Set<string>();
-  for (const existing of existingDesigns) {
-    if (existing.id === design.id) continue;
-    for (const sku of existing.skus) {
-      usedSkus.add(sku.skuNumber);
-      usedBarcodes.add(sku.barcode);
-    }
-  }
-
-  for (const sku of design.skus) {
-    if (usedSkus.has(sku.skuNumber)) throw new Error(`SKU already exists: ${sku.skuNumber}`);
-    if (usedBarcodes.has(sku.barcode)) throw new Error(`Barcode already exists: ${sku.barcode}`);
-  }
-}
-
-// ── the designs made from memory (a real build) ───────────────────────────────
+// ── the designs made from memory ──────────────────────────────────────────────
 
 const NO_IMAGE = '/assets/images/no_image.png';
 /** What the view is made from: when one of these resources changes, the view is made again. */
@@ -295,19 +219,8 @@ function currentView(): StockView {
   return value;
 }
 
-/** A real build cannot save a change to the stock yet: say so, change nothing. A preview changes its own sample data. */
-function assertWritable(what: string): void {
-  if (!PREVIEW_MODE) throw savingNotAvailable(what);
-}
-
 export function getDesigns(): Design[] {
-  return PREVIEW_MODE ? _designs : currentView().designs;
-}
-
-export function addDesign(design: Design): void {
-  assertWritable('A new design');
-  assertUniqueDesign(design, _designs);
-  _designs = [design, ..._designs];
+  return currentView().designs;
 }
 
 // ── the ordinary edit of a design and its pieces (WEB05, C5 (a)) ─────────────────────────────────
@@ -438,14 +351,6 @@ function stampOf(object: object, resource: EditableResource, id: string): string
  * stops the rest (they are rolled back); the rows already written stay saved. Resolves with how many rows were written; throws a SaveError (src/lib/cache/edit.ts).
  */
 export async function upsertDesign(design: Design, base?: Design): Promise<number> {
-  if (PREVIEW_MODE) {
-    assertUniqueDesign(design, _designs);
-    const exists = _designs.some((d) => d.id === design.id);
-    _designs = exists
-      ? _designs.map((d) => (d.id === design.id ? design : d))
-      : [design, ..._designs];
-    return 1;
-  }
   const from = base ?? currentView().designs.find((d) => d.id === design.id);
   if (!from) throw new Error('That design is not in stock.');
   // everything that can be refused is refused before anything is shown or sent
@@ -637,7 +542,6 @@ export async function createDesign(
   input: NewDesignInput,
   options: { idempotencyKey?: string; onProgress?: (message: string) => void } = {}
 ): Promise<CreatedDesign> {
-  if (PREVIEW_MODE) throw savingNotAvailable('A new design');
   const body = createDesignBody(input); // everything that can be refused is refused before anything goes out
   const session = rowCache.generation();
   for (const [at, photo] of input.photos.entries()) {
@@ -714,7 +618,6 @@ export async function setSkuStatus(
   status: SkuStatus,
   options: { note?: string; idempotencyKey?: string } = {}
 ): Promise<SkuRow[]> {
-  if (PREVIEW_MODE) throw savingNotAvailable('A change of status');
   if (status === 'Sold')
     throw refused('A piece becomes Sold when a bill is saved, not here. Nothing was changed.');
   if (skuIds.length === 0) throw refused('No piece was chosen. Nothing was changed.');
@@ -732,79 +635,18 @@ export async function setSkuStatus(
   return answer.skus;
 }
 
-export function removeDesign(id: string): void {
-  assertWritable('Removing a design');
-  _designs = _designs.filter((d) => d.id !== id);
+/** A removal cannot be saved yet: the screens that offer one get the plain message, and nothing changes. */
+export function removeDesign(_id: string): void {
+  throw savingNotAvailable('Removing a design');
 }
 
-export function removeDesigns(ids: Set<string>): void {
-  assertWritable('Removing designs');
-  _designs = _designs.filter((d) => !ids.has(d.id));
-}
-
-export function removeSku(skuId: string): { removed: boolean; removedDesignId?: string } {
-  assertWritable('Removing a piece');
-  let removed = false;
-  let removedDesignId: string | undefined;
-
-  _designs = _designs
-    .map((design) => {
-      const skus = design.skus.filter((sku) => sku.id !== skuId);
-      if (skus.length !== design.skus.length) {
-        removed = true;
-        if (skus.length === 0) removedDesignId = design.id;
-        return { ...design, skus };
-      }
-      return design;
-    })
-    .filter((design) => design.skus.length > 0);
-
-  return { removed, removedDesignId };
+export function removeDesigns(_ids: Set<string>): void {
+  throw savingNotAvailable('Removing designs');
 }
 
 export function findSkuByCode(code: string) {
-  const normalized = code.trim().toLowerCase();
-  if (!PREVIEW_MODE) return currentView().byCode.get(normalized) ?? null;
-  for (const design of _designs) {
-    const sku = design.skus.find(
-      (s) => s.skuNumber.toLowerCase() === normalized || s.barcode.toLowerCase() === normalized
-    );
-    if (sku) return { design, sku };
-  }
-  return null;
-}
-
-export function updateSkuStatus(skuId: string, status: SkuStatus): void {
-  assertWritable('A change of status');
-  let changed = false;
-  _designs = _designs.map((design) => {
-    const skus = design.skus.map((sku) => {
-      if (sku.id !== skuId) return sku;
-      changed = true;
-      return { ...sku, status };
-    });
-    return changed ? { ...design, skus } : design;
-  });
+  return currentView().byCode.get(code.trim().toLowerCase()) ?? null;
 }
 
 /** What a screen shows where a number will be, until the server has made it (L3, C11). */
 export const NUMBER_ASSIGNED_WHEN_SAVED = 'Number assigned when saved';
-
-/**
- * The design number a screen shows before the design is saved. A real build does not know it: the number is made by the database in the same transaction that creates the
- * design (L3), and the cache never makes up a number (C11), so the screen says that it will be assigned when saved. A preview has no database and counts in its sample data.
- */
-export function reserveNextDesignNumber(category: string, prefix: string): string {
-  if (!PREVIEW_MODE) return NUMBER_ASSIGNED_WHEN_SAVED;
-  const used = _designs
-    .filter((d) => d.category === category && d.designNumber.startsWith(`${prefix}-`))
-    .map((d) => Number(d.designNumber.split('-').at(-1)))
-    .filter((n) => Number.isFinite(n));
-  const next = Math.max(0, ...used) + 1;
-  return `${prefix}-${String(next).padStart(5, '0')}`;
-}
-
-export function resetLocalDesignData(): void {
-  assertWritable('Resetting the stock');
-  _designs = [...MOCK_DESIGNS];
-}

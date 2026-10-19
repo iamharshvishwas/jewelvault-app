@@ -18,12 +18,8 @@ coverage/
 test-results/
 playwright-report/
 
-# Local Supabase CLI scratch files
-supabase/.temp/
-supabase/.branches/
-
-# Work folders of the per-agent lanes: the Supabase stack (scripts/lane.mjs: a generated config per lane, logs, a copy of .env.local) and the end-to-end
-# lane (scripts/e2e-lane.mjs, WEB00: logs, a pid file and .env.local with the lane's test logins and admin token). Never committed.
+# Work folders of the end-to-end lanes (scripts/e2e-lane.mjs, WEB00: logs, a pid file and .env.local with the lane's test logins and admin token) and of the verify logs
+# (scripts/verify.mjs). Never committed.
 .lanes/
 
 # Logs

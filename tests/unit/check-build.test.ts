@@ -17,6 +17,9 @@ import {
 // if a route has no static page, or if the code reads a build-time variable other than NEXT_PUBLIC_API_URL. These tests run it on small made-up folders, so each rule is shown
 // failing on a planted violation and passing when it is removed; the real build (npm run build && npm run check:build) is run by hand and by `verify` (WEB00).
 
+// The old back end's name is written in two halves: a search of the repository for the word must find nothing (PT-W15), these tests included.
+const OLD = ['supa', 'base'].join('');
+
 const dirs: string[] = [];
 afterAll(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
@@ -85,6 +88,16 @@ describe('T-D12 check-build: out/ (H2, H3)', () => {
       expect(r.ok).toBe(false);
       expect(r.problems).toContainEqual(expect.stringContaining(`_next/static/chunks/app.js`));
       expect(r.problems.join('\n')).toContain(needle);
+    }
+  );
+
+  it.each([OLD, OLD.toUpperCase(), `${OLD[0].toUpperCase()}${OLD.slice(1)}`])(
+    'a planted %s in a built file fails, in any case: nothing of the old back end may reach the bundle (WEB15)',
+    (needle) => {
+      const r = run({ ...CLEAN_OUT, '_next/static/chunks/app.js': `var x = "${needle}";` });
+      expect(r.ok).toBe(false);
+      expect(r.problems).toContainEqual(expect.stringContaining(`_next/static/chunks/app.js`));
+      expect(r.problems.join('\n').toLowerCase()).toContain(OLD);
     }
   );
 
@@ -162,7 +175,7 @@ describe('T-D12 check-build: src/ (H3, H4, U10)', () => {
     expect(r.problems).toEqual([]);
   });
 
-  it('reads a build-time variable other than NEXT_PUBLIC_API_URL: fails; the preview switch and the legacy Supabase names (until WEB15) are noted, not failed', () => {
+  it('reads a build-time variable other than NEXT_PUBLIC_API_URL: fails, and nothing is tolerated any more (WEB15)', () => {
     const planted = run(
       CLEAN_OUT,
       withSrc('lib/env.ts', 'export const x = process.env.NEXT_PUBLIC_ANALYTICS_ID;')
@@ -183,16 +196,21 @@ describe('T-D12 check-build: src/ (H3, H4, U10)', () => {
       )
     );
     expect(destructured.ok).toBe(false);
+    // the two variables of the builds that were removed fail like any other, and are not even noted
+    for (const name of ['NEXT_PUBLIC_PREVIEW_MODE', `NEXT_PUBLIC_${OLD.toUpperCase()}_URL`]) {
+      const old = run(CLEAN_OUT, withSrc('lib/env.ts', `export const a = process.env.${name};`));
+      expect(old.ok, name).toBe(false);
+      expect(old.problems.join('\n'), name).toContain(name);
+    }
     const fine = run(
       CLEAN_OUT,
       withSrc(
         'lib/env.ts',
-        "export const a = process.env.NEXT_PUBLIC_PREVIEW_MODE === '1'; export const b = process.env.NODE_ENV; export const c = process.env.NEXT_PUBLIC_SUPABASE_URL;"
+        'export const a = process.env.NEXT_PUBLIC_API_URL; export const b = process.env.NODE_ENV;'
       )
     );
     expect(fine.problems).toEqual([]);
-    expect(fine.notes.join('\n')).toMatch(/NEXT_PUBLIC_SUPABASE_URL.*WEB15/);
-    expect(fine.notes.join('\n')).toMatch(/NEXT_PUBLIC_PREVIEW_MODE/);
+    expect(fine.notes).toEqual([]);
   });
 });
 
@@ -272,12 +290,8 @@ describe('PT-RV1c the build check cannot lose its pin: the lists (RV1-8 (a), A18
     expect(ALLOWED_PUBLIC_ENV).toEqual(['NEXT_PUBLIC_API_URL']);
   });
 
-  it('the names tolerated until WEB15 are these three and no more; WEB15 sets TOLERATED to [] and changes this line with it', () => {
-    expect(TOLERATED).toEqual([
-      'NEXT_PUBLIC_PREVIEW_MODE',
-      'NEXT_PUBLIC_SUPABASE_URL',
-      'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
-    ]);
+  it('no name is tolerated: WEB15 emptied the list, so only NEXT_PUBLIC_API_URL is left (H4)', () => {
+    expect(TOLERATED).toEqual([]);
   });
 
   it('no name is on both lists, so a tolerated name never becomes a silent one', () => {
@@ -287,7 +301,8 @@ describe('PT-RV1c the build check cannot lose its pin: the lists (RV1-8 (a), A18
   it.each([
     'NEXT_PUBLIC_SECRET_THING',
     'NEXT_PUBLIC_API_URL_OLD',
-    'NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY',
+    `NEXT_PUBLIC_${OLD.toUpperCase()}_SERVICE_ROLE_KEY`,
+    'NEXT_PUBLIC_PREVIEW_MODE',
     'API_URL',
   ])('reading %s fails: only the pinned name is silent, and a name next to it is not', (name) => {
     const r = run(CLEAN_OUT, {
@@ -514,12 +529,6 @@ describe('PT-RV1c the print window is allowed by name, and only it (RV1-8 (b))',
 });
 
 describe('T-D12 pending (each is listed in the report of WEB14)', () => {
-  it.todo(
-    'the only build-time variable read in src/ is NEXT_PUBLIC_API_URL: the Supabase names and the preview switch go with WEB15 (until then they are noted, not failed)'
-  );
-  it.todo(
-    'the real build of the API-backed front end (WEB02 and WEB01 in place) passes npm run build && npm run check:build with and without NEXT_PUBLIC_PREVIEW_MODE, and the built login screen holds no credential or hint'
-  );
   it.todo(
     "the API's own response headers on the API host (helmet, API07's test) and on the real API host (OPS04)"
   );

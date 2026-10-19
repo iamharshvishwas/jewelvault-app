@@ -384,9 +384,8 @@ function books(): Book {
 
 // ================================================================================================ the world: the real store over the fake server, the screens over the store
 
-async function load({ preview = false } = {}) {
+async function load() {
   vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', preview ? '1' : '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.test');
   const server = new FakeMoneyApi();
   vi.stubGlobal('fetch', server.fetch);
@@ -515,7 +514,7 @@ describe('PT-W10 one way to write a figure on all three screens (C14)', () => {
     expect(view.sumGrams([])).toBe(0);
   });
 
-  it('every kind of V3 has its words; an entry with no kind (a preview) keeps the prototype type; the payments tab keeps money and silver received', async () => {
+  it('every kind of V3 has its words; an entry with no kind keeps the prototype type; the payments tab keeps money and silver received', async () => {
     const view = await import('@/lib/ledgerView');
     const label = (kind: string) =>
       view.ledgerKindLabel({ kind: kind as never, type: 'Adjustment' });
@@ -679,8 +678,8 @@ describe('PT-W10 the ledger table: one row per event of V3, with the running bal
     expect(plain(await w.ledgerTable(uuid(5199)))).toContain('No ledger entries yet');
   });
 
-  it('a preview build (sample entries with no kind) still shows the prototype type', async () => {
-    const w = await load({ preview: true });
+  it('an entry with no kind still shows the prototype type', async () => {
+    const w = await load();
     const html = (await import('react-dom/server')).renderToStaticMarkup(
       (await import('react')).createElement(
         (await import('@/app/customer-ledger/components/CustomerLedgerTable')).default,
@@ -800,41 +799,11 @@ describe('PT-W10 the customer card shows the figures of V2', () => {
     expect(plain(await w.card(asha))).toMatch(/Ledger\s*4\b/);
   });
 
-  it('a real build offers no delete of a customer or of a payment (they cannot be saved: a payment is voided, WEB11)', async () => {
+  it('the card offers no delete of a customer or of a payment (they cannot be saved: a payment is voided, WEB11)', async () => {
     const w = await load();
     const html = await w.card(meera);
     expect(plain(html)).not.toContain('Delete Customer');
     expect(plain(html)).not.toMatch(/\bDelete\b/);
-  });
-
-  it('a preview build keeps the prototype: the card offers Delete Customer', async () => {
-    const w = await load({ preview: true });
-    const detail = (await import('@/app/customer-ledger/components/CustomerDetail')).default;
-    const react = await import('react');
-    const dom = await import('react-dom/server');
-    const html = dom.renderToStaticMarkup(
-      react.createElement(detail, {
-        customer: {
-          id: 'c-1',
-          name: 'Sample',
-          mobile: '9000000000',
-          customerType: 'Retail',
-          email: '',
-          address: '',
-          gstNumber: '',
-          notes: '',
-          totalPurchases: 1000,
-          totalReceived: 400,
-          outstanding: 600,
-          outstandingSilverFine: 0,
-          lastPurchase: '',
-          createdAt: '',
-        },
-      })
-    );
-    expect(plain(html)).toContain('Delete Customer');
-    expect(textOf(html, 'cs-outstanding')).toBe('₹600');
-    expect(w.app).toBeDefined();
   });
 });
 

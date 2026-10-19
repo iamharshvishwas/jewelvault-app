@@ -30,9 +30,8 @@ const SRC = path.resolve(__dirname, '../../src');
 
 // ------------------------------------------------------------------------------------------------ the world of a case
 
-async function world({ preview = false, role = 'owner' as 'owner' | 'staff' } = {}) {
+async function world({ role = 'owner' as 'owner' | 'staff' } = {}) {
   vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', preview ? '1' : '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', API);
   vi.stubGlobal('window', {});
   const server = new FakeStockServer();
@@ -873,12 +872,6 @@ describe('PT-W6 set_sku_status (X9) from the stock screen: one call, the pieces 
     await w.designs.setSkuStatus([pieceId(1)], 'Damaged', { idempotencyKey: key });
     expect(w.server.calls.map((c) => c.headers['idempotency-key'])).toEqual([key, key]);
     expect(w.cache.get('skus', pieceId(1))?.status).toBe('Damaged');
-  });
-
-  it("updateSkuStatus (the billing screen's Sold, WEB08) is not this function and still says it cannot be saved yet in a real build", async () => {
-    const w = await world();
-    stocked(w);
-    expect(() => w.designs.updateSkuStatus(pieceId(1), 'Sold')).toThrow(/cannot be saved yet/);
   });
 });
 

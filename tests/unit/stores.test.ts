@@ -6,7 +6,7 @@
 //   T-C01  (clause) the browser cache never makes up an id or a number except a new design's id (C11)
 //
 // The stores are the real ones over the real API client; only `fetch` is a stand-in (tests/unit/support/editServer.ts, which answers as API13 and API13b do).
-// They read the flag of the preview build when they load, so each case imports a fresh copy of them over a fake `window`.
+// Each case imports a fresh copy of them over a fake `window`.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
@@ -56,9 +56,8 @@ function fakeStorage() {
   return { api, data, touched };
 }
 
-async function world({ preview = false } = {}) {
+async function world() {
   vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', preview ? '1' : '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'http://localhost:4229');
   const local = fakeStorage();
   const session = fakeStorage();
@@ -862,31 +861,6 @@ describe('PT-W5 the daily rates: a rate per day, material and purity; an insert 
   });
 });
 
-describe('PT-W5 the preview build keeps working in memory, with nothing in browser storage', () => {
-  it('an edit of a piece, a category and the settings changes the sample data for the session and calls no server', async () => {
-    const w = await world({ preview: true });
-    const design = w.designs.getDesigns()[0];
-    const draft = structuredClone(design);
-    draft.designName = 'Changed in the preview';
-    await w.designs.upsertDesign(draft, design);
-    expect(w.designs.getDesigns().find((d) => d.id === design.id)?.designName).toBe(
-      'Changed in the preview'
-    );
-    await expect(w.catalog.createCategory('Preview category', 'PRV')).resolves.toBe(
-      'Preview category'
-    );
-    expect(w.catalog.getCategories()).toContain('Preview category');
-    const settings = w.settings.getSettings();
-    await w.settings.saveSettings({
-      ...settings,
-      estimate: { ...settings.estimate, prefix: 'PV' },
-    });
-    expect(w.settings.getSettings().estimate.prefix).toBe('PV');
-    expect(w.server.calls).toEqual([]);
-    expect(w.storageTouched()).toEqual([]);
-  });
-});
-
 // ================================================================================================ T-E05
 
 /** The `.ts` and `.tsx` files under a folder of src, without tests. */
@@ -979,7 +953,7 @@ describe('T-E05 (WEB05 clause) no business data in browser storage once the stoc
     }
   });
 
-  it('the files of src that still use browser storage are the ones other tasks own: the money side (WEB07), the hidden order book and the Supabase client (WEB15)', () => {
+  it('the one file of src that still uses browser storage is the hidden order book (the money side, appStore, keeps nothing there since WEB15)', () => {
     const using = sourceFiles(SRC)
       .filter((file) => {
         const { identifiers } = codeWords(file);
@@ -987,7 +961,7 @@ describe('T-E05 (WEB05 clause) no business data in browser storage once the stoc
       })
       .map(rel)
       .sort();
-    expect(using).toEqual(['lib/appStore.ts', 'lib/orderStore.ts']);
+    expect(using).toEqual(['lib/orderStore.ts']);
   });
 });
 
@@ -1074,9 +1048,9 @@ describe("T-C01 (WEB05 clause) the browser cache never makes up an id or a numbe
   it('the number a screen shows for a design that is not saved yet is not a number: "Number assigned when saved"', async () => {
     const w = await world();
     fillShop(w);
-    // RING-00001 exists; a cache that counted would say RING-00002
-    expect(w.designs.reserveNextDesignNumber('Ring', 'RING')).toBe('Number assigned when saved');
-    expect(w.designs.reserveNextDesignNumber('Earrings', 'ER')).toBe('Number assigned when saved');
+    // RING-00001 exists; a cache that counted would say RING-00002: the store has no function that counts (WEB15 deleted the preview's), only the words
+    expect(w.designs.NUMBER_ASSIGNED_WHEN_SAVED).toBe('Number assigned when saved');
+    expect(w.designs).not.toHaveProperty('reserveNextDesignNumber');
   });
 
   it('the stock side of the code has no way to make an id or a number: no random, no clock-made id, no key', () => {

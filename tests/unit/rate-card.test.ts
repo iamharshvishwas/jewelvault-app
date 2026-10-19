@@ -11,7 +11,6 @@ let role: 'owner' | 'biller' | 'staff' | null = 'owner';
 async function draw(who: typeof role, rates: Array<Parameters<typeof rateRow>[1]> = []) {
   role = who;
   vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
   vi.doMock('@/lib/authStore', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/lib/authStore')>()),
     useSession: () => ({ role }),

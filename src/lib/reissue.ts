@@ -18,7 +18,6 @@ import {
 } from './billing';
 import { findSkuByCode } from './designStore';
 import type { Customer } from './mockData';
-import { PREVIEW_MODE } from './previewMode';
 import { getDailyRates } from './settingsStore';
 
 export interface ReissueReady {
@@ -60,8 +59,6 @@ const blankIfZero = (text: string): string => (/[1-9]/.test(text) ? text : '');
 
 /** What the billing screen starts from to correct `billId`, or the sentence that says why it cannot. `role` is the signed-in role. */
 export function prepareReissue(billId: string, role: string | null): ReissueSetup {
-  if (PREVIEW_MODE)
-    return refused('Re-issuing needs the server, which this preview does not have.');
   if (role !== 'owner') return refused('Only the owner can re-issue an estimate.');
   const facts = getBillFacts(billId);
   const source = getBillSource(billId);

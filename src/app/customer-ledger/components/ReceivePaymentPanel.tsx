@@ -2,15 +2,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, Loader2, CheckCircle } from 'lucide-react';
 import SaveButton from '@/components/ui/SaveButton';
-import type { Customer, Invoice, Payment } from '@/lib/mockData';
+import type { Customer, Invoice } from '@/lib/mockData';
 import {
   forgetPaymentTries,
   getBillsOfCustomer,
   getCustomerBooks,
-  recordPayment as recordPaymentInPreview,
   saveFineSettlement,
   savePayment,
-  settleSilverFine as settleFineInPreview,
 } from '@/lib/appStore';
 import { useSession } from '@/lib/authStore';
 import { PAYMENT_MODES, WALK_IN_ID, inr } from '@/lib/billing';
@@ -29,7 +27,6 @@ import {
   type SavedFine,
   type SavedPayment,
 } from '@/lib/payments';
-import { PREVIEW_MODE } from '@/lib/previewMode';
 import { LIMITS, formatGrams, formatRupees, parseGrams, parseRupees } from '@/lib/pricing';
 import { FineSaved, PaymentSaved } from './PaymentSaved';
 
@@ -37,11 +34,10 @@ import { FineSaved, PaymentSaved } from './PaymentSaved';
 // (X3) with an Idempotency-Key for each user action (the same key when the same payment is saved again after a call that did not end well), shows a saving state, shows the result only
 // from the API's answer (each bill the money went to, what is kept as advance, the fine that is left), and says in plain words why a save was refused. After the write the client polls
 // at once (C17), so the customer's outstanding and advance in this panel and on the card are read again from the server. The five payment modes of D13 are the only ones: there is no Credit.
-// A preview build (src/lib/previewMode.ts) keeps the prototype's own local payment.
 
 interface ReceivePaymentPanelProps {
   customer: Customer;
-  /** The prototype's list of the customer's invoices, kept so that the card need not change. A real build reads the customer's bills (the opening-balance bill included) itself. */
+  /** The prototype's list of the customer's invoices, kept so that the card need not change. The panel reads the customer's bills (the opening-balance bill included) itself. */
   invoices?: Invoice[];
   onClose: () => void;
 }
@@ -50,8 +46,7 @@ type Kind = 'Amount' | 'Fine Silver' | 'Fine Cash';
 
 type Done =
   | { type: 'payment'; saved: SavedPayment; polls: number }
-  | { type: 'fine'; saved: SavedFine; polls: number }
-  | { type: 'preview'; kind: Kind; amount: number; fine: number };
+  | { type: 'fine'; saved: SavedFine; polls: number };
 
 /** The starting text of a field from a figure of the card: blank for nothing owed. */
 function startingText(value: number, scale: 2 | 3): string {
@@ -125,51 +120,6 @@ export default function ReceivePaymentPanel({ customer, onClose }: ReceivePaymen
     setFailure(null);
   };
 
-  /** The prototype's own save, for the preview build only: no server, the books are changed in this page at once. */
-  const saveInPreview = () => {
-    try {
-      if (kind === 'Amount') {
-        const value = Number(amount);
-        if (!(value > 0)) throw new Error('Amount must be greater than 0.');
-        recordPaymentInPreview(
-          customer.id,
-          {
-            mode: mode as Payment['mode'],
-            amount: value,
-            date: new Date().toISOString(),
-            reference,
-            notes,
-          },
-          billId || undefined
-        );
-        setDone({ type: 'preview', kind, amount: value, fine: 0 });
-      } else {
-        const value = Number(grams);
-        const rateValue = Number(rate);
-        if (!(value > 0)) throw new Error('Fine grams must be greater than 0.');
-        if (kind === 'Fine Cash' && !(rateValue > 0))
-          throw new Error('Silver rate must be greater than 0.');
-        settleFineInPreview(
-          customer.id,
-          value,
-          kind === 'Fine Cash' ? 'Cash' : 'Silver',
-          kind === 'Fine Cash' ? rateValue : undefined,
-          billId || undefined
-        );
-        setDone({
-          type: 'preview',
-          kind,
-          amount: kind === 'Fine Cash' ? value * rateValue : 0,
-          fine: value,
-        });
-      }
-    } catch (error) {
-      setFailure(
-        refusedOnScreen(error instanceof Error ? error.message : 'The payment could not be saved.')
-      );
-    }
-  };
-
   /** Runs one save: the saving state, the answer shown only when it has come, the plain sentence when it has not. A second call while one is on its way is ignored (C6). */
   const send = async (call: () => Promise<Done>) => {
     inFlight.current = true;
@@ -189,10 +139,6 @@ export default function ReceivePaymentPanel({ customer, onClose }: ReceivePaymen
   // that did not end well, C6, L5), and shows the result only from the API's answer. On a failure it says why, in plain words, and changes nothing.
   const handleSave = async () => {
     if (inFlight.current || done) return;
-    if (PREVIEW_MODE) {
-      saveInPreview();
-      return;
-    }
     const cashOverrideReason = role === 'owner' ? cashReason : '';
     if (kind === 'Amount') {
       const built = buildPaymentBody({
@@ -267,40 +213,6 @@ export default function ReceivePaymentPanel({ customer, onClose }: ReceivePaymen
         />
       ) : done?.type === 'fine' ? (
         <FineSaved customerName={customer.name} saved={done.saved} onClose={onClose} />
-      ) : done?.type === 'preview' ? (
-        <div className="text-center py-4">
-          <CheckCircle size={24} className="text-emerald-600 mx-auto mb-2" />
-          <p className="font-semibold text-foreground">Payment Recorded</p>
-          {done.kind === 'Amount' ? (
-            <>
-              <p className="text-xs text-muted-foreground mt-1">
-                ₹{done.amount.toLocaleString('en-IN')} received from {customer.name}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Remaining amount outstanding: ₹
-                {Math.max(0, customer.outstanding - done.amount).toLocaleString('en-IN')}
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="text-xs text-muted-foreground mt-1">
-                {done.fine.toFixed(3)} g silver fine settled for {customer.name}
-              </p>
-              {done.kind === 'Fine Cash' && (
-                <p className="text-xs text-muted-foreground">
-                  Cash equivalent: ₹{Math.round(done.amount).toLocaleString('en-IN')}
-                </p>
-              )}
-              <p className="text-xs text-muted-foreground">
-                Remaining silver fine:{' '}
-                {Math.max(0, (customer.outstandingSilverFine ?? 0) - done.fine).toFixed(3)} g
-              </p>
-            </>
-          )}
-          <button type="button" onClick={onClose} className="btn-secondary mt-3 py-2 text-xs">
-            Close
-          </button>
-        </div>
       ) : (
         <form
           onSubmit={(event) => {

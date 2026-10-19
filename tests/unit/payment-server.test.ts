@@ -438,9 +438,8 @@ describe('T-E06 (unit half) and T-B11, T-B12, T-B13 (screen half): settle_fine',
 
 // ------------------------------------------------------------------------------------------------ appStore
 
-async function storeWorld({ preview = false } = {}) {
+async function storeWorld() {
   vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', preview ? '1' : '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'http://localhost:4229');
   const server = new FakePaymentApi();
   vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
@@ -472,13 +471,6 @@ describe('appStore.savePayment and saveFineSettlement (C5 (b), L5)', () => {
     const settled = await w.app.saveFineSettlement(id.priya, fine('2.000'));
     expect(settled.fine_remaining).toBe('3.000');
     w.app.forgetPaymentTries();
-  });
-
-  it("a preview build has no server: both reject, and the panel saves the prototype's own entry", async () => {
-    const w = await storeWorld({ preview: true });
-    await expect(w.app.savePayment(id.priya, pay())).rejects.toThrow(/cannot be saved yet/);
-    await expect(w.app.saveFineSettlement(id.priya, fine())).rejects.toThrow(/cannot be saved yet/);
-    expect(w.server.seen).toHaveLength(0);
   });
 });
 

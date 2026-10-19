@@ -48,4 +48,6 @@ const { apiUrl, webOrigin, adminToken } = e2eLane();
 - A test that needs a user of its own (a must-change user, a deactivated one) makes it through the admin door with `adminToken`: `POST {apiUrl}/admin/v1/users` with `Authorization: Bearer <token>` and no `Origin` header, so from the test process and not from the page.
 - Specs run one at a time (`workers: 1`) on one database: a spec that changes shared data puts it back or makes its own.
 
-`harness.spec.ts` is PT-W0: the lane is up, a page of the site logs in as each role and reads `me`, the cookie is kept and sent, a logout ends the session, and a wrong password is refused. The Supabase-era `login.spec.ts` was removed together with the Supabase global setup it depended on; WEB02 writes the new one for the real login screen.
+`harness.spec.ts` is PT-W0: the lane is up, a page of the site logs in as each role and reads `me`, the cookie is kept and sent, a logout ends the session, and a wrong password is refused. `login.spec.ts` is the real login screen (WEB02).
+
+`no-preview.spec.ts` is PT-W15: it makes a production build with `NEXT_PUBLIC_PREVIEW_MODE=1` (a variable nothing reads any more), runs the build check on it, serves `out/` and opens it in Chromium: the login screen comes first, with no app, no sample data and no preview note. The API address is answered by the spec itself (nobody is signed in), because the lane's API allows only the dev server's origin. It rewrites `out/` and `.next/` of the checkout it runs in.

@@ -28,7 +28,7 @@
 // ("Waking up…") and is retried by the client for up to 30 seconds, and any answer from the API clears it. Reads go on from memory; every Save control is off while there is a banner
 // (`useSavingAllowed`). This poller only has to keep trying.
 //
-// Nothing here is kept in browser storage (C8), and nothing runs in a preview build (the hydrate never becomes ready there).
+// Nothing here is kept in browser storage (C8).
 import { useSyncExternalStore } from 'react';
 import {
   POLL_INTERVAL_MS,

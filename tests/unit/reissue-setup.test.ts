@@ -16,7 +16,6 @@ import { categoryRow, designRow, rateRow, settingRow, skuRow } from './support/r
 
 async function world() {
   vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
   const [{ rowCache }, reissue] = await Promise.all([
     import('@/lib/cache/cache'),
     import('@/lib/reissue'),

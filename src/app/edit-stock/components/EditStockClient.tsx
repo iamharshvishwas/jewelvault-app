@@ -2,15 +2,14 @@
 
 import React, { useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { Archive, ArrowLeft, Save, Trash2 } from 'lucide-react';
+import { Archive, ArrowLeft, Save } from 'lucide-react';
 import SaveButton from '@/components/ui/SaveButton';
-import { PREVIEW_MODE, useSession } from '@/lib/authStore';
+import { useSession } from '@/lib/authStore';
 import { getCategories, getSubcategories } from '@/lib/catalogStore';
 import { useSavingAllowed } from '@/lib/api/connection';
 import { SaveError } from '@/lib/cache/edit';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
-import { getDesigns, removeSku, setSkuStatus, upsertDesign } from '@/lib/designStore';
+import { getDesigns, setSkuStatus, upsertDesign } from '@/lib/designStore';
 import { getLocations } from '@/lib/settingsStore';
 import type { Design, Material, Purity, SellingMethod, Sku, SkuStatus } from '@/lib/mockData';
 
@@ -59,7 +58,6 @@ interface WorkingCopy {
 }
 
 export default function EditStockClient() {
-  const router = useRouter();
   const { role } = useSession();
   const isOwner = role === 'owner';
   const savingAllowed = useSavingAllowed();
@@ -168,30 +166,6 @@ export default function EditStockClient() {
     )
       return;
     void changeStatus(sku, 'Archived');
-  };
-
-  const deleteSku = (sku: Sku) => {
-    const message =
-      design.skus.length === 1
-        ? `Delete ${sku.skuNumber}? This is the last SKU, so the full design will also be removed.`
-        : `Delete SKU ${sku.skuNumber}? This cannot be undone.`;
-    if (!window.confirm(message)) return;
-
-    const result = removeSku(sku.id);
-    if (!result.removed) {
-      alert('SKU was not found in saved stock.');
-      return;
-    }
-
-    if (result.removedDesignId) {
-      setWork(null);
-      router.push('/inventory-management');
-      return;
-    }
-
-    setSaved('');
-    setNotice(`${sku.skuNumber} deleted from stock.`);
-    edit((draft) => ({ ...draft, skus: draft.skus.filter((item) => item.id !== sku.id) }));
   };
 
   // the places a piece can be: the setting of the shop, and the one the piece has now if that is not on the list
@@ -362,32 +336,25 @@ export default function EditStockClient() {
                       className="input-field text-xs w-36"
                       value={sku.status}
                       disabled={
-                        !PREVIEW_MODE &&
-                        (!savingAllowed ||
-                          statusBusy !== null ||
-                          work !== null ||
-                          sku.status === 'Sold')
+                        !savingAllowed ||
+                        statusBusy !== null ||
+                        work !== null ||
+                        sku.status === 'Sold'
                       }
                       title={
-                        PREVIEW_MODE
-                          ? undefined
-                          : sku.status === 'Sold'
-                            ? 'A sold piece is changed by cancelling or re-issuing its bill.'
-                            : work !== null
-                              ? 'Save your changes first, then change the status.'
-                              : undefined
+                        sku.status === 'Sold'
+                          ? 'A sold piece is changed by cancelling or re-issuing its bill.'
+                          : work !== null
+                            ? 'Save your changes first, then change the status.'
+                            : undefined
                       }
-                      onChange={(e) => {
-                        const status = e.target.value as SkuStatus;
-                        if (PREVIEW_MODE) updateSku(sku.id, 'status', status);
-                        else void changeStatus(sku, status);
-                      }}
+                      onChange={(e) => void changeStatus(sku, e.target.value as SkuStatus)}
                     >
-                      {STATUSES.filter(
-                        (status) => PREVIEW_MODE || status !== 'Sold' || sku.status === 'Sold'
-                      ).map((status) => (
-                        <option key={status}>{status}</option>
-                      ))}
+                      {STATUSES.filter((status) => status !== 'Sold' || sku.status === 'Sold').map(
+                        (status) => (
+                          <option key={status}>{status}</option>
+                        )
+                      )}
                     </select>
                     <select
                       aria-label={`Location of ${sku.skuNumber}`}
@@ -401,31 +368,17 @@ export default function EditStockClient() {
                       ))}
                     </select>
                     {/* nothing is deleted (S7): a piece leaves the stock by being archived (X9) */}
-                    {PREVIEW_MODE ? (
+                    {sku.status !== 'Sold' && sku.status !== 'Archived' && (
                       <SaveButton
                         type="button"
-                        onClick={() => deleteSku(sku)}
-                        className="inline-flex items-center gap-1 rounded-sm border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50"
+                        onClick={() => archiveSku(sku)}
+                        disabled={statusBusy !== null || work !== null}
+                        title={work !== null ? 'Save your changes first, then archive.' : undefined}
+                        className="inline-flex items-center gap-1 rounded-sm border border-amber-200 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-50"
                       >
-                        <Trash2 size={13} />
-                        Delete SKU
+                        <Archive size={13} />
+                        Archive
                       </SaveButton>
-                    ) : (
-                      sku.status !== 'Sold' &&
-                      sku.status !== 'Archived' && (
-                        <SaveButton
-                          type="button"
-                          onClick={() => archiveSku(sku)}
-                          disabled={statusBusy !== null || work !== null}
-                          title={
-                            work !== null ? 'Save your changes first, then archive.' : undefined
-                          }
-                          className="inline-flex items-center gap-1 rounded-sm border border-amber-200 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-50"
-                        >
-                          <Archive size={13} />
-                          Archive
-                        </SaveButton>
-                      )
                     )}
                   </div>
                 </div>
@@ -444,7 +397,7 @@ export default function EditStockClient() {
                       value={sku.originalNetWeight}
                       step="0.001"
                       privateField
-                      readOnly={!PREVIEW_MODE}
+                      readOnly
                       onChange={(value) => updateSku(sku.id, 'originalNetWeight', value)}
                     />
                   )}

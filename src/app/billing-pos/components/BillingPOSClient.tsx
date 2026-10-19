@@ -27,7 +27,6 @@ import {
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { findSkuByCode } from '@/lib/designStore';
 import { REASON_MAX, REASON_MIN } from '@/lib/ownerActions';
-import { PREVIEW_MODE } from '@/lib/previewMode';
 import { isFirstBillOfTheDay, rateConfirmationNeeded } from '@/lib/rateGuard';
 import { freedByCancel, prepareReissue, type ReissueReady, type ReissueSetup } from '@/lib/reissue';
 import { businessToday, getDailyRates, getSettings } from '@/lib/settingsStore';
@@ -120,7 +119,7 @@ function BillingScreen({ reissue }: { reissue: ReissueReady | null }) {
   useRowCacheVersion('daily-rates', 'bills');
   const session = useSession();
   const pricing = usePricingCheck();
-  const billsAllowed = PREVIEW_MODE || pricing.state === 'match';
+  const billsAllowed = pricing.state === 'match';
 
   useEffect(() => {
     const interval = setInterval(() => setCustomers(getCustomers()), 1000);
@@ -137,7 +136,7 @@ function BillingScreen({ reissue }: { reissue: ReissueReady | null }) {
   // their default: the line that waited for a rate has it, a stale rate gives way to the rate of today. A rate the person typed is left alone. Without this the question of WEB16 would
   // go away (a rate dated today exists) and the line would still carry the old rate. A bill that is being saved or has been saved keeps the figures it was sent with, and a re-issue keeps
   // the rates of the bill it corrects (they catch up when a failed save frees the screen). It is done while drawing, from the rates as text (React's way to answer a change of what the screen
-  // reads, without a frame that shows the old rate; and a preview build, which makes a new array on every read, does not run this again and again).
+  // reads, without a frame that shows the old rate).
   const ratesKey = getDailyRates()
     .map((r) => `${r.material}|${r.purity}|${r.rateDate}|${r.ratePerGram}`)
     .join(';');
@@ -412,7 +411,6 @@ function BillingScreen({ reissue }: { reissue: ReissueReady | null }) {
             notes={notes}
             onNotesChange={setNotes}
             items={items}
-            invoiceNumber={invoiceNumber}
             saleType={saleType}
             invoiceDate={invoiceDate}
             role={session.role}

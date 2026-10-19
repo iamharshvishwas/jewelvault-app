@@ -70,7 +70,7 @@ function inspect(file: string): Findings {
 }
 
 const NETWORK_CALLS = ['fetch', 'XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource'];
-const NETWORK_MODULES = [/api\/client/, /cache\/hydrate/, /supabase/];
+const NETWORK_MODULES = [/api\/client/, /cache\/hydrate/];
 /** A screen may read the session from memory (the role); it may not take anything out of the session store that signs in, signs out or asks the server. */
 const SESSION_READS = [
   'useSession',

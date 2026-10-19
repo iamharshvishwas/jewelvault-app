@@ -21,24 +21,19 @@ import {
   Package,
 } from 'lucide-react';
 import SaveButton from '@/components/ui/SaveButton';
-import { PREVIEW_MODE, useSession } from '@/lib/authStore';
+import { useSession } from '@/lib/authStore';
 import { isApiError, newUuid } from '@/lib/api/client';
 import {
-  addDesign,
   createDesign,
   designSaveMessage,
   NUMBER_ASSIGNED_WHEN_SAVED,
-  reserveNextDesignNumber,
   type CreatedDesign,
   type NewDesignInput,
 } from '@/lib/designStore';
-import type { Design, Sku, SkuStatus } from '@/lib/mockData';
-import { BUSINESS_LOCATION } from '@/lib/businessConfig';
 import {
   createCategory,
   createSubcategory,
   getCategories,
-  getCategoryPrefix,
   getSubcategories,
   suggestCategoryPrefix,
 } from '@/lib/catalogStore';
@@ -50,7 +45,6 @@ import {
   prepareImage,
   type PhotoToUpload,
 } from '@/lib/photos';
-import { getSettings } from '@/lib/settingsStore';
 
 // Add Design (spec P2, P4, X8, D9, C6, C7, C11; task WEB06).
 //   - Photos: a picture is resized in the browser when it is chosen (longest side 1000 px at JPEG quality 72 and a 320 px thumbnail: src/lib/photos.ts), and a turn is made in the
@@ -62,7 +56,6 @@ import { getSettings } from '@/lib/settingsStore';
 //   - Save is pressed again for the same action with the same Idempotency-Key when the first try could not be confirmed (C6), so one design is made; the control is off while a save
 //     runs and while the banner shows (C7).
 //   - The owner's own weight (D9) is a field for the owner only. Everybody else's screen has no such field, and the API refuses one.
-// In a preview build (until WEB15) the screen keeps the prototype's behaviour with its sample data, in this page only.
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -561,7 +554,7 @@ function DesignDetailsStep({
               className="flex-1 min-w-0 px-3 py-2 bg-card border border-input rounded-lg text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
             />
             {/* the prefix of the design numbers is written once, when the category is made (L3) */}
-            {!PREVIEW_MODE && newCategory.trim() !== '' && (
+            {newCategory.trim() !== '' && (
               <input
                 type="text"
                 aria-label="Prefix of the new category"
@@ -756,13 +749,11 @@ function DesignDetailsStep({
 // ─── Step 3: Bulk SKU Creation ────────────────────────────────────────────────
 
 function BulkSkuStep({
-  designNumber,
   sellingMethod,
   skus,
   showOriginalWeight,
   onSkusChange,
 }: {
-  designNumber: string;
   sellingMethod: string;
   skus: GroupRow[];
   /** D9: only the owner's screen has the field for the original net weight. */
@@ -824,36 +815,13 @@ function BulkSkuStep({
         </p>
       </div>
 
-      {/* Number Preview. A real build does not know the numbers: the API makes them when the design is saved (L3). */}
+      {/* Number Preview. The numbers are not known here: the API makes them when the design is saved (L3). */}
       <div className="p-4 bg-secondary rounded-xl border border-border">
-        {PREVIEW_MODE ? (
-          <>
-            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-2">
-              SKUs will be generated as:
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {Array.from({ length: Math.min(totalPhysicalPieces, 6) }).map((_, i) => (
-                <span
-                  key={i}
-                  className="font-mono text-sm font-bold text-primary bg-primary/10 px-2.5 py-1 rounded-lg"
-                >
-                  {designNumber}-{String(i + 1).padStart(getSettings().numbering.skuPadding, '0')}
-                </span>
-              ))}
-              {totalPhysicalPieces > 6 && (
-                <span className="text-sm text-muted-foreground py-1">
-                  +{totalPhysicalPieces - 6} more
-                </span>
-              )}
-            </div>
-          </>
-        ) : (
-          <p data-testid="sku-count-preview" className="text-sm text-foreground">
-            <span className="font-bold text-primary">{totalPhysicalPieces}</span> piece
-            {totalPhysicalPieces !== 1 ? 's' : ''} will be made. The design number, the SKU numbers
-            and the barcodes are given by the server when the design is saved.
-          </p>
-        )}
+        <p data-testid="sku-count-preview" className="text-sm text-foreground">
+          <span className="font-bold text-primary">{totalPhysicalPieces}</span> piece
+          {totalPhysicalPieces !== 1 ? 's' : ''} will be made. The design number, the SKU numbers
+          and the barcodes are given by the server when the design is saved.
+        </p>
       </div>
 
       {/* Quantity Quick Set */}
@@ -1231,105 +1199,7 @@ function SuccessScreen({
   );
 }
 
-// ─── The preview build's own save (until WEB15) ───────────────────────────────
-
-/** The prototype's save, for a preview build only: sample data in this page, numbers counted here. A real build never gets here; the API makes the numbers. */
-function savePreviewDesign(
-  form: DesignFormData,
-  groups: GroupRow[],
-  photoUrls: string[],
-  primaryUrl: string,
-  designNumber: string
-): CreatedSummary {
-  const now = new Date().toISOString();
-  const designId = `design-${Date.now()}`;
-  const numbering = getSettings().numbering;
-  let physicalSkuIndex = 0;
-  const builtSkus: Sku[] = groups.flatMap((s, groupIdx) => {
-    const pieces = Math.max(1, Math.min(100, parseInt(s.pieces, 10) || 1));
-    return Array.from({ length: pieces }, (_, pieceIdx) => {
-      physicalSkuIndex += 1;
-      const skuNumber = `${designNumber}-${String(physicalSkuIndex).padStart(numbering.skuPadding, '0')}`;
-      return {
-        id: `sku-${Date.now()}-${groupIdx}-${pieceIdx}`,
-        skuNumber,
-        designId,
-        designNumber,
-        grossWeight: parseFloat(s.grossWeight) || 0,
-        originalNetWeight: parseFloat(s.originalNetWeight) || 0,
-        customerNetWeight: parseFloat(s.customerNetWeight) || 0,
-        stones: parseInt(s.stones) || 0,
-        stoneWeight: parseFloat(s.stoneWeight) || 0,
-        kundan: parseInt(s.kundan) || 0,
-        kundanWeight: parseFloat(s.kundanWeight) || 0,
-        piroi: parseFloat(s.piroi) || 0,
-        labour: parseFloat(s.retailLabour || s.labour) || 0,
-        retailLabour: parseFloat(s.retailLabour || s.labour) || 0,
-        semiWholesaleLabour:
-          parseFloat(s.semiWholesaleLabour || s.wholesaleLabour || s.retailLabour || s.labour) || 0,
-        wholesaleLabour: parseFloat(s.wholesaleLabour || s.retailLabour || s.labour) || 0,
-        status: 'In Stock' as SkuStatus,
-        location: BUSINESS_LOCATION,
-        barcode: `${numbering.barcodePrefix || 'BC'}-${skuNumber}`,
-        createdAt: now,
-        createdBy: 'Admin',
-        notes: s.notes,
-        sellingMethod: form.sellingMethod as 'By Weight' | 'Per Piece',
-        purity: form.purity as import('@/lib/mockData').Purity,
-        material: form.material as import('@/lib/mockData').Material,
-        category: form.category,
-        subcategory: form.subcategory,
-      };
-    });
-  });
-  const first = groups[0];
-  const retail = parseFloat(first?.retailLabour || first?.labour) || 0;
-  const newDesign: Design = {
-    id: designId,
-    designNumber,
-    designName: form.designName,
-    category: form.category,
-    subcategory: form.subcategory,
-    material: form.material as import('@/lib/mockData').Material,
-    purity: form.purity as import('@/lib/mockData').Purity,
-    sellingMethod: form.sellingMethod as 'By Weight' | 'Per Piece',
-    description: form.description,
-    notes: form.notes,
-    tags: form.tags
-      ? form.tags
-          .split(',')
-          .map((t) => t.trim())
-          .filter(Boolean)
-      : [],
-    images: photoUrls,
-    primaryImage: primaryUrl,
-    skus: builtSkus,
-    createdAt: now,
-    createdBy: 'Admin',
-    labour: retail,
-    retailLabour: retail,
-    semiWholesaleLabour:
-      parseFloat(
-        first?.semiWholesaleLabour || first?.wholesaleLabour || first?.retailLabour || first?.labour
-      ) || 0,
-    wholesaleLabour:
-      parseFloat(first?.wholesaleLabour || first?.retailLabour || first?.labour) || 0,
-    piroi: parseFloat(first?.piroi) || 0,
-  };
-  addDesign(newDesign);
-  return {
-    designNumber,
-    pieces: builtSkus.map((sku) => ({ skuNumber: sku.skuNumber, barcode: sku.barcode })),
-  };
-}
-
 // ─── Main Client Component ────────────────────────────────────────────────────
-
-function generateDesignNumber(category: string): string {
-  const settings = getSettings();
-  const prefix = settings.numbering.categoryPrefixes[category] || getCategoryPrefix(category);
-  return reserveNextDesignNumber(category, prefix);
-}
 
 /** The text of the person's entries that a second Save compares: the same text is the same action (C6). */
 const sameAction = (a: string | null, b: string) => a !== null && a === b;
@@ -1369,11 +1239,7 @@ export default function AddDesignClient() {
     };
   }, []);
 
-  const designNumber = PREVIEW_MODE
-    ? form.category
-      ? generateDesignNumber(form.category)
-      : 'XXX-00000'
-    : NUMBER_ASSIGNED_WHEN_SAVED;
+  const designNumber = NUMBER_ASSIGNED_WHEN_SAVED;
 
   const handleFormChange = (field: keyof DesignFormData, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -1533,27 +1399,6 @@ export default function AddDesignClient() {
 
   const handleSubmit = async () => {
     if (savingRef.current) return; // a second click while the first is on its way is the same click (C6)
-    if (PREVIEW_MODE) {
-      try {
-        const urls = photos.map((p) =>
-          makePreview(payloads.current.get(p.photoId)?.full ?? p.source)
-        );
-        const primary = photos.findIndex((p) => p.isPrimary);
-        setCreated(
-          savePreviewDesign(
-            form,
-            groups,
-            urls,
-            urls[primary >= 0 ? primary : 0] ?? '/assets/images/no_image.png',
-            designNumber
-          )
-        );
-      } catch (error) {
-        setErrors([error instanceof Error ? error.message : 'Unable to save this design.']);
-      }
-      return;
-    }
-
     // the design's id is made once for this screen (P2): the photos are stored under it, and a second try uses it again
     const designId = attempt.current.designId ?? newUuid();
     attempt.current.designId = designId;
@@ -1701,7 +1546,6 @@ export default function AddDesignClient() {
         )}
         {step === 3 && (
           <BulkSkuStep
-            designNumber={designNumber}
             sellingMethod={form.sellingMethod}
             skus={groups}
             showOriginalWeight={isOwner}

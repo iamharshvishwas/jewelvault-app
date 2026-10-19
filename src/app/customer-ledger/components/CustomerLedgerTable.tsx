@@ -16,7 +16,7 @@ interface CustomerLedgerTableProps {
   entries: LedgerEntry[];
 }
 
-// by the words on the row (src/lib/ledgerView.ts); the last three are the prototype's own types, kept for a preview build
+// by the words on the row (src/lib/ledgerView.ts); the last three are the prototype's own types, for an entry with no kind
 const TYPE_COLORS: Record<string, string> = {
   Invoice: 'bg-blue-100 text-blue-700',
   'Opening balance': 'bg-blue-100 text-blue-700',

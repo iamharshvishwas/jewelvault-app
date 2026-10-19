@@ -220,13 +220,6 @@ describe('T-E05 the first hydrate (C2)', () => {
       false
     );
   });
-
-  it('does nothing in a preview build (no API, the stores hold sample data)', async () => {
-    const { hydrator, calls } = setup({ tables: smallShop() }, { preview: true });
-    hydrator.start('owner', 0);
-    await hydrator.settled();
-    expect(calls).toHaveLength(0);
-  });
 });
 
 describe('T-F03 the cursor advances by the rows received, so a page cap lower than the page asked for works (C3)', () => {

@@ -1,9 +1,9 @@
 // WEB03: the stock-side stores (designStore, catalogStore, settingsStore) keep their names and their synchronous reads, and answer from the
-// memory the hydrate filled (spec C2, C8, C9, D20). `mockData.ts` is read only in a preview build. Nothing is read from or written to browser
+// memory the hydrate filled (spec C2, C8, C9, D20). `mockData.ts` holds only the shapes (WEB15). Nothing is read from or written to browser
 // storage, the old `jaishri.*` keys included. The money-side store (appStore) reads no sample data and no old key either; its own move onto the
 // cache is WEB07. The browser halves are tests/e2e/hydrate.spec.ts.
 //
-// The stores read the flag of the preview build when they load, so each case imports a fresh copy of them over a fake `window`.
+// Each case imports a fresh copy of the stores over a fake `window`.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   at,
@@ -47,20 +47,18 @@ function fakeStorage(initial: Record<string, string> = {}) {
   return { api, data, touched };
 }
 
-async function load({ preview = false, storage = {} as Record<string, string> } = {}) {
+async function load({ storage = {} as Record<string, string> } = {}) {
   vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', preview ? '1' : '');
   const fake = fakeStorage(storage);
   vi.stubGlobal('window', { localStorage: fake.api });
-  const [cache, designs, catalog, settings, app, mock] = await Promise.all([
+  const [cache, designs, catalog, settings, app] = await Promise.all([
     import('@/lib/cache/cache'),
     import('@/lib/designStore'),
     import('@/lib/catalogStore'),
     import('@/lib/settingsStore'),
     import('@/lib/appStore'),
-    import('@/lib/mockData'),
   ]);
-  return { fake, cache: cache.rowCache, designs, catalog, settings, app, mock };
+  return { fake, cache: cache.rowCache, designs, catalog, settings, app };
 }
 
 afterEach(() => {
@@ -112,14 +110,12 @@ function fillStock(cache: Awaited<ReturnType<typeof load>>['cache'], { owner = t
 
 describe('T-E05 the stores never fall back to sample data or to anything stored in the browser (C2, C8, D20)', () => {
   it('before the hydrate has filled memory they hold nothing: no sample designs, no sample categories, no sample rate', async () => {
-    const { designs, catalog, settings, mock } = await load();
+    const { designs, catalog, settings } = await load();
     expect(designs.getDesigns()).toEqual([]);
     expect(catalog.getCategories()).toEqual([]);
     expect(catalog.getSubcategories('Ring')).toEqual([]);
     expect(settings.getSettings().estimate.defaultGoldRate).toBe(0);
     expect(settings.getSettings().estimate.defaultSilverRate).toBe(0);
-    expect(mock.MOCK_DESIGNS).toEqual([]);
-    expect(mock.MOCK_CUSTOMERS).toEqual([]);
   });
 
   it('reads and writes no browser storage at all, and leaves the old jaishri.* keys exactly as they were', async () => {
@@ -153,12 +149,16 @@ describe('T-E05 the stores never fall back to sample data or to anything stored 
     expect(app.getCustomers()).toEqual([]);
   });
 
-  it('a build that is not a preview holds no sample records at all: the mock arrays are empty', async () => {
-    const { mock } = await load();
-    expect(mock.MOCK_DESIGNS).toHaveLength(0);
-    expect(mock.MOCK_CUSTOMERS).toHaveLength(0);
-    expect(mock.MOCK_INVOICES).toHaveLength(0);
-    expect(mock.MOCK_LEDGER).toHaveLength(0);
+  it('holds no sample records at all: the module of the shapes has no data in it, and the stores export no list of defaults (WEB15)', async () => {
+    const { catalog } = await load();
+    expect(Object.keys(await import('@/lib/mockData'))).toEqual([]);
+    for (const name of [
+      'DEFAULT_CATEGORIES',
+      'DEFAULT_SUBCATEGORIES',
+      'DEFAULT_CATEGORY_PREFIXES',
+    ]) {
+      expect(catalog, name).not.toHaveProperty(name);
+    }
   });
 
   it('empties with the memory: after a logout (the cache cleared) the stores hold nothing again', async () => {
@@ -442,23 +442,16 @@ describe("T-E01 (clause): the owner's rate card reads the rates from memory as s
 });
 
 describe('T-E05 a change that cannot be saved yet is refused, never shown as if it were saved (C5, C8)', () => {
-  // WEB05 put the ordinary edits on the API (tests/unit/stores.test.ts): upsertDesign, renameSubcategory, removeSubcategory and saveSettings are writes now.
-  // What is left says "cannot be saved yet" until the task that owns it (WEB06: a new design, a status, a removal; WEB08: the sale) puts it on the API.
-  it('every writing function that is not on the API yet says so and changes nothing, and nothing goes to the browser', async () => {
+  // WEB05 put the ordinary edits on the API (tests/unit/stores.test.ts): upsertDesign, renameSubcategory, removeSubcategory and saveSettings are writes now. WEB15 deleted the
+  // prototype's local writes (add, status, reset, clear). What is left is a removal of a design, which still says "cannot be saved yet".
+  it('a removal of designs says so and changes nothing, and nothing goes to the browser', async () => {
     const { fake, cache, designs, catalog } = await load();
     fillStock(cache);
     const before = designs.getDesigns();
     const design = before[0];
     const attempts: Array<[string, () => unknown]> = [
-      ['addDesign', () => designs.addDesign(design)],
       ['removeDesign', () => designs.removeDesign(design.id)],
       ['removeDesigns', () => designs.removeDesigns(new Set([design.id]))],
-      ['removeSku', () => designs.removeSku(uuid(1001))],
-      ['updateSkuStatus', () => designs.updateSkuStatus(uuid(1001), 'Reserved')],
-      ['resetLocalDesignData', () => designs.resetLocalDesignData()],
-      ['addCategory', () => catalog.addCategory('Anklet')],
-      ['addSubcategory', () => catalog.addSubcategory('Ring', 'Plain')],
-      ['clearAllSubcategories', () => catalog.clearAllSubcategories()],
     ];
     for (const [name, attempt] of attempts) {
       expect(attempt, name).toThrow(/not saved|cannot be saved/i);
@@ -467,29 +460,18 @@ describe('T-E05 a change that cannot be saved yet is refused, never shown as if 
     expect(catalog.getCategories()).toEqual(['Earrings', 'Ring']);
     expect(fake.touched).toEqual([]);
   });
-});
 
-describe('T-E05 a preview build keeps the screens alive with sample data, as before (until WEB15)', () => {
-  it('holds the sample designs, categories and settings, and the old keys decide what a preview shows', async () => {
-    const { designs, catalog, settings, mock, app } = await load({ preview: true });
-    expect(mock.MOCK_DESIGNS.length).toBeGreaterThan(0);
-    expect(mock.MOCK_CUSTOMERS.length).toBeGreaterThan(0);
-    expect(designs.getDesigns().length).toBe(mock.MOCK_DESIGNS.length);
-    expect(designs.getDesigns().some((d) => d.designNumber === 'SET-00572')).toBe(true);
-    expect(catalog.getCategories()).toEqual(catalog.DEFAULT_CATEGORIES);
-    expect(settings.getSettings().estimate.defaultGoldRate).toBe(6920);
-    expect(app.getCustomers().length).toBe(mock.MOCK_CUSTOMERS.length);
-  });
-
-  it('a preview changes its sample data in this page only: nothing goes to browser storage, and the cache plays no part (WEB05)', async () => {
-    const { fake, designs, cache } = await load({ preview: true });
-    const first = designs.getDesigns()[0];
-    designs.updateSkuStatus(first.skus[0].id, 'Reserved');
-    expect(designs.getDesigns()[0].skus[0].status).toBe('Reserved');
-    // the stock side keeps nothing in storage (the money side, appStore, still reads its own old keys in a preview: WEB07)
-    expect(fake.touched.filter((t) => /designs|categories|subcategories|settings/.test(t))).toEqual(
-      []
-    );
-    expect(cache.size()).toBe(0);
+  it("the prototype's local writes are gone (WEB15): no function of the stores changes the lists in this page", async () => {
+    const { designs, catalog } = await load();
+    for (const name of [
+      'addDesign',
+      'removeSku',
+      'updateSkuStatus',
+      'resetLocalDesignData',
+      'reserveNextDesignNumber',
+    ])
+      expect(designs, name).not.toHaveProperty(name);
+    for (const name of ['addCategory', 'addSubcategory', 'clearAllSubcategories'])
+      expect(catalog, name).not.toHaveProperty(name);
   });
 });

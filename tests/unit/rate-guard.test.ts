@@ -61,7 +61,6 @@ const line = (over: Partial<Sku>, rates: ReturnType<typeof rate>[]): BillingItem
 
 async function load() {
   vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
   const [guard, cache] = await Promise.all([
     import('@/lib/rateGuard'),
     import('@/lib/cache/cache'),
@@ -297,7 +296,6 @@ async function drawCard(
   role: 'owner' | 'biller' = 'owner'
 ) {
   vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
   vi.doMock('@/lib/authStore', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/lib/authStore')>()),
     useSession: () => ({ role }),
@@ -371,7 +369,6 @@ describe('PT-W16: the rate card shows the real date of every rate it shows', () 
 describe('PT-W16: the panel that asks', () => {
   async function drawPanel(entries: unknown[]) {
     vi.resetModules();
-    vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
     const { default: Panel } = await import('@/app/billing-pos/components/RateGuardPanel');
     return renderToStaticMarkup(
       React.createElement(Panel, {

@@ -8,7 +8,7 @@ import Topbar from './Topbar';
 import LoginScreen from './LoginScreen';
 import ChangePasswordScreen from './ChangePasswordScreen';
 import ConnectionBanner from './ConnectionBanner';
-import { PREVIEW_MODE, canAccessPath, retrySession, signOut, useSession } from '@/lib/authStore';
+import { canAccessPath, retrySession, signOut, useSession } from '@/lib/authStore';
 import {
   isGateOpen,
   progressText,
@@ -74,8 +74,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
   }
   if (status === 'signedOut' || !session) return <LoginScreen notice={notice} />;
   if (status === 'mustChangePassword') return <ChangePasswordScreen session={session} />;
-  // a preview build has no API: its stores hold sample data (src/lib/previewMode.ts) and the gate is open
-  if (!PREVIEW_MODE && !isGateOpen(hydrate, role, epoch)) {
+  if (!isGateOpen(hydrate, role, epoch)) {
     return <DataGate failed={hydrate.status === 'error' ? hydrate.error : null} state={hydrate} />;
   }
 
@@ -130,15 +129,6 @@ export default function AppLayout({ children }: AppLayoutProps) {
       <div className="app-chrome contents">
         <MobileNav session={session} />
       </div>
-
-      {PREVIEW_MODE && (
-        <div
-          role="note"
-          className="app-chrome fixed bottom-16 lg:bottom-2 left-1/2 -translate-x-1/2 z-50 rounded-full bg-amber-100 border border-amber-300 px-3 py-0.5 text-[11px] font-semibold text-amber-900 shadow-sm pointer-events-none"
-        >
-          Preview: sample data, kept only in this browser. Nothing is saved to a server.
-        </div>
-      )}
     </div>
   );
 }

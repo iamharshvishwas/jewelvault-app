@@ -113,14 +113,13 @@ describe('T-E04 the card is drawn from the model and the state of the download',
   const card = buildDownloadCard(
     view({ state: 'amber', from: 'last_download', reference_date: '2026-09-17', age_days: 28 })
   );
-  const draw = (state: DownloadState, extra: { preview?: boolean } = {}) =>
+  const draw = (state: DownloadState) =>
     renderToStaticMarkup(
       React.createElement(DownloadCardView, {
         card,
         state,
         onDownload: () => undefined,
         onDismiss: () => undefined,
-        preview: extra.preview ?? false,
       })
     );
 
@@ -172,11 +171,9 @@ describe('T-E04 the card is drawn from the model and the state of the download',
     expect(html).toContain('data-testid="download-dismiss"');
   });
 
-  it('in the sample build there is no server to download from: the button is off and says why', () => {
-    const html = draw({ status: 'idle' }, { preview: true });
-    expect(html).toMatch(
-      /data-testid="download-button"[^>]*disabled|disabled=""[^>]*data-testid="download-button"/
-    );
-    expect(html).toMatch(/sample/i);
+  it('has no sample build any more: the button is on while idle and no note says there is no server (WEB15)', () => {
+    const html = draw({ status: 'idle' });
+    expect(html).not.toMatch(/sample/i);
+    expect(html).not.toContain('download-preview-note');
   });
 });

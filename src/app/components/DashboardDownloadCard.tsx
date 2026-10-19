@@ -5,7 +5,6 @@ import SaveButton from '@/components/ui/SaveButton';
 import { booksVersion, getHealthView, subscribeBooks, watchHealth } from '@/lib/appStore';
 import { downloadServer, type DownloadState } from '@/lib/cache/downloadServer';
 import { buildDownloadCard, type DownloadCardModel } from '@/lib/healthLine';
-import { PREVIEW_MODE } from '@/lib/previewMode';
 
 // The owner's "Download everything" card (spec B3, I12, O53; task WEB12b): the date of the last download, amber from 28 days and red from 36 (the API counts them, the card repeats the
 // state), and the button that makes the zip of the books in the browser and records it. The flow is src/lib/cache/downloadServer.ts, the files are src/lib/downloadEverything.ts.
@@ -33,13 +32,11 @@ export function DownloadCardView({
   state,
   onDownload,
   onDismiss,
-  preview,
 }: {
   card: DownloadCardModel;
   state: DownloadState;
   onDownload: () => void;
   onDismiss: () => void;
-  preview: boolean;
 }) {
   const working = state.status === 'working';
   return (
@@ -63,12 +60,7 @@ export function DownloadCardView({
           type="button"
           data-testid="download-button"
           className="btn-primary py-2 text-xs"
-          disabled={working || preview}
-          title={
-            preview
-              ? 'This is the sample build: there is no server to download the books from.'
-              : undefined
-          }
+          disabled={working}
           onClick={onDownload}
         >
           {working ? (
@@ -95,12 +87,6 @@ export function DownloadCardView({
           className={`text-xs ${card.tone === 'red' ? 'text-red-700' : 'text-amber-700'}`}
         >
           {card.reminder}
-        </p>
-      )}
-
-      {preview && (
-        <p className="text-xs text-muted-foreground" data-testid="download-preview-note">
-          This is the sample build: it has no server, so there is nothing to download here.
         </p>
       )}
 
@@ -166,7 +152,6 @@ export default function DashboardDownloadCard() {
     <DownloadCardView
       card={buildDownloadCard(getHealthView())}
       state={state}
-      preview={PREVIEW_MODE}
       onDownload={() => void downloadServer.run()}
       onDismiss={() => downloadServer.dismiss()}
     />

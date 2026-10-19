@@ -19,17 +19,12 @@ import type {
 import type { BillBody } from './billing';
 import type { OpeningBody, ReasonBody, RefundBody, ReissueBody } from './ownerActions';
 import type { RecordPaymentBody, SettleFineBody } from './payments';
-import { rowCache, savingNotAvailable } from './cache/cache';
+import { rowCache } from './cache/cache';
 import { booksServer, type DailyTotalsView, type HealthView } from './cache/booksServer';
 import { SaveError, editRow } from './cache/edit';
 import { moneyServer, type LedgerLoadState, type LedgerWireRow } from './cache/moneyServer';
 import { stampMicros } from './cache/stamp';
 import {
-  MOCK_CUSTOMERS,
-  MOCK_HEALTH,
-  MOCK_INVOICES,
-  MOCK_LEDGER,
-  MOCK_REVIEW,
   type Customer,
   type CustomerType,
   type Invoice,
@@ -41,8 +36,6 @@ import {
   type Purity,
   type SellingMethod,
 } from './mockData';
-import { getSettings } from './settingsStore';
-import { PREVIEW_MODE } from './previewMode';
 import {
   billSummaryRows,
   customerBalanceOf,
@@ -80,143 +73,17 @@ import {
   type SoldLine,
 } from './selectors';
 
-// The money-side store keeps its names and its synchronous reads. Task WEB07 changes where the data comes from:
-//   - in a real build (spec C1, C3, C8, C9) customers, invoices and the ledger are made from the rows the hydrate and the poll put in memory (src/lib/cache): customers and
-//     customer-balances (V2), bills, bill-summary (V1), bill-items, receipts and receipt-allocations. `getInvoices()` is the same array until a row it is made of changes. Every
-//     figure comes from the server as it was saved: the received, pending, status and fine pending of an invoice are the row of V1, the figures of a customer the row of V2, and the
-//     ledger is the one V3 gave when the customer card opened; nothing is added up again here. Nothing is read from or written to browser storage, and before the loading gate has
-//     opened (or after a logout) memory is empty and so are the lists: never sample data (D20). A customer is made by X6 (`addCustomer`); every other change cannot be saved yet
-//     (WEB08 to WEB11 put each kind of save on the API), so the writing functions say so and change nothing, rather than show a change that is not saved;
-//   - in a preview build (src/lib/previewMode.ts, until WEB15) the store is the prototype's: sample data, kept in this browser only.
+// The money-side store keeps its names and its synchronous reads. Task WEB07 changed where the data comes from, and WEB15 removed the prototype's own local data (the preview build):
+// customers, invoices and the ledger are made (spec C1, C3, C8, C9) from the rows the hydrate and the poll put in memory (src/lib/cache): customers and
+// customer-balances (V2), bills, bill-summary (V1), bill-items, receipts and receipt-allocations. `getInvoices()` is the same array until a row it is made of changes. Every
+// figure comes from the server as it was saved: the received, pending, status and fine pending of an invoice are the row of V1, the figures of a customer the row of V2, and the
+// ledger is the one V3 gave when the customer card opened; nothing is added up again here. Nothing is read from or written to browser storage, and before the loading gate has
+// opened (or after a logout) memory is empty and so are the lists: never sample data (D20). Every change is a call to the API (`addCustomer`, `saveBill`, `savePayment`, ...) that
+// puts the rows it returns into memory; nothing here changes a list by itself.
 // This file imports no client (C9, tests/unit/memory-reads.test.ts): the two calls it needs, X6 and the ledger, are in src/lib/cache/moneyServer.ts.
 // The shapes are the prototype's (src/lib/mockData.ts): amounts are numbers made from the API's text, for display; money is never worked out from them.
-const CUSTOMER_KEY = 'jaishri.customers.v1';
-const INVOICE_KEY = 'jaishri.invoices.v1';
-const LEDGER_KEY = 'jaishri.ledger.v1';
 
-function canUseStorage() {
-  return (
-    PREVIEW_MODE && typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
-  );
-}
-
-function readStored<T>(key: string, fallback: T): T {
-  if (!canUseStorage()) return fallback;
-  const saved = window.localStorage.getItem(key);
-  if (!saved) return fallback;
-  try {
-    return JSON.parse(saved) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeStored<T>(key: string, value: T) {
-  if (canUseStorage()) window.localStorage.setItem(key, JSON.stringify(value));
-}
-
-function persistAppStore() {
-  writeStored(CUSTOMER_KEY, _customers);
-  writeStored(INVOICE_KEY, _invoices);
-  writeStored(LEDGER_KEY, _ledger);
-}
-
-function normalizeCustomer(customer: Customer): Customer {
-  return {
-    ...customer,
-    customerType: customer.customerType ?? 'Retail',
-    outstandingSilverFine: customer.outstandingSilverFine ?? 0,
-  };
-}
-
-function normalizeInvoice(invoice: Invoice): Invoice {
-  const fineWeightDue =
-    invoice.fineWeightDue ??
-    invoice.items.reduce((total, item) => total + (item.fineWeightDue ?? 0), 0);
-  const fineWeightSettled =
-    invoice.fineWeightSettled ??
-    Math.max(0, fineWeightDue - (invoice.fineWeightPending ?? fineWeightDue));
-  return recalculateInvoice({
-    ...invoice,
-    saleType: invoice.saleType ?? 'Retail',
-    amountDue: invoice.amountDue ?? invoice.grandTotal,
-    fineWeightDue,
-    fineWeightSettled,
-    fineWeightPending: Math.max(0, fineWeightDue - fineWeightSettled),
-  });
-}
-
-function recalculateInvoice(invoice: Invoice): Invoice {
-  const amountReceived = invoice.payments.reduce((total, payment) => total + payment.amount, 0);
-  const pendingAmount = Math.max(0, invoice.grandTotal - amountReceived);
-  const fineWeightDue =
-    invoice.fineWeightDue ??
-    invoice.items.reduce((total, item) => total + (item.fineWeightDue ?? 0), 0);
-  const fineWeightSettled =
-    invoice.fineWeightSettled ??
-    Math.max(0, fineWeightDue - (invoice.fineWeightPending ?? fineWeightDue));
-  const fineWeightPending = Math.max(0, fineWeightDue - fineWeightSettled);
-  const status: Invoice['status'] =
-    pendingAmount <= 0 && fineWeightPending <= 0
-      ? 'Paid'
-      : amountReceived > 0 || fineWeightSettled > 0
-        ? 'Partial'
-        : 'Pending';
-  return {
-    ...invoice,
-    amountReceived,
-    pendingAmount,
-    fineWeightDue,
-    fineWeightSettled,
-    fineWeightPending,
-    amountDue: invoice.amountDue ?? invoice.grandTotal,
-    status,
-  };
-}
-
-function recalculateCustomer(customerId: string) {
-  const invoices = _invoices.filter(
-    (invoice) => invoice.customerId === customerId && invoice.status !== 'Cancelled'
-  );
-  const totalPurchases = invoices.reduce((total, invoice) => total + invoice.grandTotal, 0);
-  const outstandingSilverFine = invoices.reduce(
-    (total, invoice) => total + (invoice.fineWeightPending ?? 0),
-    0
-  );
-  const totalReceived = _ledger
-    .filter((entry) => entry.customerId === customerId && entry.type === 'Payment')
-    .reduce((total, entry) => total + entry.credit, 0);
-  const lastPurchase =
-    invoices
-      .map((invoice) => invoice.date)
-      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || '';
-
-  _customers = _customers.map((customer) =>
-    customer.id === customerId
-      ? {
-          ...customer,
-          totalPurchases,
-          totalReceived,
-          outstanding: Math.max(0, totalPurchases - totalReceived),
-          outstandingSilverFine,
-          lastPurchase: lastPurchase || customer.lastPurchase,
-        }
-      : customer
-  );
-}
-
-function recalculateLedgerBalances(customerId: string) {
-  let balance = 0;
-  let fineBalance = 0;
-  _ledger = _ledger.map((entry) => {
-    if (entry.customerId !== customerId) return entry;
-    balance = balance + entry.debit - entry.credit;
-    fineBalance = fineBalance + (entry.fineDebit ?? 0) - (entry.fineCredit ?? 0);
-    return { ...entry, balance, fineBalance };
-  });
-}
-
-// ── the money side made from memory (a real build) ───────────────────────────────
+// ── the money side made from memory ───────────────────────────────────────────────
 
 const NO_IMAGE = '/assets/images/no_image.png';
 /** India has no daylight saving time: the business date (S5) of an instant is its UTC time plus five and a half hours. */
@@ -451,9 +318,9 @@ function currentInvoices(): InvoiceView {
   return value;
 }
 
-/** The lists the reports and the dashboard read: the prototype's own in a preview, the cache's in a real build. */
-const customerList = (): Customer[] => (PREVIEW_MODE ? _customers : currentCustomers());
-const salesInvoices = (): Invoice[] => (PREVIEW_MODE ? _invoices : currentInvoices().sales);
+/** The lists the reports and the dashboard read: made from the cache. */
+const customerList = (): Customer[] => currentCustomers();
+const salesInvoices = (): Invoice[] => currentInvoices().sales;
 /** The sales (V5): every bill that is neither an opening-balance bill nor cancelled. `salesInvoices()` keeps the cancelled ones (the estimate lists show them as Cancelled). */
 const soldInvoices = (): Invoice[] => salesInvoices().filter((inv) => inv.status !== 'Cancelled');
 
@@ -530,15 +397,7 @@ function ledgerOfCustomer(customerId: string): LedgerEntry[] {
   return entries;
 }
 
-/** A real build cannot save a money change yet (X6 apart): say so, change nothing. A preview changes its own sample data. */
-function assertWritable(what: string): void {
-  if (!PREVIEW_MODE) throw savingNotAvailable(what);
-}
-
 // ── Customer Store ────────────────────────────────────────────────────────────
-
-let _customers: Customer[] = readStored(CUSTOMER_KEY, [...MOCK_CUSTOMERS]).map(normalizeCustomer);
-let _customerSeq = 1;
 
 export function getCustomers(): Customer[] {
   return customerList();
@@ -559,10 +418,9 @@ type NewCustomer = Omit<
 /**
  * Saves a new customer: X6 with a fresh Idempotency-Key, the returned row merged into memory (its id and stamps are the server's, C11). Resolves with the customer; rejects with the
  * client's error, whose message says plainly what happened. Pressing Save again for the same customer after a call that did not end well sends the same key, and a double click is
- * one request, so a customer is made once (C6, L5). A preview builds the prototype's own local customer.
+ * one request, so a customer is made once (C6, L5).
  */
 export async function addCustomer(data: NewCustomer): Promise<Customer> {
-  if (PREVIEW_MODE) return addCustomerLocal(data);
   const row = await moneyServer.createCustomer({
     name: data.name,
     mobile: data.mobile,
@@ -578,16 +436,15 @@ export async function addCustomer(data: NewCustomer): Promise<Customer> {
 /**
  * Saves a bill: X1 `POST /v1/bills` with a fresh Idempotency-Key (C5 (b), C6, L5). Nothing is put in memory before the server has answered; then the rows it returned are. Pressing Save
  * again for the same bill after a call that did not end well sends the same key, and a double click is one request, so a bill is made once. Resolves with the whole answer; rejects
- * with the client's error (`code`, `details`, a `message` in plain words). A preview build has no server: its screen saves the prototype's own invoice.
+ * with the client's error (`code`, `details`, a `message` in plain words).
  */
 export function saveBill(body: BillBody): Promise<CreateBillResponse> {
-  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('A bill'));
   return moneyServer.createBill(body);
 }
 
 /** The person started over (a new sale, a discard): the next bill gets a key of its own. */
 export function forgetBillTry(): void {
-  if (!PREVIEW_MODE) moneyServer.forgetBill();
+  moneyServer.forgetBill();
 }
 
 /**
@@ -596,7 +453,6 @@ export function forgetBillTry(): void {
  * on it (only this one field is written, so nothing the other person changed is undone). Throws a SaveError whose `message` is the plain text.
  */
 export async function saveCustomerPan(customerId: string, pan: string): Promise<void> {
-  if (PREVIEW_MODE) return;
   const edit = () => editRow({ resource: 'customers', id: customerId, changes: { pan } });
   try {
     await edit();
@@ -610,13 +466,12 @@ export async function saveCustomerPan(customerId: string, pan: string): Promise<
  * Receives a payment: X2 `POST /v1/customers/{id}/payments` with a fresh Idempotency-Key (C5 (b), C6, L5). Nothing is put in memory before the server has answered; then the receipt and
  * the allocations it returned are, and the poll that follows the write brings the customer's V1 and V2 figures (C17). Pressing Save again for the same payment after a call that did not
  * end well sends the same key, and a double click is one request, so a payment is made once. Resolves with the whole answer (`advance_remaining` is what is left of THIS payment);
- * rejects with the client's error (`code`, `details`, a `message` in plain words). A preview build has no server: its panel saves the prototype's own payment.
+ * rejects with the client's error (`code`, `details`, a `message` in plain words).
  */
 export function savePayment(
   customerId: string,
   body: RecordPaymentBody
 ): Promise<RecordPaymentResponse> {
-  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('A payment'));
   return moneyServer.recordPayment(customerId, body);
 }
 
@@ -625,13 +480,12 @@ export function saveFineSettlement(
   customerId: string,
   body: SettleFineBody
 ): Promise<SettleFineResponse> {
-  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('A silver settlement'));
   return moneyServer.settleFine(customerId, body);
 }
 
 /** The payment panel was closed: the next payment or settlement gets a key of its own, even when it is the same as one that could not be confirmed. */
 export function forgetPaymentTries(): void {
-  if (!PREVIEW_MODE) moneyServer.forgetPaymentTries();
+  moneyServer.forgetPaymentTries();
 }
 
 // ── The owner's actions (WEB11) ───────────────────────────────────────────────
@@ -639,14 +493,13 @@ export function forgetPaymentTries(): void {
 /**
  * Cancels a bill: X5 `POST /v1/bills/{id}/cancel` with a reason of 3 to 500 characters. The rules of `savePayment` hold: a key for each action, a double click is one request, pressing the
  * button again after a call that did not end well sends the same key, nothing is put in memory before the server has answered, and then the bill, the pieces back in stock and the allocation
- * rows of the cancel and of the rebalance are. A preview build has no server.
+ * rows of the cancel and of the rebalance are.
  */
 export function saveCancel(
   customerId: string,
   billId: string,
   body: ReasonBody
 ): Promise<CancelBillResponse> {
-  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('A cancellation'));
   return moneyServer.cancelBill(customerId, billId, body);
 }
 
@@ -656,7 +509,6 @@ export function saveVoid(
   receiptId: string,
   body: ReasonBody
 ): Promise<VoidReceiptResponse> {
-  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('A void'));
   return moneyServer.voidReceipt(customerId, receiptId, body);
 }
 
@@ -666,13 +518,11 @@ export function saveReissue(
   billId: string,
   body: ReissueBody
 ): Promise<ReissueBillResponse> {
-  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('A re-issue'));
   return moneyServer.reissueBill(customerId, billId, body);
 }
 
 /** Hands money back out of the customer's advance: X11 `POST /v1/customers/{id}/refunds`. */
 export function saveRefund(customerId: string, body: RefundBody): Promise<IssueRefundResponse> {
-  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('A refund'));
   return moneyServer.issueRefund(customerId, body);
 }
 
@@ -681,13 +531,12 @@ export function saveOpeningBalance(
   customerId: string,
   body: OpeningBody
 ): Promise<OpeningBalanceResponse> {
-  if (PREVIEW_MODE) return Promise.reject(savingNotAvailable('An opening balance'));
   return moneyServer.addOpeningBalance(customerId, body);
 }
 
 /** A dialog of the owner was closed: the next action gets a key of its own, even when it is the same as one that could not be confirmed. */
 export function forgetOwnerTries(): void {
-  if (!PREVIEW_MODE) moneyServer.forgetOwnerTries();
+  moneyServer.forgetOwnerTries();
 }
 
 export interface BillRef {
@@ -712,9 +561,8 @@ export interface BillFacts {
   reissuedAs: BillRef | null;
 }
 
-/** The facts of a bill, from the bill's own row (a cancel or a re-issue shows here as soon as the answer is merged). Null in a preview build and while the row has not arrived. */
+/** The facts of a bill, from the bill's own row (a cancel or a re-issue shows here as soon as the answer is merged). Null while the row has not arrived. */
 export function getBillFacts(billId: string): BillFacts | null {
-  if (PREVIEW_MODE) return null;
   const bill = rowCache.get('bills', billId);
   if (!bill) return null;
   const refOf = (row: BillRow | undefined): BillRef | null =>
@@ -732,9 +580,8 @@ export function getBillFacts(billId: string): BillFacts | null {
   };
 }
 
-/** The bill and its lines exactly as saved (text of money and weight), for the billing screen to start a corrected bill from. Null in a preview build and while the rows have not arrived. */
+/** The bill and its lines exactly as saved (text of money and weight), for the billing screen to start a corrected bill from. Null while the rows have not arrived. */
 export function getBillSource(billId: string): { bill: BillRow; lines: BillItemRow[] } | null {
-  if (PREVIEW_MODE) return null;
   const bill = rowCache.get('bills', billId);
   if (!bill) return null;
   const lines = rowCache
@@ -754,9 +601,8 @@ export interface ReceiptFacts {
   voidedOn: string | null;
 }
 
-/** The facts of a receipt from its own row (a void shows here as soon as the answer is merged). Null in a preview build and while the row has not arrived. */
+/** The facts of a receipt from its own row (a void shows here as soon as the answer is merged). Null while the row has not arrived. */
 export function getReceiptFacts(receiptId: string): ReceiptFacts | null {
-  if (PREVIEW_MODE) return null;
   const receipt = rowCache.get('receipts', receiptId);
   if (!receipt) return null;
   return {
@@ -774,10 +620,6 @@ export function getReceiptFacts(receiptId: string): ReceiptFacts | null {
  * forward) and the cancelled one included, with the figures of V1; the panel keeps those with something pending. Unlike `getInvoices()` this is not the list of sales.
  */
 export function getBillsOfCustomer(customerId: string): Invoice[] {
-  if (PREVIEW_MODE)
-    return _invoices
-      .filter((invoice) => invoice.customerId === customerId)
-      .sort((a, b) => a.date.localeCompare(b.date));
   const order = (invoice: Invoice) => {
     const row = rowCache.get('bills', invoice.id);
     return { date: row?.bill_date ?? '', made: microsOf(row?.created_at ?? ''), id: invoice.id };
@@ -807,9 +649,8 @@ export interface CustomerBooks {
   fineBalance: string;
 }
 
-/** The customer's V2 figures as the server worked them out, or null while the row has not arrived (nothing is made up). A preview build has none. */
+/** The customer's V2 figures as the server worked them out, or null while the row has not arrived (nothing is made up). */
 export function getCustomerBooks(customerId: string): CustomerBooks | null {
-  if (PREVIEW_MODE) return null;
   const row = rowCache.get('customer-balances', customerId);
   return row
     ? {
@@ -824,46 +665,10 @@ export function getCustomerBooks(customerId: string): CustomerBooks | null {
 
 /** The number of a bill (an answer names bills by id), or null when it is not in memory. */
 export function billNumberOf(billId: string): string | null {
-  if (PREVIEW_MODE)
-    return _invoices.find((invoice) => invoice.id === billId)?.invoiceNumber ?? null;
   return rowCache.get('bills', billId)?.bill_no ?? null;
 }
 
-function addCustomerLocal(data: NewCustomer): Customer {
-  const customer: Customer = {
-    ...data,
-    customerType: data.customerType ?? 'Retail',
-    id: `cust-${Date.now()}-${_customerSeq++}`,
-    createdAt: new Date().toISOString(),
-    totalPurchases: 0,
-    totalReceived: 0,
-    outstanding: 0,
-    outstandingSilverFine: 0,
-    lastPurchase: new Date().toISOString(),
-  };
-  _customers = [customer, ..._customers];
-  persistAppStore();
-  return customer;
-}
-
-export function updateCustomer(id: string, updates: Partial<Customer>): void {
-  assertWritable('A change to a customer');
-  _customers = _customers.map((c) => (c.id === id ? { ...c, ...updates } : c));
-  persistAppStore();
-}
-
-export function removeCustomer(id: string): void {
-  assertWritable('Removing a customer');
-  _customers = _customers.filter((c) => c.id !== id);
-  _invoices = _invoices.filter((invoice) => invoice.customerId !== id);
-  _ledger = _ledger.filter((entry) => entry.customerId !== id);
-  persistAppStore();
-}
-
 // ── Invoice Store ─────────────────────────────────────────────────────────────
-
-let _invoices: Invoice[] = readStored(INVOICE_KEY, [...MOCK_INVOICES]).map(normalizeInvoice);
-let _invoiceSeq = _invoices.length + 1;
 
 /** The sales, in the prototype's `Invoice` shape. An opening-balance bill is dues brought forward, not a sale (C14): it is in the ledger, in the customer's dues and in `getInvoiceById`. */
 export function getInvoices(): Invoice[] {
@@ -876,439 +681,41 @@ export function getSoldInvoices(): Invoice[] {
 }
 
 export function getInvoiceById(id: string): Invoice | undefined {
-  if (PREVIEW_MODE)
-    return _invoices.find((invoice) => invoice.id === id || invoice.invoiceNumber === id);
   return currentInvoices().byKey.get(id);
 }
 
 export function getNextInvoiceNumber(): string {
   // the number is the server's, given when the bill is saved; the cache never makes one up (C11)
-  if (!PREVIEW_MODE) return 'Number assigned when saved';
-  const year = new Date().getFullYear();
-  const seq = String(_invoiceSeq).padStart(4, '0');
-  const prefix = getSettings().estimate.prefix || 'JV';
-  return `${prefix}-${year}-${seq}`;
-}
-
-export function addInvoice(invoice: Invoice): void {
-  assertWritable('A new bill');
-  if (_invoices.some((inv) => inv.invoiceNumber === invoice.invoiceNumber)) {
-    throw new Error(`Invoice number already exists: ${invoice.invoiceNumber}`);
-  }
-  const normalizedInvoice = recalculateInvoice(invoice);
-  _invoices = [normalizedInvoice, ..._invoices];
-  _invoiceSeq++;
-
-  // Update customer stats
-  const customer = _customers.find((c) => c.id === normalizedInvoice.customerId);
-  if (customer) {
-    const received = normalizedInvoice.payments.reduce((a, p) => a + p.amount, 0);
-    updateCustomer(normalizedInvoice.customerId, {
-      totalPurchases: customer.totalPurchases + normalizedInvoice.grandTotal,
-      totalReceived: customer.totalReceived + received,
-      outstanding: customer.outstanding + normalizedInvoice.pendingAmount,
-      outstandingSilverFine:
-        (customer.outstandingSilverFine ?? 0) + (normalizedInvoice.fineWeightPending ?? 0),
-      lastPurchase: normalizedInvoice.date,
-    });
-  }
-
-  // Add ledger entry for invoice
-  addLedgerEntry({
-    customerId: normalizedInvoice.customerId,
-    date: normalizedInvoice.date,
-    type: 'Invoice',
-    description: `Invoice ${normalizedInvoice.invoiceNumber} - ${normalizedInvoice.items.length} item(s)`,
-    debit: normalizedInvoice.grandTotal,
-    credit: 0,
-    fineDebit: normalizedInvoice.fineWeightDue ?? 0,
-    reference: normalizedInvoice.invoiceNumber,
-    invoiceId: normalizedInvoice.id,
-  });
-
-  // Add ledger entries for payments
-  for (const pmt of normalizedInvoice.payments) {
-    if (pmt.amount > 0) {
-      addLedgerEntry({
-        customerId: normalizedInvoice.customerId,
-        date: normalizedInvoice.date,
-        type: 'Payment',
-        description: `Payment via ${pmt.mode} against ${normalizedInvoice.invoiceNumber}`,
-        debit: 0,
-        credit: pmt.amount,
-        reference: pmt.reference || normalizedInvoice.invoiceNumber,
-        paymentId: pmt.id,
-        invoiceId: normalizedInvoice.id,
-      });
-    }
-  }
-
-  recalculateCustomer(normalizedInvoice.customerId);
-  persistAppStore();
-}
-
-export function updateInvoiceDate(invoiceId: string, date: string): void {
-  assertWritable('A change of date');
-  const normalizedDate = date
-    ? new Date(`${date}T12:00:00`).toISOString()
-    : new Date().toISOString();
-  const invoice = getInvoiceById(invoiceId);
-  if (!invoice) throw new Error('Estimate not found.');
-
-  _invoices = _invoices.map((inv) =>
-    inv.id === invoice.id ? { ...inv, date: normalizedDate } : inv
-  );
-  _ledger = _ledger.map((entry) =>
-    entry.invoiceId === invoice.id || entry.reference === invoice.invoiceNumber
-      ? { ...entry, date: normalizedDate }
-      : entry
-  );
-  recalculateLedgerBalances(invoice.customerId);
-  recalculateCustomer(invoice.customerId);
-  persistAppStore();
-}
-
-export function updateInvoice(invoiceId: string, updates: Partial<Invoice>): Invoice {
-  assertWritable('A change to a bill');
-  const current = getInvoiceById(invoiceId);
-  if (!current) throw new Error('Estimate not found.');
-
-  const mergedItems = (updates.items ?? current.items).map((item) => {
-    const metalAmount = Number(item.metalAmount) || 0;
-    const labour = Number(item.labour) || 0;
-    const piroi = Number(item.piroi) || 0;
-    const otherCharges = Number(item.otherCharges) || 0;
-    return {
-      ...item,
-      grossWeight: Number(item.grossWeight) || 0,
-      customerNetWeight: Number(item.customerNetWeight) || 0,
-      metalRate: Number(item.metalRate) || 0,
-      labour,
-      piroi,
-      otherCharges,
-      metalAmount,
-      fineWeightDue: Number(item.fineWeightDue) || 0,
-      itemTotal: metalAmount + labour + piroi + otherCharges,
-      taxRate: 0,
-      taxAmount: 0,
-    };
-  });
-
-  const subtotal = mergedItems.reduce((total, item) => total + item.itemTotal, 0);
-  const discount = Number(updates.discount ?? current.discount) || 0;
-  const additionalCharges = Number(updates.additionalCharges ?? current.additionalCharges) || 0;
-  const beforeRoundOff = Math.max(0, subtotal - discount + additionalCharges);
-  const roundOff = getSettings().estimate.roundOff
-    ? Math.round(beforeRoundOff) - beforeRoundOff
-    : 0;
-  const fineWeightDue = mergedItems.reduce((total, item) => total + (item.fineWeightDue ?? 0), 0);
-  const fineWeightSettled = Math.min(current.fineWeightSettled ?? 0, fineWeightDue);
-  const normalized = recalculateInvoice({
-    ...current,
-    ...updates,
-    items: mergedItems,
-    subtotal,
-    discount,
-    discountPercent: subtotal > 0 ? (discount / subtotal) * 100 : 0,
-    additionalCharges,
-    gst: 0,
-    gstPercent: 0,
-    roundOff,
-    grandTotal: Math.round(beforeRoundOff + roundOff),
-    fineWeightDue,
-    fineWeightSettled,
-    fineWeightPending: Math.max(0, fineWeightDue - fineWeightSettled),
-    amountDue: Math.round(beforeRoundOff + roundOff),
-  });
-
-  _invoices = _invoices.map((invoice) => (invoice.id === current.id ? normalized : invoice));
-  _ledger = _ledger.filter(
-    (entry) => entry.invoiceId !== current.id && entry.reference !== current.invoiceNumber
-  );
-
-  addLedgerEntry({
-    customerId: normalized.customerId,
-    date: normalized.date,
-    type: 'Invoice',
-    description: `Invoice ${normalized.invoiceNumber} - ${normalized.items.length} item(s)`,
-    debit: normalized.grandTotal,
-    credit: 0,
-    fineDebit: normalized.fineWeightDue ?? 0,
-    reference: normalized.invoiceNumber,
-    invoiceId: normalized.id,
-  });
-
-  for (const pmt of normalized.payments) {
-    if (pmt.amount > 0) {
-      addLedgerEntry({
-        customerId: normalized.customerId,
-        date: pmt.date,
-        type: 'Payment',
-        description: `Payment via ${pmt.mode} against ${normalized.invoiceNumber}`,
-        debit: 0,
-        credit: pmt.amount,
-        reference: pmt.reference || normalized.invoiceNumber,
-        paymentId: pmt.id,
-        invoiceId: normalized.id,
-      });
-    }
-  }
-
-  recalculateLedgerBalances(current.customerId);
-  if (normalized.customerId !== current.customerId)
-    recalculateLedgerBalances(normalized.customerId);
-  recalculateCustomer(current.customerId);
-  if (normalized.customerId !== current.customerId) recalculateCustomer(normalized.customerId);
-  persistAppStore();
-  return normalized;
+  return 'Number assigned when saved';
 }
 
 // ── Ledger Store ──────────────────────────────────────────────────────────────
 
-let _ledger: LedgerEntry[] = readStored(LEDGER_KEY, [...MOCK_LEDGER]);
-let _ledgerSeq = 1;
-
-/** The entries of the ledgers that have been loaded (a real build loads one customer's ledger when the customer card opens). */
+/** The entries of the ledgers that have been loaded (one customer's ledger is loaded when the customer card opens). */
 export function getLedger(): LedgerEntry[] {
-  if (PREVIEW_MODE) return _ledger;
   return moneyServer.loadedLedgers().flatMap(ledgerOfCustomer);
 }
 
 /** The ledger of one customer, from memory. Empty until `watchCustomerLedger` / `loadLedgerForCustomer` has read it. */
 export function getLedgerForCustomer(customerId: string): LedgerEntry[] {
-  if (PREVIEW_MODE) return _ledger.filter((e) => e.customerId === customerId);
   return ledgerOfCustomer(customerId);
 }
 
 /** The customer card is open: read the customer's ledger and read it again whenever the customer's `updated_at` changes (C3). Returns the way to stop. */
 export function watchCustomerLedger(customerId: string): () => void {
-  return PREVIEW_MODE ? () => undefined : moneyServer.watchLedger(customerId);
+  return moneyServer.watchLedger(customerId);
 }
 
 /** Reads the customer's ledger now (the "Try again" of a ledger that could not be loaded). Never rejects: see `getLedgerStatus`. */
 export function loadLedgerForCustomer(customerId: string): Promise<void> {
-  return PREVIEW_MODE ? Promise.resolve() : moneyServer.loadLedger(customerId);
+  return moneyServer.loadLedger(customerId);
 }
 
 export function getLedgerStatus(customerId: string): {
   state: LedgerLoadState;
   message: string | null;
 } {
-  return PREVIEW_MODE ? { state: 'ready', message: null } : moneyServer.ledgerState(customerId);
-}
-
-export function addLedgerEntry(entry: Omit<LedgerEntry, 'id' | 'balance' | 'fineBalance'>): void {
-  assertWritable('A ledger entry');
-  // Compute running balance for this customer
-  const existing = _ledger.filter((e) => e.customerId === entry.customerId);
-  const prevBalance = existing.length > 0 ? existing[existing.length - 1].balance : 0;
-  const prevFineBalance =
-    existing.length > 0 ? (existing[existing.length - 1].fineBalance ?? 0) : 0;
-  const balance = prevBalance + entry.debit - entry.credit;
-  const fineBalance = prevFineBalance + (entry.fineDebit ?? 0) - (entry.fineCredit ?? 0);
-
-  const newEntry: LedgerEntry = {
-    ...entry,
-    id: `ledger-${Date.now()}-${_ledgerSeq++}`,
-    balance,
-    fineBalance,
-  };
-  _ledger = [..._ledger, newEntry];
-  persistAppStore();
-}
-
-// ── Payment Recording ─────────────────────────────────────────────────────────
-
-export function recordPayment(
-  customerId: string,
-  payment: Omit<Payment, 'id'>,
-  invoiceId?: string
-): void {
-  assertWritable('A payment');
-  const pmt: Payment = {
-    ...payment,
-    id: `pmt-${Date.now()}`,
-  };
-
-  // Update invoice if specified
-  if (invoiceId) {
-    _invoices = _invoices.map((inv) => {
-      if (inv.id !== invoiceId) return inv;
-      const newReceived = inv.amountReceived + pmt.amount;
-      const newPending = Math.max(0, inv.grandTotal - newReceived);
-      const newStatus: Invoice['status'] =
-        newPending <= 0 ? 'Paid' : newReceived > 0 ? 'Partial' : 'Pending';
-      return {
-        ...inv,
-        payments: [...inv.payments, pmt],
-        amountReceived: newReceived,
-        pendingAmount: newPending,
-        status: newStatus,
-      };
-    });
-  }
-
-  // Update customer outstanding
-  const customer = _customers.find((c) => c.id === customerId);
-  if (customer) {
-    updateCustomer(customerId, {
-      totalReceived: customer.totalReceived + pmt.amount,
-      outstanding: Math.max(0, customer.outstanding - pmt.amount),
-    });
-  }
-
-  // Add ledger entry
-  addLedgerEntry({
-    customerId,
-    date: pmt.date,
-    type: 'Payment',
-    description: `Payment received via ${pmt.mode}${pmt.notes ? ' — ' + pmt.notes : ''}`,
-    debit: 0,
-    credit: pmt.amount,
-    reference: pmt.reference || '',
-    paymentId: pmt.id,
-    invoiceId,
-  });
-
-  persistAppStore();
-}
-
-export function settleSilverFine(
-  customerId: string,
-  grams: number,
-  mode: 'Silver' | 'Cash',
-  silverRate?: number,
-  invoiceId?: string
-): void {
-  assertWritable('A silver settlement');
-  const fineCredit = Math.max(0, Number(grams) || 0);
-  if (fineCredit <= 0) throw new Error('Fine grams must be greater than 0.');
-  if (mode === 'Cash' && (!silverRate || silverRate <= 0))
-    throw new Error('Silver rate is required for cash fine settlement.');
-
-  let remaining = fineCredit;
-  const eligible = [..._invoices]
-    .filter(
-      (invoice) =>
-        invoice.customerId === customerId &&
-        invoice.status !== 'Cancelled' &&
-        (invoice.fineWeightPending ?? 0) > 0
-    )
-    .sort((a, b) => {
-      if (invoiceId && a.id === invoiceId) return -1;
-      if (invoiceId && b.id === invoiceId) return 1;
-      return new Date(a.date).getTime() - new Date(b.date).getTime();
-    });
-
-  if (eligible.length === 0) throw new Error('No silver fine is pending for this customer.');
-
-  for (const invoice of eligible) {
-    if (remaining <= 0) break;
-    const pendingFine = invoice.fineWeightPending ?? 0;
-    const applied = Math.min(pendingFine, remaining);
-    remaining -= applied;
-    _invoices = _invoices.map((inv) =>
-      inv.id === invoice.id
-        ? recalculateInvoice({
-            ...inv,
-            fineWeightSettled: (inv.fineWeightSettled ?? 0) + applied,
-            fineWeightPending: Math.max(0, (inv.fineWeightPending ?? 0) - applied),
-          })
-        : inv
-    );
-  }
-
-  const settled = fineCredit - remaining;
-  if (settled <= 0) throw new Error('Unable to apply silver fine settlement.');
-  const amountEquivalent = mode === 'Cash' ? settled * (silverRate ?? 0) : 0;
-
-  addLedgerEntry({
-    customerId,
-    date: new Date().toISOString(),
-    type: 'Payment',
-    description:
-      mode === 'Cash'
-        ? `Silver fine settled by cash - ${settled.toFixed(3)} g @ ₹${Number(silverRate).toLocaleString('en-IN')}/g`
-        : `Silver fine received - ${settled.toFixed(3)} g`,
-    debit: 0,
-    credit: 0,
-    fineCredit: settled,
-    silverRate: mode === 'Cash' ? silverRate : undefined,
-    reference:
-      mode === 'Cash'
-        ? `Fine cash equivalent ₹${Math.round(amountEquivalent).toLocaleString('en-IN')}`
-        : 'Silver fine received',
-    invoiceId,
-  });
-
-  recalculateLedgerBalances(customerId);
-  recalculateCustomer(customerId);
-  persistAppStore();
-}
-
-export function deleteRecordedPayment(ledgerEntryId: string): void {
-  assertWritable('Deleting a payment');
-  const entry = _ledger.find((item) => item.id === ledgerEntryId && item.type === 'Payment');
-  if (!entry) throw new Error('Payment entry not found.');
-
-  if ((entry.fineCredit ?? 0) > 0) {
-    let remaining = entry.fineCredit ?? 0;
-    const affected = [..._invoices]
-      .filter(
-        (invoice) =>
-          invoice.customerId === entry.customerId &&
-          (entry.invoiceId ? invoice.id === entry.invoiceId : (invoice.fineWeightDue ?? 0) > 0)
-      )
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-    for (const invoice of affected) {
-      if (remaining <= 0) break;
-      const pending = invoice.fineWeightPending ?? 0;
-      const due = invoice.fineWeightDue ?? 0;
-      const canRestore = Math.max(0, due - pending);
-      const restored = Math.min(canRestore, remaining);
-      remaining -= restored;
-      _invoices = _invoices.map((inv) =>
-        inv.id === invoice.id
-          ? recalculateInvoice({
-              ...inv,
-              fineWeightSettled: Math.max(0, (inv.fineWeightSettled ?? 0) - restored),
-              fineWeightPending: pending + restored,
-            })
-          : inv
-      );
-    }
-  }
-
-  _invoices = _invoices.map((invoice) => {
-    if (entry.invoiceId && invoice.id !== entry.invoiceId) return invoice;
-
-    let removed = false;
-    const payments = invoice.payments.filter((payment) => {
-      const exactMatch = entry.paymentId && payment.id === entry.paymentId;
-      const fallbackMatch =
-        !entry.paymentId &&
-        invoice.customerId === entry.customerId &&
-        payment.amount === entry.credit &&
-        payment.reference === entry.reference &&
-        Math.abs(new Date(payment.date).getTime() - new Date(entry.date).getTime()) < 2000;
-
-      if (!removed && (exactMatch || fallbackMatch)) {
-        removed = true;
-        return false;
-      }
-      return true;
-    });
-
-    return payments.length !== invoice.payments.length
-      ? recalculateInvoice({ ...invoice, payments })
-      : invoice;
-  });
-
-  _ledger = _ledger.filter((item) => item.id !== ledgerEntryId);
-  recalculateLedgerBalances(entry.customerId);
-  recalculateCustomer(entry.customerId);
-  persistAppStore();
+  return moneyServer.ledgerState(customerId);
 }
 
 // ── The figures: one set of selectors over V1, V2 and V4 (WEB12; spec C14, V5) ──────────────────────────────
@@ -1317,156 +724,66 @@ export function deleteRecordedPayment(ledgerEntryId: string): void {
 //   V1 bill_summary (the `bill-summary` rows in memory), V2 customer_balances (`customer-balances`), the lines of the bills (`bill-items`) and V4 daily_totals (the cash book,
 //   read from the API by src/lib/cache/booksServer.ts because it is not a sync resource). Sales are active bills that are not opening-balance bills; a cancelled bill is on its own line;
 //   an opening-balance bill is no sale but is still owed. Money is whole paise from the selectors up to the screen; `ledgerView.ts` writes it.
-// A preview build has no server: the same selectors run over rows made from the prototype's sample data (the `preview*` functions below, the only place the prototype's numbers are
-// turned into rows: they are rounded to the paise because the prototype added up floats).
 
 import { getDesigns } from './designStore';
 
-const previewRupees = (n: number): string => (Number.isFinite(n) ? n.toFixed(2) : '0.00');
-const previewGrams = (n: number): string => (Number.isFinite(n) ? n.toFixed(3) : '0.000');
-const previewDay = (stamp: string): string => {
-  const ms = Date.parse(stamp);
-  return Number.isNaN(ms) ? stamp.slice(0, 10) : businessDateOf(ms);
-};
-
-function previewBillRows(): SelectorBillRow[] {
-  return _invoices.map((invoice) => {
-    const cancelled = invoice.status === 'Cancelled';
-    return {
-      id: invoice.id,
-      billNo: invoice.invoiceNumber,
-      customerId: invoice.customerId,
-      billDate: previewDay(invoice.date),
-      docType: invoice.openingBalance ? 'opening_balance' : 'estimate',
-      status: cancelled ? 'cancelled' : 'active',
-      grandTotal: previewRupees(invoice.grandTotal),
-      pending: cancelled ? '0.00' : previewRupees(invoice.pendingAmount),
-      finePending: cancelled ? '0.000' : previewGrams(invoice.fineWeightPending ?? 0),
-    };
-  });
-}
-
-function previewBalanceRow(customer: Customer): SelectorBalanceRow {
-  const fine = previewGrams(customer.outstandingSilverFine ?? 0);
-  return {
-    id: customer.id,
-    totalPurchases: previewRupees(customer.totalPurchases),
-    received: previewRupees(customer.totalReceived),
-    outstanding: previewRupees(customer.outstanding),
-    advance: '0.00',
-    balance: previewRupees(customer.outstanding),
-    fineOutstanding: fine,
-    fineAdvance: '0.000',
-    fineBalance: fine,
-    lastPurchase: customer.lastPurchase ? previewDay(customer.lastPurchase) : null,
-  };
-}
-
-function previewLineRows(): SoldLine[] {
-  return _invoices.flatMap((invoice) =>
-    invoice.items.map((item) => ({
-      billId: invoice.id,
-      category: item.category,
-      material: item.material,
-      quantity: 1,
-      itemTotal: previewRupees(item.itemTotal),
-    }))
-  );
-}
-
-/** The prototype's payments as a cash book: money in on the day of each payment, by mode. */
-function previewDailyTotals(from: string, to: string): DailyTotalsView {
-  const sums = new Map<string, { date: string; mode: string; cents: number }>();
-  for (const invoice of _invoices) {
-    for (const payment of invoice.payments) {
-      const date = previewDay(payment.date);
-      if (date < from || date > to) continue;
-      const key = `${date}|${payment.mode}`;
-      const sum = sums.get(key) ?? { date, mode: payment.mode, cents: 0 };
-      sum.cents += Math.round(payment.amount * 100);
-      sums.set(key, sum);
-    }
-  }
-  const text = (cents: number) => (cents / 100).toFixed(2);
-  const rows = Array.from(sums.values()).map((sum) => ({
-    business_date: sum.date,
-    mode: sum.mode,
-    money_in: text(sum.cents),
-    money_out: '0.00',
-    net: text(sum.cents),
-  }));
-  return { rows, state: 'ready', message: null, loaded: true };
-}
-
 /** V1 for the selectors. The same array until a bill-summary row changes. */
-const billRows = (): readonly SelectorBillRow[] =>
-  PREVIEW_MODE ? previewBillRows() : billSummaryRows();
+const billRows = (): readonly SelectorBillRow[] => billSummaryRows();
 /** V2 for the selectors: every customer. */
-const balanceRows = (): readonly SelectorBalanceRow[] =>
-  PREVIEW_MODE ? _customers.map(previewBalanceRow) : customerBalanceRows();
+const balanceRows = (): readonly SelectorBalanceRow[] => customerBalanceRows();
 /** The lines of the bills for the Sales report's split. */
-const lineRows = (): readonly SoldLine[] => (PREVIEW_MODE ? previewLineRows() : soldLineRows());
+const lineRows = (): readonly SoldLine[] => soldLineRows();
 
 /** Today's business date (S5): the Asia/Kolkata day of the browser's clock, whatever time zone the computer is in. */
 const businessTodayNow = (): string => businessDateOf(Date.now());
 
-/** A figure made from memory once for each change of the resources it reads and each day (a screen that asks every second costs nothing between changes). A preview has no versions and makes it each time. */
+/** A figure made from memory once for each change of the resources it reads and each day (a screen that asks every second costs nothing between changes). */
 function memoOf<T>(resources: SyncResource[], make: (today: string) => T): () => T {
   let held: { key: string; value: T } | null = null;
   return () => {
     const today = businessTodayNow();
-    if (PREVIEW_MODE) return make(today);
     const key = `${rowCache.versionOf(...resources)}|${today}`;
     if (held === null || held.key !== key) held = { key, value: make(today) };
     return held.value;
   };
 }
 
-/** The cash book of a range of business dates (V4), as last read. A real build reads it from the API when a screen watches it; a preview makes it from its sample payments. */
+/** The cash book of a range of business dates (V4), as last read. It is read from the API when a screen watches it. */
 export function getDailyTotals(from: string, to: string): DailyTotalsView {
-  return PREVIEW_MODE ? previewDailyTotals(from, to) : booksServer.dailyTotals(from, to);
+  return booksServer.dailyTotals(from, to);
 }
 
 /** A screen shows this range of the cash book: read it, and read it again when the receipts change. Returns the way to stop. */
 export function watchDailyTotals(from: string, to: string): () => void {
-  return PREVIEW_MODE ? () => undefined : booksServer.watchDailyTotals(from, to);
+  return booksServer.watchDailyTotals(from, to);
 }
 
 /** Reads the range now (the "Try again" of a cash book that could not be read). Never rejects: see the view. */
 export function reloadDailyTotals(from: string, to: string): Promise<void> {
-  return PREVIEW_MODE ? Promise.resolve() : booksServer.reloadDailyTotals(from, to);
+  return booksServer.reloadDailyTotals(from, to);
 }
 
 /** The cash book changed (a read began or ended): for `useSyncExternalStore`. */
 export function subscribeBooks(listener: () => void): () => void {
-  return PREVIEW_MODE ? () => undefined : booksServer.subscribe(listener);
+  return booksServer.subscribe(listener);
 }
 export function booksVersion(): number {
-  return PREVIEW_MODE ? 0 : booksServer.version();
+  return booksServer.version();
 }
 
-/** The owner's dashboard line as last read from the API (a preview build shows a made-up healthy night). */
+/** The owner's dashboard line as last read from the API. */
 export function getHealthView(): HealthView {
-  if (PREVIEW_MODE) {
-    return {
-      state: 'ready',
-      message: null,
-      health: MOCK_HEALTH,
-      review: MOCK_REVIEW,
-      reviewMessage: null,
-    };
-  }
   return booksServer.healthView();
 }
 
 /** The dashboard shows the line: read it, and read it again every few minutes. Returns the way to stop. */
 export function watchHealth(): () => void {
-  return PREVIEW_MODE ? () => undefined : booksServer.watchHealth();
+  return booksServer.watchHealth();
 }
 
 /** Reads the line now (the "Try again" of a line that could not be read; WEB12b calls it after a Download everything). Never rejects. */
 export function reloadHealth(): Promise<void> {
-  return PREVIEW_MODE ? Promise.resolve() : booksServer.reloadHealth();
+  return booksServer.reloadHealth();
 }
 
 const cashRowsOf = (view: DailyTotalsView): DailyTotalRow[] => view.rows.map(dailyTotalOf);
@@ -1510,12 +827,8 @@ export interface PendingPayment {
 
 const pendingMemo = memoOf<PendingPayment[]>(['bill-summary', 'customers'], (today) => {
   const people = new Map<string, { name: string; mobile: string }>();
-  if (PREVIEW_MODE) {
-    for (const c of _customers) people.set(c.id, { name: c.name, mobile: c.mobile });
-  } else {
-    for (const c of rowCache.rows('customers'))
-      people.set(c.id, { name: c.name, mobile: c.mobile ?? '' });
-  }
+  for (const c of rowCache.rows('customers'))
+    people.set(c.id, { name: c.name, mobile: c.mobile ?? '' });
   // opening-balance dues are dues: they are in this list although they are not sales; a cancelled bill is not (its pending is 0)
   return pendingBills(billRows(), today).map((bill) => ({
     id: bill.billId,
@@ -1731,18 +1044,11 @@ export function computeEvening(date: string = businessTodayNow()): EveningView {
 }
 
 /**
- * The figures of one customer's card: V2 and the counts of V1 (`customerCard`). In a real build they are read from the customer's rows in memory, and a customer whose V2 row has not
- * arrived has an all-zero card (nothing is made up). A preview build makes the row from the sample customer it is given.
+ * The figures of one customer's card: V2 and the counts of V1 (`customerCard`). They are read from the customer's rows in memory, and a customer whose V2 row has not
+ * arrived has an all-zero card (nothing is made up).
  */
 export function getCustomerCard(who: Customer | string): CustomerCard {
   const customerId = typeof who === 'string' ? who : who.id;
-  if (PREVIEW_MODE) {
-    const sample = typeof who === 'string' ? _customers.find((c) => c.id === who) : who;
-    return customerCard(
-      sample ? previewBalanceRow(sample) : emptyBalanceOf(customerId),
-      previewBillRows().filter((row) => row.customerId === customerId)
-    );
-  }
   const row = rowCache.get('customer-balances', customerId);
   return customerCard(
     row ? customerBalanceOf(row) : emptyBalanceOf(customerId),

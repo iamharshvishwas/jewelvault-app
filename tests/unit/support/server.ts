@@ -442,7 +442,7 @@ export function makeWorld(server: FakeServer = new FakeServer()): World {
   });
   const input = new EventTarget();
   const visibility = Object.assign(new EventTarget(), { visibilityState: 'visible' });
-  const session = createSessionStore({ api, host: { input, visibility }, preview: false });
+  const session = createSessionStore({ api, host: { input, visibility } });
   const cache = createRowCache();
   const hydrator = createHydrator({ api, cache, reviewRole: session.reviewRole });
   bindToSession(hydrator, session.registerLogoutHook);

@@ -95,7 +95,6 @@ async function world(
   business: Record<string, unknown> | null
 ) {
   vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.test');
   vi.stubGlobal('fetch', () => Promise.reject(new Error('this test makes no call')));
   const [react, dom, cache, app, estimate] = await Promise.all([
@@ -326,8 +325,8 @@ describe('PT-W13 the shell and the pages carry the names the print rules use', (
     const layout = text('components/AppLayout.tsx');
     for (const name of ['app-shell', 'app-main-column', 'app-scroll', 'app-page', 'app-chrome'])
       expect(layout, name).toContain(name);
-    // the side bar, the top bar, the connection banner, the phone navigation and the preview note are all bars
-    expect(layout.match(/app-chrome/g)!.length).toBeGreaterThanOrEqual(5);
+    // the side bar, the top bar, the connection banner and the phone navigation are the four bars
+    expect(layout.match(/className="app-chrome/g)!.length).toBe(4);
   });
   it('the estimate sheet and the tag page carry their hooks', () => {
     const estimate = text('app/estimate/components/EstimateViewClient.tsx');

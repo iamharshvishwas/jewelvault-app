@@ -219,7 +219,6 @@ afterEach(() => {
 
 async function drawCard(purities: string[]) {
   vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
   vi.doMock('@/lib/authStore', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/lib/authStore')>()),
     useSession: () => ({ role: 'owner' }),

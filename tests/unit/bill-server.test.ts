@@ -328,10 +328,9 @@ describe('T-E03 (clause; C7, L5): a money call retried during "Waking up…" wit
 // ------------------------------------------------------------------------------------------------ appStore: saveBill, saveCustomerPan
 
 let counter = 0;
-async function storeWorld({ preview = false } = {}) {
+async function storeWorld() {
   vi.resetModules();
   counter += 1;
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', preview ? '1' : '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'http://localhost:4229');
   const bills = new FakeBillApi();
   const edits = new FakeEditServer();
@@ -369,12 +368,6 @@ describe('appStore.saveBill (C5 (b), L5)', () => {
     expect(w.bills.bills).toHaveLength(1);
     expect(w.cache.get('bills', saved.bill.id)).toEqual(saved.bill);
     w.app.forgetBillTry();
-  });
-
-  it("a preview build has no server: it rejects, and the screen saves the prototype's own invoice", async () => {
-    const w = await storeWorld({ preview: true });
-    await expect(w.app.saveBill(body())).rejects.toThrow(/cannot be saved yet/);
-    expect(w.bills.seen).toHaveLength(0);
   });
 });
 

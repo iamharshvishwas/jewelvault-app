@@ -52,7 +52,7 @@ export default function CustomerLedgerClient() {
   const [errors, setErrors] = useState<Partial<AddCustomerForm>>({});
 
   // C17: after any write that touches money the client polls at once, and that poll brings the customer's bill-summary rows and customer-balances row (V1, V2). The card is drawn
-  // again as soon as memory holds them, not at the next tick of the clock below; the tick stays for the ledger's own state and for the preview build, whose store has no events.
+  // again as soon as memory holds them, not at the next tick of the clock below; the tick stays for the ledger's own state.
   const books = useRowCacheVersion('customers', 'customer-balances', 'bills', 'bill-summary');
   const selectedId = selectedCustomer?.id ?? null;
 
@@ -323,14 +323,7 @@ export default function CustomerLedgerClient() {
             </p>
           )}
           {selectedCustomer ? (
-            <CustomerDetail
-              key={selectedCustomer.id}
-              customer={selectedCustomer}
-              onDeleted={() => {
-                setCustomers(getCustomers());
-                setSelectedCustomer(null);
-              }}
-            />
+            <CustomerDetail key={selectedCustomer.id} customer={selectedCustomer} />
           ) : (
             <div className="jewel-card p-12 text-center">
               <p className="text-sm text-muted-foreground">

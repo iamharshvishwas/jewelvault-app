@@ -213,7 +213,7 @@ function world() {
     sleep: async () => undefined,
   });
   const h = fakeHost();
-  const store = createSessionStore({ api, host: h.host, preview: false });
+  const store = createSessionStore({ api, host: h.host });
   const calls = (method: string, p: string) =>
     sent.filter((s) => s.method === method && s.path === p).length;
   /** A call that does not answer until the test lets it. */
@@ -356,7 +356,7 @@ describe('T-E01 the gate at start-up: loading, then the login screen or the app 
   it('a build with no API address shows the error screen instead of crashing', async () => {
     vi.stubEnv('NEXT_PUBLIC_API_URL', '');
     const api = createApiClient({ fetch: vi.fn() as unknown as typeof fetch });
-    const store = createSessionStore({ api, host: fakeHost().host, preview: false });
+    const store = createSessionStore({ api, host: fakeHost().host });
     store.start();
     await vi.advanceTimersByTimeAsync(0);
     expect(store.getState().status).toBe('error');
@@ -1059,9 +1059,10 @@ describe('the login screen and the code hold no credentials and no hints (U1, U1
     expect(text.match(/useState\(''\)/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 
-  it('the session store does not use the Supabase client any more', () => {
+  it('the session store has one way in, the API client: it imports no other client and keeps no preview state (WEB15)', () => {
     const text = readFileSync(path.join(root, 'src/lib/authStore.ts'), 'utf8');
-    expect(text).not.toMatch(/from ['"]@supabase/);
-    expect(text).not.toMatch(/from ['"]@\/lib\/supabase/);
+    const imports = [...text.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]);
+    expect(imports.sort()).toEqual(['@/lib/api/client', '@/lib/api/types', 'react']);
+    expect(text).not.toMatch(/preview/i);
   });
 });

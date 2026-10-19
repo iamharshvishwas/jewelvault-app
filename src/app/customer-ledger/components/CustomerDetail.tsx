@@ -9,7 +9,6 @@ import {
   MapPin,
   Phone,
   RotateCcw,
-  Trash2,
   TrendingDown,
   TrendingUp,
   Wallet,
@@ -18,12 +17,10 @@ import OpeningBalancePanel from '@/components/owner/OpeningBalancePanel';
 import RefundPanel from '@/components/owner/RefundPanel';
 import { useOwnerActions } from '@/components/owner/useOwnerActions';
 import {
-  deleteRecordedPayment,
   getBillsOfCustomer,
   getCustomerBooks,
   getCustomerCard,
   getLedgerForCustomer,
-  removeCustomer,
 } from '@/lib/appStore';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { WALK_IN_ID } from '@/lib/billing';
@@ -34,11 +31,9 @@ import {
   isPaymentEntry,
   mgShown,
   paiseShown,
-  rupeesShown,
   voidedReceipts,
 } from '@/lib/ledgerView';
 import type { Customer, LedgerEntry } from '@/lib/mockData';
-import { PREVIEW_MODE } from '@/lib/previewMode';
 import CustomerInvoiceList from './CustomerInvoiceList';
 import CustomerLedgerTable from './CustomerLedgerTable';
 import CustomerPaymentsTab from './CustomerPaymentsTab';
@@ -50,7 +45,7 @@ import ReceivePaymentPanel from './ReceivePaymentPanel';
 // opening-balance bill is no purchase. The bills are the customer's rows of V1,
 // the ledger is V3 as the server sent it. The screen is drawn again when memory changes (a poll, a payment of this browser); the ledger, which is read from the server after the card opens and
 // again after a change, has no event of its own, so it is looked at once a second and drawn again only when it is another ledger.
-// The prototype's Delete buttons exist in a preview build only: a bill, a payment and a customer are never deleted on the API. WEB11: the owner (and nobody else) has "Hand money back" (X11)
+// The prototype's Delete buttons are gone: a bill, a payment and a customer are never deleted on the API. WEB11: the owner (and nobody else) has "Hand money back" (X11)
 // and "Opening balance" (X12) here, a Void on each receipt of the Payments tab (X4) and Cancel and Re-issue on each bill of the Invoices tab (X5, X10).
 
 const TABS = [
@@ -76,10 +71,9 @@ const sameEntries = (a: readonly LedgerEntry[], b: readonly LedgerEntry[]): bool
 
 interface CustomerDetailProps {
   customer: Customer;
-  onDeleted?: () => void;
 }
 
-export default function CustomerDetail({ customer, onDeleted }: CustomerDetailProps) {
+export default function CustomerDetail({ customer }: CustomerDetailProps) {
   const [activeTab, setActiveTab] = useState('ctab-ledger');
   const [showPaymentPanel, setShowPaymentPanel] = useState(false);
   const [showRefundPanel, setShowRefundPanel] = useState(false);
@@ -102,33 +96,6 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
   // every bill of the customer, the newest first: the dues brought forward and the cancelled ones too (their pending adds up to the outstanding of the card)
   const invoices = getBillsOfCustomer(customer.id).reverse();
   const books = getCustomerBooks(customer.id);
-
-  const handleDeletePayment = (entry: LedgerEntry) => {
-    const label =
-      (entry.fineCredit ?? 0) > 0
-        ? `${entry.fineCredit?.toFixed(3)} g fine settlement`
-        : rupeesShown(entry.credit);
-    if (!window.confirm(`Delete payment of ${label}? This will recalculate outstanding balance.`))
-      return;
-    try {
-      deleteRecordedPayment(entry.id);
-      setLedger(getLedgerForCustomer(customer.id));
-    } catch (error) {
-      alert(error instanceof Error ? error.message : 'Unable to delete payment.');
-    }
-  };
-
-  const handleDeleteCustomer = () => {
-    const linkedCount = invoices.length + ledger.length;
-    const warning =
-      linkedCount > 0
-        ? ` This will also remove ${invoices.length} estimate(s) and ${ledger.length} ledger entr${ledger.length === 1 ? 'y' : 'ies'}.`
-        : '';
-    if (!window.confirm(`Delete customer "${customer.name}"?${warning} This cannot be undone.`))
-      return;
-    removeCustomer(customer.id);
-    onDeleted?.();
-  };
 
   const voided = voidedReceipts(ledger);
   const paymentEntries = ledger.filter(isPaymentEntry);
@@ -161,26 +128,20 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
       icon: <TrendingDown size={14} className={owes ? 'text-amber-600' : 'text-emerald-600'} />,
       color: owes ? 'bg-amber-50' : 'bg-emerald-50',
     },
-    ...(PREVIEW_MODE
-      ? []
-      : [
-          {
-            id: 'cs-advance',
-            label: 'Advance',
-            value: books ? paiseShown(card.advancePaise) : '-',
-            icon: (
-              <Wallet size={14} className={holds ? 'text-emerald-600' : 'text-muted-foreground'} />
-            ),
-            color: holds ? 'bg-emerald-50' : 'bg-muted',
-          },
-          {
-            id: 'cs-balance',
-            label: 'Balance',
-            value: books ? balancePaiseShown(card.balancePaise) : '-',
-            icon: <Wallet size={14} className="text-muted-foreground" />,
-            color: 'bg-muted',
-          },
-        ]),
+    {
+      id: 'cs-advance',
+      label: 'Advance',
+      value: books ? paiseShown(card.advancePaise) : '-',
+      icon: <Wallet size={14} className={holds ? 'text-emerald-600' : 'text-muted-foreground'} />,
+      color: holds ? 'bg-emerald-50' : 'bg-muted',
+    },
+    {
+      id: 'cs-balance',
+      label: 'Balance',
+      value: books ? balancePaiseShown(card.balancePaise) : '-',
+      icon: <Wallet size={14} className="text-muted-foreground" />,
+      color: 'bg-muted',
+    },
     {
       id: 'cs-fine',
       label: 'Silver Fine Due',
@@ -188,17 +149,13 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
       icon: <TrendingDown size={14} className={fineOwed ? 'text-amber-600' : 'text-emerald-600'} />,
       color: fineOwed ? 'bg-amber-50' : 'bg-emerald-50',
     },
-    ...(PREVIEW_MODE
-      ? []
-      : [
-          {
-            id: 'cs-fine-balance',
-            label: 'Silver Fine Balance',
-            value: books ? fineBalanceMgShown(card.fineBalanceMg) : '-',
-            icon: <Wallet size={14} className="text-muted-foreground" />,
-            color: 'bg-muted',
-          },
-        ]),
+    {
+      id: 'cs-fine-balance',
+      label: 'Silver Fine Balance',
+      value: books ? fineBalanceMgShown(card.fineBalanceMg) : '-',
+      icon: <Wallet size={14} className="text-muted-foreground" />,
+      color: 'bg-muted',
+    },
     {
       id: 'cs-last',
       label: 'Last Purchase',
@@ -269,15 +226,6 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
                   Opening Balance
                 </button>
               </>
-            )}
-            {PREVIEW_MODE && (
-              <button
-                onClick={handleDeleteCustomer}
-                className="inline-flex items-center gap-1 rounded-sm border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50"
-              >
-                <Trash2 size={14} />
-                Delete Customer
-              </button>
             )}
           </div>
         </div>
@@ -353,12 +301,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
           {activeTab === 'ctab-ledger' && <CustomerLedgerTable entries={ledger} />}
           {activeTab === 'ctab-invoices' && <CustomerInvoiceList invoices={invoices} />}
           {activeTab === 'ctab-payments' && (
-            <CustomerPaymentsTab
-              entries={paymentEntries}
-              refunds={refundEntries}
-              voided={voided}
-              onDeleteInPreview={handleDeletePayment}
-            />
+            <CustomerPaymentsTab entries={paymentEntries} refunds={refundEntries} voided={voided} />
           )}
         </div>
       </div>

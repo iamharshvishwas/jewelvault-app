@@ -3,7 +3,7 @@ import React, { useRef, useState } from 'react';
 import Link from 'next/link';
 import { CheckCircle, Loader2 } from 'lucide-react';
 import SaveButton from '@/components/ui/SaveButton';
-import type { Customer, Invoice, InvoiceItem, Payment } from '@/lib/mockData';
+import type { Customer } from '@/lib/mockData';
 import {
   MAX_PAYMENT_ROWS,
   PAYMENT_MODES,
@@ -23,18 +23,9 @@ import {
   type SaveFailure,
   type SavedBill,
 } from '@/lib/billing';
-import {
-  addInvoice,
-  getInvoiceById,
-  getNextInvoiceNumber,
-  saveBill,
-  saveCustomerPan,
-  saveReissue,
-} from '@/lib/appStore';
+import { getInvoiceById, saveBill, saveCustomerPan, saveReissue } from '@/lib/appStore';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
-import { updateSkuStatus } from '@/lib/designStore';
 import { buildReissueBody, reissueAsCreated, reissueFailure } from '@/lib/ownerActions';
-import { PREVIEW_MODE } from '@/lib/previewMode';
 import { formatGrams, formatRupees } from '@/lib/pricing';
 
 interface BillingSummaryPanelProps {
@@ -48,7 +39,6 @@ interface BillingSummaryPanelProps {
   notes: string;
   onNotesChange: (v: string) => void;
   items: BillingItem[];
-  invoiceNumber: string;
   saleType: SaleType;
   invoiceDate: string;
   /** The signed-in role: only the owner may give a reason for cash over the limit (Z1). */
@@ -84,8 +74,6 @@ interface PanState {
 const PAN_HELP =
   'A PAN is ten characters: five capital letters, four digits and one capital letter, for example ABCDE1234F.';
 
-const rupeesOf = (paise: number) => Number(formatRupees(paise));
-
 export default function BillingSummaryPanel({
   preview,
   discount,
@@ -96,7 +84,6 @@ export default function BillingSummaryPanel({
   notes,
   onNotesChange,
   items,
-  invoiceNumber,
   saleType,
   invoiceDate,
   role,
@@ -166,120 +153,10 @@ export default function BillingSummaryPanel({
     setPayments((prev) => prev.filter((p) => p.id !== id));
   };
 
-  /** The prototype's own save, for the preview build only: no server, the piece goes Sold at once, the invoice is kept in this page. */
-  const saveInPreview = () => {
-    if (!bill) return;
-    const now = invoiceDate
-      ? new Date(`${invoiceDate}T12:00:00`).toISOString()
-      : new Date().toISOString();
-    const invNumber = invoiceNumber || getNextInvoiceNumber();
-    const invoiceItems: InvoiceItem[] = items.map((item, index) => {
-      const priced = preview.lines[index].priced;
-      return {
-        id: `iitem-${item.sku.id}`,
-        designNumber: item.sku.designNumber,
-        skuNumber: item.sku.skuNumber,
-        material: item.sku.material,
-        purity: item.sku.purity,
-        grossWeight: item.sku.grossWeight,
-        customerNetWeight: item.sku.customerNetWeight,
-        metalRate: Number(item.metalRate) || 0,
-        labour: rupeesOf(priced?.labourAmountPaise ?? 0),
-        piroi: Number(item.piroi) || 0,
-        otherCharges: Number(item.otherCharges) || 0,
-        metalAmount: rupeesOf(priced?.metalAmountPaise ?? 0),
-        fineWeightDue: Number(formatGrams(priced?.fineWeightDueMg ?? 0)),
-        itemTotal: rupeesOf(priced?.itemTotalPaise ?? 0),
-        sellingMethod: item.sku.sellingMethod,
-        imageRef: '',
-        category: item.sku.category,
-        taxRate: 0,
-        taxAmount: 0,
-      };
-    });
-    const invoicePayments: Payment[] = payments
-      .filter((p) => (Number(p.amount) || 0) > 0)
-      .map((p) => ({
-        id: `pmt-${p.id}-${crypto.randomUUID()}`,
-        mode: p.mode,
-        amount: Number(p.amount) || 0,
-        date: now,
-        reference: '',
-        notes: '',
-      }));
-    const amountReceived = invoicePayments.reduce((a, p) => a + p.amount, 0);
-    const grand = rupeesOf(bill.grandTotalPaise);
-    const fineDue = Number(formatGrams(bill.fineWeightDueMg));
-    const pendingAmt = Math.max(0, grand - amountReceived);
-    const status: Invoice['status'] =
-      pendingAmt <= 0 && fineDue <= 0 ? 'Paid' : amountReceived > 0 ? 'Partial' : 'Pending';
-    const invoice: Invoice = {
-      id: `inv-${crypto.randomUUID()}`,
-      invoiceNumber: invNumber,
-      customerId: customer?.id ?? 'walk-in',
-      customerName: customer?.name ?? 'Walk-in Customer',
-      customerMobile: customer?.mobile ?? '',
-      items: invoiceItems,
-      payments: invoicePayments,
-      subtotal: rupeesOf(bill.subtotalPaise),
-      discount: rupeesOf(bill.discountPaise),
-      discountPercent: bill.subtotalPaise > 0 ? (bill.discountPaise / bill.subtotalPaise) * 100 : 0,
-      additionalCharges: rupeesOf(bill.additionalChargesPaise),
-      gst: 0,
-      gstPercent: 0,
-      roundOff: rupeesOf(bill.roundOffPaise),
-      grandTotal: grand,
-      amountReceived,
-      pendingAmount: pendingAmt,
-      status,
-      saleType,
-      fineWeightDue: fineDue,
-      fineWeightSettled: 0,
-      fineWeightPending: fineDue,
-      amountDue: grand,
-      date: now,
-      createdBy: 'Staff',
-      notes: `[${saleType} Estimate]${notes ? ` ${notes}` : ''}`,
-    };
-    for (const item of items) updateSkuStatus(item.sku.id, 'Sold');
-    addInvoice(invoice);
-    onSaved({
-      billId: invoice.id,
-      billNo: invNumber,
-      customerId: invoice.customerId,
-      customerName: invoice.customerName,
-      billDate: invoiceDate,
-      saleType,
-      subtotal: bill.subtotalPaise,
-      discount: bill.discountPaise,
-      additionalCharges: bill.additionalChargesPaise,
-      roundOff: bill.roundOffPaise,
-      grandTotal: bill.grandTotalPaise,
-      fineWeightDueMg: bill.fineWeightDueMg,
-      lines: items.map((item, index) => ({
-        skuId: item.sku.id,
-        skuNo: item.sku.skuNumber,
-        metalAmount: preview.lines[index].priced?.metalAmountPaise ?? 0,
-        labourAmount: preview.lines[index].priced?.labourAmountPaise ?? 0,
-        fineWeightDueMg: preview.lines[index].priced?.fineWeightDueMg ?? 0,
-        total: preview.lines[index].priced?.itemTotalPaise ?? 0,
-      })),
-      received: Math.round(amountReceived * 100),
-      advanceApplied: 0,
-      pending: Math.round(pendingAmt * 100),
-      warnings: [],
-      differences: [],
-    });
-  };
-
   // C5 (b): never optimistic. The screen shows a saving state, calls X1 with a fresh Idempotency-Key (the same key when this is the same bill pressed again after a call that did not
   // end well, C6, L5), and shows the bill as saved only from the API's answer, with the API's figures. On a failure it says why, in plain words, and changes nothing.
   const handleSave = async () => {
     if (inFlight.current || locked || itemCount === 0) return;
-    if (PREVIEW_MODE) {
-      saveInPreview();
-      return;
-    }
     const built = buildBillBody({
       customerId: customer?.id ?? null,
       saleType,

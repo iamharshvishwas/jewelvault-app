@@ -1,75 +1,17 @@
 'use client';
 
-import { rowCache, savingNotAvailable } from './cache/cache';
+import { rowCache } from './cache/cache';
 import { editRow, insertRow } from './cache/edit';
-import { PREVIEW_MODE } from './previewMode';
 
 // The categories and sub-categories of the stock.
-//   - In a real build (spec C2, C8, C9) they are the rows the hydrate put in memory: `getCategories()` and `getSubcategories()` answer from memory after the loading
-//     gate, read no browser storage and never fall back to the prototype's lists; before the gate opens, or after a logout, they are empty.
+//   - They are the rows the hydrate put in memory (spec C2, C8, C9): `getCategories()` and `getSubcategories()` answer from memory after the loading
+//     gate, read no browser storage and never fall back to a list of the prototype's; before the gate opens, or after a logout, they are empty.
 //   - Task WEB05 (C5 (a), C11) puts the changes on the API. A NEW category or sub-category is not shown until the server has answered, with the id it gave it
 //     (`createCategory`, `createSubcategory`); a rename and a removal are ordinary edits, shown at once and written with the exact stamp of the row. A removal is `active = false`
 //     (nothing is deleted, S7), and adding a name that was removed brings that row back, because the name is still taken. A category's prefix is written once, when it is made:
 //     the design numbers carry it (L3).
-//   - `addCategory` and `addSubcategory` are the prototype's synchronous adds. The Add Design screen uses `createCategory` and `createSubcategory` since WEB06; the old two are
-//     left for the preview build's own tests and still say they cannot be saved in a real build.
-//   - In a preview build (until WEB15) the store is the prototype's, in this page only. The DEFAULT_* lists stay: the preview and the prototype's settings use them, and a real
-//     build never does. Nothing is kept in browser storage in either.
 
-const DEFAULT_SUBCATEGORY_LIST = ['Kundan', 'Casting', 'Jadau', 'Handmade'];
-
-export const DEFAULT_CATEGORIES = [
-  'Necklace Set',
-  'Pendant Set',
-  'Ring',
-  'Earrings',
-  'Bangles',
-  'Bracelet',
-  'Chain',
-  'Pendant',
-  'Kada',
-  'Anklet',
-  'Payal',
-  'Mangalsutra',
-  'Nose Pin',
-  'Brooch',
-  'Other',
-];
-
-export const DEFAULT_SUBCATEGORIES: Record<string, string[]> = {
-  ...(Object.fromEntries(
-    DEFAULT_CATEGORIES.map((category) => [category, DEFAULT_SUBCATEGORY_LIST])
-  ) as Record<string, string[]>),
-};
-
-export const DEFAULT_CATEGORY_PREFIXES: Record<string, string> = {
-  'Necklace Set': 'SET',
-  'Pendant Set': 'PSET',
-  Ring: 'RING',
-  Earrings: 'ER',
-  Bangles: 'BNG',
-  Bracelet: 'BRC',
-  Chain: 'CHN',
-  Pendant: 'PEND',
-  Kada: 'KADA',
-  Anklet: 'ANK',
-  Payal: 'PAY',
-  Mangalsutra: 'MNG',
-  'Nose Pin': 'NP',
-  Brooch: 'BRO',
-  Other: 'OTH',
-};
-
-const copyLists = (lists: Record<string, string[]>): Record<string, string[]> =>
-  Object.fromEntries(Object.entries(lists).map(([name, list]) => [name, [...list]]));
-
-// the preview's own lists, in this page only
-let categories: string[] = PREVIEW_MODE ? [...DEFAULT_CATEGORIES] : DEFAULT_CATEGORIES;
-let subcategories: Record<string, string[]> = PREVIEW_MODE
-  ? copyLists(DEFAULT_SUBCATEGORIES)
-  : DEFAULT_SUBCATEGORIES;
-
-// ── the lists made from memory (a real build) ────────────────────────────────
+// ── the lists made from memory ───────────────────────────────────────────────
 
 interface CatalogView {
   names: string[];
@@ -106,39 +48,8 @@ function currentView(): CatalogView {
   return value;
 }
 
-/** A real build cannot save this change from here yet: say so, change nothing. A preview changes its own lists. */
-function assertWritable(what: string): void {
-  if (!PREVIEW_MODE) throw savingNotAvailable(what);
-}
-
 export function getCategories(): string[] {
-  return PREVIEW_MODE ? categories : currentView().names;
-}
-
-const sortedNames = (list: string[]) => [...list].sort((a, b) => a.localeCompare(b));
-
-function previewAddCategory(clean: string): string {
-  const existing = categories.find((category) => category.toLowerCase() === clean.toLowerCase());
-  if (existing) return existing;
-  categories = sortedNames([...categories, clean]);
-  subcategories = { ...subcategories, [clean]: subcategories[clean] || DEFAULT_SUBCATEGORY_LIST };
-  return clean;
-}
-
-function previewAddSubcategory(category: string, clean: string): string {
-  const current = getSubcategories(category);
-  const existing = current.find((item) => item.toLowerCase() === clean.toLowerCase());
-  if (existing) return existing;
-  subcategories = { ...subcategories, [category]: sortedNames([...current, clean]) };
-  return clean;
-}
-
-/** The synchronous add of the prototype (Add Design uses `createCategory` now); a real build cannot save from here. */
-export function addCategory(name: string): string {
-  assertWritable('A new category');
-  const clean = name.trim();
-  if (!clean) throw new Error('Category name is required.');
-  return previewAddCategory(clean);
+  return currentView().names;
 }
 
 /** The prefix a category gets when the person gives none: the first letters of its name. A starting point for the field, which the person may change. */
@@ -156,7 +67,6 @@ export function suggestCategoryPrefix(name: string): string {
 export async function createCategory(name: string, prefix: string): Promise<string> {
   const clean = name.trim();
   if (!clean) throw new Error('Category name is required.');
-  if (PREVIEW_MODE) return previewAddCategory(clean);
   const existing = rowCache
     .rows('categories')
     .find((category) => category.name.toLowerCase() === clean.toLowerCase());
@@ -170,17 +80,7 @@ export async function createCategory(name: string, prefix: string): Promise<stri
 }
 
 export function getSubcategories(category: string): string[] {
-  if (!PREVIEW_MODE) return currentView().subcategories.get(category) ?? [];
-  return subcategories[category] || DEFAULT_SUBCATEGORY_LIST;
-}
-
-/** The synchronous add of the prototype (Add Design uses `createSubcategory` now); a real build cannot save from here. */
-export function addSubcategory(category: string, name: string): string {
-  assertWritable('A new sub-category');
-  const clean = name.trim();
-  if (!category) throw new Error('Select a category first.');
-  if (!clean) throw new Error('Subcategory name is required.');
-  return previewAddSubcategory(category, clean);
+  return currentView().subcategories.get(category) ?? [];
 }
 
 function categoryRowOf(category: string) {
@@ -203,7 +103,6 @@ export async function createSubcategory(category: string, name: string): Promise
   const clean = name.trim();
   if (!category) throw new Error('Select a category first.');
   if (!clean) throw new Error('Subcategory name is required.');
-  if (PREVIEW_MODE) return previewAddSubcategory(category, clean);
   const categoryId = categoryRowOf(category).id;
   const existing = rowCache
     .rows('subcategories')
@@ -228,15 +127,6 @@ export async function renameSubcategory(
   const clean = newName.trim();
   if (!category || !oldName) throw new Error('Subcategory is required.');
   if (!clean) throw new Error('Subcategory name is required.');
-  if (PREVIEW_MODE) {
-    subcategories = {
-      ...subcategories,
-      [category]: sortedNames(
-        getSubcategories(category).map((item) => (item === oldName ? clean : item))
-      ),
-    };
-    return clean;
-  }
   const row = subcategoryRowOf(category, oldName);
   await editRow({
     resource: 'subcategories',
@@ -248,27 +138,13 @@ export async function renameSubcategory(
 
 /** Takes a sub-category out of the lists: `active = false`, an ordinary edit, shown at once. The row stays (S7). Throws a SaveError. */
 export async function removeSubcategory(category: string, name: string): Promise<void> {
-  if (PREVIEW_MODE) {
-    subcategories = {
-      ...subcategories,
-      [category]: getSubcategories(category).filter((item) => item !== name),
-    };
-    return;
-  }
   const row = subcategoryRowOf(category, name);
   await editRow({ resource: 'subcategories', id: row.id, changes: { active: false } });
 }
 
-export function clearAllSubcategories(): void {
-  assertWritable('Clearing the sub-categories');
-  subcategories = Object.fromEntries(getCategories().map((category) => [category, []]));
-}
-
 export function getCategoryPrefix(category: string): string {
-  if (!PREVIEW_MODE) {
-    const prefix = currentView().prefixes.get(category);
-    if (prefix) return prefix;
-  } else if (DEFAULT_CATEGORY_PREFIXES[category]) return DEFAULT_CATEGORY_PREFIXES[category];
+  const prefix = currentView().prefixes.get(category);
+  if (prefix) return prefix;
   const letters = category
     .replace(/[^a-zA-Z]/g, '')
     .slice(0, 4)

@@ -271,11 +271,10 @@ const CASH_BOOK = [
 
 // ================================================================================================ the world: the real store over the fake server, the screens over the store
 
-async function load({ preview = false, role = 'owner' as 'owner' | 'biller' } = {}) {
+async function load({ role = 'owner' as 'owner' | 'biller' } = {}) {
   vi.resetModules();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-10-15T07:00:00Z'));
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', preview ? '1' : '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.test');
   const server = new FakeBooksApi();
   server.role = role;
@@ -296,7 +295,7 @@ async function load({ preview = false, role = 'owner' as 'owner' | 'biller' } = 
       import('@/app/customer-ledger/components/CustomerLedgerClient'),
     ]);
   const book = day();
-  if (!preview) fill(cache.rowCache, book);
+  fill(cache.rowCache, book);
   const draw = (element: ReactElement) => dom.renderToStaticMarkup(element);
   const el = react.createElement;
   const month = { from: '2026-10-01', to: '2026-10-15' };
@@ -762,7 +761,7 @@ describe('PT-W12 T-B15 UNIT: the daily sales chart of the dashboard is V5 day by
   });
 });
 
-describe('PT-W12 the figures come from memory only: a real build holds nothing before the hydrate, a preview keeps its sample data', () => {
+describe('PT-W12 the figures come from memory only: nothing is held before the hydrate', () => {
   it('before the hydrate every figure is zero and nothing is made up', async () => {
     const w = await load();
     w.cache.clear();
@@ -771,54 +770,6 @@ describe('PT-W12 the figures come from memory only: a real build holds nothing b
     expect(stats.totalOutstandingPaise).toBe(0);
     expect(w.app.computePendingPayments()).toEqual([]);
     expect(w.app.computeSalesReport().sales).toEqual({ count: 0, totalPaise: 0 });
-  });
-
-  it("a preview build works from the prototype's sample data and never asks the server", async () => {
-    const w = await load({ preview: true });
-    // the sample shop is empty: one bill of 1,000.50 with 400.25 paid by UPI, made the way the prototype makes one
-    w.app.addInvoice({
-      id: 'sample-1',
-      invoiceNumber: 'JV-S001',
-      customerId: 'cust-jaishri-001',
-      customerName: 'Meera Sharma',
-      customerMobile: '9876543210',
-      items: [],
-      payments: [
-        {
-          id: 'p1',
-          mode: 'UPI',
-          amount: 400.25,
-          date: new Date().toISOString(),
-          reference: '',
-          notes: '',
-        },
-      ],
-      subtotal: 1000.5,
-      discount: 0,
-      discountPercent: 0,
-      additionalCharges: 0,
-      gst: 0,
-      gstPercent: 0,
-      roundOff: 0,
-      grandTotal: 1000.5,
-      amountReceived: 0,
-      pendingAmount: 0,
-      status: 'Pending',
-      date: new Date().toISOString(),
-      createdBy: 'Sample',
-      notes: '',
-    });
-    const stats = w.app.computeDashboardStats();
-    expect(stats.todaySalesPaise).toBe(100050);
-    expect(stats.totalOutstandingPaise).toBe(60025);
-    // the same selectors over sample rows: the panel and the KPI agree with each other here too
-    expect(w.app.computePendingPayments().map((p) => p.amountPaise)).toEqual([60025]);
-    expect(textOf(w.panels(), 'pending-total')).toBe('₹600.25');
-    expect(textOf(w.kpi(), 'kpi-outstanding')).toBe('₹600.25');
-    expect(textOf(w.kpi(), 'kpi-today-sales')).toBe('₹1,000.50');
-    const customer = w.app.getCustomers()[0];
-    expect(textOf(w.card(customer.id), 'cs-outstanding')).toBe('₹600.25');
-    expect(w.server.seen).toEqual([]);
   });
 });
 

@@ -6,9 +6,8 @@ import { at } from './support/rows';
 import { customerRow, fill, id, shop } from './support/money-rows';
 import { FakeMoneyApi, ledgerRow, type LedgerWireRow } from './support/money-server';
 
-async function load({ preview = false } = {}) {
+async function load() {
   vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', preview ? '1' : '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.test');
   const server = new FakeMoneyApi();
   vi.stubGlobal('fetch', server.fetch);
@@ -273,18 +272,5 @@ describe('getLedgerForCustomer() on the ledger the server sent (V3)', () => {
     expect(status.state).toBe('failed');
     expect(status.message).toMatch(/Could not|try again/i);
     expect(app.getLedgerForCustomer(id.priya)).toEqual([]);
-  });
-});
-
-describe("preview build: the ledger is the prototype's own, kept in this browser", () => {
-  it('reads its sample ledger and calls no server', async () => {
-    const { server, app } = await load({ preview: true });
-    const first = app.getCustomers()[0];
-    expect(Array.isArray(app.getLedgerForCustomer(first.id))).toBe(true);
-    await app.loadLedgerForCustomer(first.id);
-    const stop = app.watchCustomerLedger(first.id);
-    expect(app.getLedgerStatus(first.id).state).toBe('ready');
-    stop();
-    expect(server.seen).toEqual([]);
   });
 });

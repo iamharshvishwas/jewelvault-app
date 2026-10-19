@@ -4,7 +4,7 @@
 //     cancelled bill; a cancelled bill says when and why, and which bill replaced it;
 //   - the Void button on each live receipt of the Payments tab and on each live refund; a voided one is tagged Voided and has no button;
 //   - "Hand Money Back" and "Opening Balance" on the customer card;
-//   - a biller, a staff user, a person whose role is not known yet, and an owner in a PREVIEW build see none of them (the buttons are not drawn at all).
+//   - a biller, a staff user and a person whose role is not known yet see none of them (the buttons are not drawn at all).
 //
 // The screens are drawn on the server side of React (`renderToStaticMarkup`) over the real store, filled with the rows of `shop()` (tests/unit/support/money-rows.ts); the role is the one
 // thing stood in for. The API is the wall (tests/e2e/owner-actions.spec.ts proves a biller's call is refused); this proves the screens do not offer what would be refused.
@@ -24,9 +24,8 @@ vi.mock('next/navigation', () => ({
 
 type Who = 'owner' | 'biller' | 'staff' | null;
 
-async function load(who: Who, { preview = false } = {}) {
+async function load(who: Who) {
   vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', preview ? '1' : '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.test');
   vi.doMock('@/lib/authStore', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/lib/authStore')>()),
@@ -72,25 +71,7 @@ async function load(who: Who, { preview = false } = {}) {
     paymentsTab: (entries: LedgerEntry[], refunds: LedgerEntry[], voided: string[] = []) =>
       draw(el(tab.default, { entries, refunds, voided: new Set(voided) })),
     card: () => {
-      // a preview build reads its own sample customers, so the card is given one of its own there
-      const customer = preview
-        ? {
-            id: id.priya,
-            name: 'Priya Sharma',
-            mobile: '9876543210',
-            customerType: 'Retail' as const,
-            email: '',
-            address: '',
-            gstNumber: '',
-            notes: '',
-            totalPurchases: 0,
-            totalReceived: 0,
-            outstanding: 0,
-            outstandingSilverFine: 0,
-            lastPurchase: '',
-            createdAt: '2026-10-15T09:00:00.000Z',
-          }
-        : app.getCustomers().find((c) => c.id === id.priya);
+      const customer = app.getCustomers().find((c) => c.id === id.priya);
       if (!customer) throw new Error('Priya is not in memory');
       return draw(el(detail.default, { customer }));
     },
@@ -153,11 +134,6 @@ describe('PT-W11 the owner has Cancel and Re-issue on a bill; the others have no
       expect(count(estimate, 'reissue-bill')).toBe(0);
     });
   }
-
-  it('an owner in a PREVIEW build sees none: there is no server to send them to', async () => {
-    const w = await load('owner', { preview: true });
-    expect(w.billActions(w.book.by.pending.bill.id)).toBe('');
-  });
 
   it("the Invoices tab: Cancel on every live bill (five of Priya's six), Re-issue on every live estimate (four: not the opening balance), none on the cancelled bill", async () => {
     const w = await load('owner');
@@ -248,11 +224,11 @@ describe('PT-W11 the owner has Void on each live receipt and each live refund; t
     });
   }
 
-  it("an owner in a PREVIEW build keeps the prototype's Delete, and no Void", async () => {
-    const w = await load('owner', { preview: true });
+  it("nobody is offered the prototype's Delete of a payment: a receipt is voided (S7)", async () => {
+    const w = await load('owner');
     const html = w.paymentsTab([w.entry(w.book.receipts[0].id)], []);
-    expect(count(html, 'void-receipt')).toBe(0);
-    expect(html).toContain('Delete');
+    expect(count(html, 'void-receipt')).toBe(1);
+    expect(html).not.toMatch(/\bDelete\b/);
   });
 });
 
@@ -274,11 +250,4 @@ describe("PT-W11 the customer card: Hand Money Back (X11) and Opening Balance (X
       expect(count(html, 'open-opening')).toBe(0);
     });
   }
-
-  it('an owner in a PREVIEW build sees neither', async () => {
-    const w = await load('owner', { preview: true });
-    const html = w.card();
-    expect(count(html, 'open-refund')).toBe(0);
-    expect(count(html, 'open-opening')).toBe(0);
-  });
 });

@@ -11,7 +11,6 @@
 import { defaultMetalRate, formatRupees, type DailyRateLike } from '@/lib/pricing';
 import type { BillingItem } from './billing';
 import { rowCache } from './cache/cache';
-import { PREVIEW_MODE } from './previewMode';
 import type { RateInput, RateMaterial } from './settingsStore';
 
 /** `2026-10-12` as `12 Oct 2026`: a business date written the way the rate card and the guard show it. */
@@ -64,10 +63,9 @@ export function unconfirmedRates(
 
 /**
  * Is this the first bill of the day? True while no bill dated `today` exists in memory (a cancelled bill is a bill that was made; dues brought forward are not a bill of the day). A bill
- * another browser made arrives with the poll. A preview build has a sample rate dated today and nothing to ask.
+ * another browser made arrives with the poll.
  */
 export function isFirstBillOfTheDay(today: string): boolean {
-  if (PREVIEW_MODE) return false;
   return !rowCache
     .rows('bills')
     .some((b) => b.bill_date === today && b.doc_type !== 'opening_balance');

@@ -30,7 +30,6 @@
 import { useSyncExternalStore } from 'react';
 import { api as siteApi, isApiError, type ApiClient, type ApiError } from '@/lib/api/client';
 import type { LoginResponse } from '@/lib/api/types';
-import { PREVIEW_MODE } from '@/lib/previewMode';
 
 export type AuthRole = 'owner' | 'biller' | 'staff';
 
@@ -166,8 +165,6 @@ export interface SessionDeps {
   api: SessionApi;
   /** Default: the window and the document of the page, or none on the server. `null` is none. */
   host?: SessionHost | null;
-  /** Preview mode: open as the owner and call nothing (see PREVIEW_MODE). */
-  preview?: boolean;
 }
 
 export interface SessionStore {
@@ -184,21 +181,6 @@ export interface SessionStore {
   reviewRole(): Promise<RoleReview>;
   registerLogoutHook(hook: () => void): () => void;
 }
-
-const PREVIEW_STATE: SessionState = {
-  status: 'signedIn',
-  session: {
-    userId: 'preview',
-    email: 'preview@example.invalid',
-    displayName: 'Preview',
-    role: 'owner',
-    mustChangePassword: false,
-  },
-  role: 'owner',
-  notice: null,
-  error: null,
-  epoch: 0,
-};
 
 const NOT_CONNECTED = 'This copy of the application is not connected to its server.';
 const TRY_AGAIN = 'Could not sign in. Try again.';
@@ -237,11 +219,10 @@ function changePasswordMessage(error: unknown): string {
  */
 export function createSessionStore(deps: SessionDeps): SessionStore {
   const { api } = deps;
-  const preview = deps.preview ?? false;
   const listeners = new Set<() => void>();
   const logoutHooks = new Set<() => void>();
 
-  let state: SessionState = preview ? PREVIEW_STATE : LOADING;
+  let state: SessionState = LOADING;
   let started = false;
   let unauthorizedOff: (() => void) | null = null;
   /** Bumped by every end of a session and every new sign-in, so that a slow answer never lands on a newer state. */
@@ -296,7 +277,7 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
   }
 
   function listen(): void {
-    if (preview || unauthorizedOff) return;
+    if (unauthorizedOff) return;
     unauthorizedOff = api.onUnauthorized(onUnauthorized);
   }
 
@@ -362,7 +343,6 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
     if (started) return;
     if (hostOf() === null) return; // the server, building the static pages: nobody to ask
     started = true;
-    if (preview) return;
     try {
       listen();
       void bootstrap();
@@ -419,7 +399,6 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
   }
 
   function signIn(email: string, password: string): Promise<SignInResult> {
-    if (preview) return Promise.resolve({ error: 'Signing in is switched off in the preview.' });
     if (signInFlight) return signInFlight; // two presses of the button are one login
     const run = doSignIn(email, password).finally(() => {
       signInFlight = null;
@@ -433,7 +412,7 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
     currentPassword: string,
     newPassword: string
   ): Promise<SignInResult> {
-    if (preview || !watching(state)) return { error: 'Sign in first.' };
+    if (!watching(state)) return { error: 'Sign in first.' };
     listen();
     const mine = generation;
     let changed: LoginResponse;
@@ -462,11 +441,6 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
    * ended is not logged out again: it is over already.
    */
   function signOut(notice: string | null = null): Promise<void> {
-    if (preview) {
-      // There is no login to leave: empty the caches and stay on the preview.
-      runHooks();
-      return Promise.resolve();
-    }
     if (state.status === 'signedOut') return signingOut;
     listen();
     endSession(notice);
@@ -485,7 +459,6 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
 
   // ---- U6, C18: a 403 from the poll, or a poll answer with another role
   function reviewRole(): Promise<RoleReview> {
-    if (preview) return Promise.resolve('same');
     if (reviewing) return reviewing; // two 403s at the same moment are one `me`
     if (!watching(state)) return Promise.resolve('ended');
     listen();
@@ -517,7 +490,7 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
   }
 
   function retry(): void {
-    if (preview || state.status !== 'error') return;
+    if (state.status !== 'error') return;
     listen();
     void bootstrap();
   }
@@ -549,7 +522,6 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
   }
 
   function startIdleWatch(): void {
-    if (preview) return;
     const host = hostOf();
     if (host === null) return;
     stopIdleWatch();
@@ -589,10 +561,7 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
 
 // ------------------------------------------------------------------------------------------------ the store of the site
 
-/** Preview mode (see src/lib/previewMode.ts): the front end opens as the owner with no login and no server, on sample data. Off unless the build says so. WEB15 removes it. */
-export { PREVIEW_MODE };
-
-const store = createSessionStore({ api: siteApi, preview: PREVIEW_MODE });
+const store = createSessionStore({ api: siteApi });
 
 /** The state for code that is not a component (the stores, the pollers). Components use useSession. */
 export const getSessionState = store.getState;

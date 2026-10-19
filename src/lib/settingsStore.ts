@@ -7,23 +7,20 @@ import {
   BUSINESS_SHORT_NAME,
   BUSINESS_TAGLINE,
 } from '@/lib/businessConfig';
-import { DEFAULT_CATEGORIES, DEFAULT_CATEGORY_PREFIXES } from '@/lib/catalogStore';
 import type { DailyRateRow, UserRow } from '@/lib/api/types';
 import { rowCache } from '@/lib/cache/cache';
 import { SaveError, editRow, insertRow, putSettingValue, sameDecimal } from '@/lib/cache/edit';
 import { stampMicros } from '@/lib/cache/stamp';
 import type { DailyRateLike } from '@/lib/pricing';
-import { PREVIEW_MODE } from '@/lib/previewMode';
 
 // The settings of the screens, and the daily rates.
-//   - In a real build (spec C2, C8, C9) `getSettings()` is made from the rows the hydrate put in memory: one row per key in `settings`, the people from `users`, the category
+//   - `getSettings()` is made (spec C2, C8, C9) from the rows the hydrate put in memory: one row per key in `settings`, the people from `users`, the category
 //     prefixes from `categories` and the rates from `daily_rates` (D3, D20). It answers from memory after the loading gate, reads no browser storage, and never returns the
 //     prototype's DEFAULT_SETTINGS values for a number the shop owns: a rate with no row is 0, not the prototype's 6,920. A role that reads fewer keys (staff read seven, A4)
 //     gets the prototype's labels for the sections it does not read.
 //   - Task WEB05 (C5 (a)) puts the changes on the API. `saveSettings` writes each section that changed as ONE row, `PUT /v1/settings/<key>` with `{ value }`: the last write wins,
 //     so there is no stale check and nothing is reloaded on a conflict; memory shows the new value at once and goes back if the write fails. The people (`users`) are not a
 //     setting: logins are made with the admin tool. The rates are not settings either: `saveDailyRates` writes `daily_rates` rows (D4, Y8).
-//   - In a preview build (until WEB15) the store is the prototype's, in this page only. Nothing is kept in browser storage in either.
 
 export interface MaterialSetting {
   name: string;
@@ -144,7 +141,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     designPadding: 5,
     skuPadding: 3,
     barcodePrefix: 'BC',
-    categoryPrefixes: DEFAULT_CATEGORY_PREFIXES,
+    categoryPrefixes: {},
   },
   business: {
     legalName: BUSINESS_NAME,
@@ -158,33 +155,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
 };
 
-function mergeSettings(saved: Partial<AppSettings>): AppSettings {
-  return {
-    ...DEFAULT_SETTINGS,
-    ...saved,
-    tagTemplate: { ...DEFAULT_SETTINGS.tagTemplate, ...saved.tagTemplate },
-    estimate: { ...DEFAULT_SETTINGS.estimate, ...saved.estimate },
-    taxes: { ...DEFAULT_SETTINGS.taxes, ...saved.taxes, estimateTaxPercent: 0 },
-    numbering: {
-      ...DEFAULT_SETTINGS.numbering,
-      ...saved.numbering,
-      categoryPrefixes: {
-        ...DEFAULT_SETTINGS.numbering.categoryPrefixes,
-        ...DEFAULT_CATEGORIES.reduce<Record<string, string>>((acc, category) => {
-          acc[category] = DEFAULT_CATEGORY_PREFIXES[category] || category.slice(0, 4).toUpperCase();
-          return acc;
-        }, {}),
-        ...saved.numbering?.categoryPrefixes,
-      },
-    },
-    business: { ...DEFAULT_SETTINGS.business, ...saved.business },
-    materials: saved.materials?.length ? saved.materials : DEFAULT_SETTINGS.materials,
-    customFields: saved.customFields || DEFAULT_SETTINGS.customFields,
-    users: saved.users?.length ? saved.users : DEFAULT_SETTINGS.users,
-  };
-}
-
-// ── the settings made from memory (a real build) ─────────────────────────────
+// ── the settings made from memory ────────────────────────────────────────────
 
 let cachedSettings: { version: string; value: AppSettings } | null = null;
 
@@ -284,11 +255,7 @@ function buildSettings(): AppSettings {
   };
 }
 
-// the preview's own settings, in this page only
-let previewSettings: AppSettings = DEFAULT_SETTINGS;
-
 export function getSettings(): AppSettings {
-  if (PREVIEW_MODE) return previewSettings;
   const version = rowCache.versionOf('settings', 'daily-rates', 'categories', 'users');
   if (cachedSettings && cachedSettings.version === version) return cachedSettings.value;
   const value = buildSettings();
@@ -298,7 +265,6 @@ export function getSettings(): AppSettings {
 
 /** The stock locations of the shop (the setting `locations`, D3): the places a piece can be. Empty when the role does not read them or none are set. */
 export function getLocations(): string[] {
-  if (PREVIEW_MODE) return ['Main Showroom', 'Jaishri Vault', 'Workshop', 'Exhibition'];
   const value = setting('locations');
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
@@ -364,13 +330,9 @@ function valueOfSection(section: SettingsSection, next: AppSettings): object {
 
 /**
  * Saves the sections of the settings that changed, each as one row, one after another. Memory shows a section at once and goes back if its write fails; the first failure stops
- * the rest. Resolves with the settings as they are then; throws a SaveError (`saved` counts the sections written). A preview changes its own settings.
+ * the rest. Resolves with the settings as they are then; throws a SaveError (`saved` counts the sections written).
  */
 export async function saveSettings(next: AppSettings): Promise<AppSettings> {
-  if (PREVIEW_MODE) {
-    previewSettings = mergeSettings(next);
-    return previewSettings;
-  }
   const current = getSettings();
   let saved = 0;
   for (const section of SECTIONS) {
@@ -407,27 +369,7 @@ export interface RateEntry {
   suggestion: DailyRateRow | undefined;
 }
 
-// the preview's sample rates, in this page only
-const previewRates: DailyRateRow[] = PREVIEW_MODE
-  ? [
-      ['Gold', '22K', '6920.00'],
-      ['Silver', '925', '88.00'],
-    ].map(([material, purity, rate], n) => ({
-      id: `preview-rate-${n + 1}`,
-      material: material as RateMaterial,
-      purity,
-      rate_per_gram: rate,
-      rate_date: businessToday(),
-      confirmed_by: null,
-      created_at: '2026-01-01T00:00:00.000000Z',
-      updated_at: '2026-01-01T00:00:00.000000Z',
-      created_by: null,
-      updated_by: null,
-    }))
-  : [];
-
-const rateRows = (): readonly DailyRateRow[] =>
-  PREVIEW_MODE ? previewRates : rowCache.rows('daily-rates');
+const rateRows = (): readonly DailyRateRow[] => rowCache.rows('daily-rates');
 
 const ratesLike = (source: readonly DailyRateRow[]): readonly DailyRateLike[] =>
   source.map((row) => ({
@@ -441,7 +383,6 @@ let cachedRates: { source: readonly DailyRateRow[]; value: readonly DailyRateLik
 /** R2: the daily rates the billing screen picks a default from (material, purity, rate per gram as text, business date). The same array until the rates change. */
 export function getDailyRates(): readonly DailyRateLike[] {
   const source = rateRows();
-  if (PREVIEW_MODE) return ratesLike(source); // the preview's rates are changed in place
   if (cachedRates?.source !== source) cachedRates = { source, value: ratesLike(source) };
   return cachedRates.value;
 }
@@ -492,31 +433,6 @@ function rateText(entry: RateInput): string {
  */
 export async function saveDailyRates(date: string, entries: readonly RateInput[]): Promise<number> {
   const planned = entries.map((entry) => ({ entry, text: rateText(entry) }));
-  if (PREVIEW_MODE) {
-    let written = 0;
-    for (const { entry, text } of planned) {
-      const at = previewRates.findIndex(
-        (r) => r.rate_date === date && r.material === entry.material && r.purity === entry.purity
-      );
-      if (at >= 0) {
-        if (!sameDecimal(previewRates[at].rate_per_gram, text)) {
-          previewRates[at] = { ...previewRates[at], rate_per_gram: text };
-          written += 1;
-        }
-      } else {
-        previewRates.push({
-          ...previewRates[0],
-          id: `preview-rate-${previewRates.length + 1}`,
-          material: entry.material,
-          purity: entry.purity,
-          rate_per_gram: text,
-          rate_date: date,
-        });
-        written += 1;
-      }
-    }
-    return written;
-  }
   let written = 0;
   for (const { entry, text } of planned) {
     const label = `${entry.material} ${entry.purity}`;

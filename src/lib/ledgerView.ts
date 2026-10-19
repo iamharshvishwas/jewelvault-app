@@ -105,7 +105,7 @@ const KIND_LABEL: Readonly<Record<LedgerKind, string>> = {
   Void: 'Void',
 };
 
-/** The words on a row: the kind V3 gave it, or the prototype's type for an entry that has none (a preview build). */
+/** The words on a row: the kind V3 gave it, or the prototype's type for an entry that has none. */
 export function ledgerKindLabel(entry: Pick<LedgerEntry, 'kind' | 'type'>): string {
   return entry.kind ? KIND_LABEL[entry.kind] : entry.type;
 }

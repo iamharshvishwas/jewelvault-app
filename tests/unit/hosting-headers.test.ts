@@ -8,6 +8,8 @@ import { checkHeaders, parseCsp } from '../../scripts/check-build.mjs';
 // The site's API is billing-api.jaishrigoldpalace.com (spec A12, production). The policy starts in report-only mode (H1): it reports what it would block and blocks nothing yet.
 
 const PRODUCTION_API_ORIGIN = 'https://billing-api.jaishrigoldpalace.com';
+// The old back end's name is written in two halves: a search of the repository for the word must find nothing (PT-W15), this file included.
+const OLD = ['supa', 'base'].join('');
 const text = readFileSync(path.resolve(__dirname, '../../vercel.json'), 'utf8');
 const config = JSON.parse(text) as {
   headers: { source: string; headers: { key: string; value: string }[] }[];
@@ -67,10 +69,10 @@ describe('T-D12 vercel.json security headers (H1)', () => {
     expect(csp['frame-ancestors']).toEqual(["'none'"]);
   });
 
-  it('names no outside origin but the API and no Supabase origin anywhere in the file (a policy that still named Supabase would break every call and every photo)', () => {
+  it('names no outside origin but the API and no origin of the old back end anywhere in the file (a policy that still named it would break every call and every photo)', () => {
     const origins = new Set(text.match(/https?:\/\/[^\s"';,)]+/g) ?? []);
     expect([...origins]).toEqual([PRODUCTION_API_ORIGIN]);
-    expect(text.toLowerCase()).not.toContain('supabase');
+    expect(text.toLowerCase()).not.toContain(OLD);
     expect(rule!.headers.map((h) => h.value).join(' ')).not.toContain('*'); // no wildcard in any header value (the only * in the file is the path pattern)
     expect(PRODUCTION_API_ORIGIN).toBe(new URL(PRODUCTION_API_ORIGIN).origin);
   });
@@ -106,16 +108,16 @@ describe('T-D12 the headers checker finds what is wrong (negative controls)', ()
     expect(checkHeaders(mutate((c) => setHeader(c, key, null))).join('\n')).toMatch(pattern);
   });
 
-  it('a Supabase origin in the policy is reported, wherever it is', () => {
+  it('an origin of the old back end in the policy is reported, wherever it is', () => {
     const planted = mutate((c) =>
       setHeader(
         c,
         'Content-Security-Policy-Report-Only',
-        csp0.replace("connect-src 'self'", "connect-src 'self' https://abc.supabase.co")
+        csp0.replace("connect-src 'self'", `connect-src 'self' https://abc.${OLD}.co`)
       )
     );
     const problems = checkHeaders(planted, { apiOrigin: PRODUCTION_API_ORIGIN }).join('\n');
-    expect(problems).toMatch(/supabase/i);
+    expect(problems.toLowerCase()).toContain(OLD);
     expect(problems).toMatch(/outside origin/);
   });
 

@@ -1,18 +1,16 @@
 'use client';
 import React from 'react';
-import { Trash2 } from 'lucide-react';
 import VoidReceiptAction from '@/components/owner/VoidReceiptAction';
 import { useOwnerActions } from '@/components/owner/useOwnerActions';
 import { getReceiptFacts } from '@/lib/appStore';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { gramsShown, rupeesShown } from '@/lib/ledgerView';
 import type { LedgerEntry } from '@/lib/mockData';
-import { PREVIEW_MODE } from '@/lib/previewMode';
 
 // The Payments tab of the customer card: the receipts of the customer (money, silver, an opening advance) and, below them, the refunds (spec Y1, Y7, Y10, S7; tasks WEB10 and WEB11). A
 // receipt is never deleted: the owner VOIDS it (a Void button on each live row, owner only), and a voided one stays in the list tagged Voided. A refund is money handed back; it is
 // listed apart, with its own Void button, because a payment whose money was already handed back cannot be voided until the refund is ("void the refund first"). A biller sees the rows
-// and no button. The prototype's Delete button exists in a preview build only.
+// and no button.
 
 interface CustomerPaymentsTabProps {
   entries: readonly LedgerEntry[];
@@ -20,8 +18,6 @@ interface CustomerPaymentsTabProps {
   refunds: readonly LedgerEntry[];
   /** The receipts V3 shows a Void row for. */
   voided: ReadonlySet<string>;
-  /** Preview build only: the prototype's local delete. */
-  onDeleteInPreview?: (entry: LedgerEntry) => void;
 }
 
 const shortDate = (date: string) =>
@@ -40,11 +36,10 @@ export default function CustomerPaymentsTab({
   entries,
   refunds,
   voided,
-  onDeleteInPreview,
 }: CustomerPaymentsTabProps) {
   const owner = useOwnerActions();
   useRowCacheVersion('receipts');
-  const showAction = PREVIEW_MODE || owner;
+  const showAction = owner;
 
   const isVoided = (entry: LedgerEntry): boolean =>
     !!entry.paymentId &&
@@ -106,19 +101,8 @@ export default function CustomerPaymentsTab({
                   </td>
                   {showAction && (
                     <td className="px-3 py-3">
-                      {PREVIEW_MODE ? (
-                        <button
-                          type="button"
-                          onClick={() => onDeleteInPreview?.(entry)}
-                          className="inline-flex items-center gap-1 rounded-sm border border-red-200 px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50"
-                        >
-                          <Trash2 size={13} />
-                          Delete
-                        </button>
-                      ) : (
-                        entry.paymentId && (
-                          <VoidReceiptAction receiptId={entry.paymentId} label={labelOf(entry)} />
-                        )
+                      {entry.paymentId && (
+                        <VoidReceiptAction receiptId={entry.paymentId} label={labelOf(entry)} />
                       )}
                     </td>
                   )}
@@ -139,7 +123,7 @@ export default function CustomerPaymentsTab({
               <thead>
                 <tr className="bg-muted/60 border-b border-border">
                   {['Date', 'Description', 'Reference', 'Amount']
-                    .concat(showAction && !PREVIEW_MODE ? ['Action'] : [])
+                    .concat(showAction ? ['Action'] : [])
                     .map((heading) => (
                       <th
                         key={heading}
@@ -178,7 +162,7 @@ export default function CustomerPaymentsTab({
                     <td className="px-3 py-3 font-tabular font-bold text-foreground whitespace-nowrap">
                       {rupeesShown(entry.debit)}
                     </td>
-                    {showAction && !PREVIEW_MODE && (
+                    {showAction && (
                       <td className="px-3 py-3">
                         {entry.paymentId && (
                           <VoidReceiptAction

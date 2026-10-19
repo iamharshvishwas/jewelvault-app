@@ -23,7 +23,6 @@ import { useSyncExternalStore } from 'react';
 import { api as siteApi, isApiError, type ApiClient } from '@/lib/api/client';
 import type { SyncNext, SyncPage, SyncResource, SyncRows } from '@/lib/api/types';
 import {
-  PREVIEW_MODE,
   registerLogoutHook,
   reviewRole as siteReviewRole,
   type AuthRole,
@@ -130,8 +129,6 @@ export interface HydrateDeps {
   cache: RowCache;
   /** A 403 from a page: ask the session whether the role changed (U6). Default: the site's `reviewRole`. */
   reviewRole?: () => Promise<RoleReview>;
-  /** A preview build has no API: the stores hold sample data and the gate is open. */
-  preview?: boolean;
   pageLimit?: number;
   concurrency?: number;
 }
@@ -165,7 +162,6 @@ interface Job {
 
 export function createHydrator(deps: HydrateDeps): Hydrator {
   const { api, cache } = deps;
-  const preview = deps.preview ?? false;
   const pageLimit = deps.pageLimit ?? HYDRATE_PAGE_ROWS;
   const concurrency = Math.max(1, deps.concurrency ?? HYDRATE_CONCURRENCY);
   const listeners = new Set<() => void>();
@@ -325,13 +321,11 @@ export function createHydrator(deps: HydrateDeps): Hydrator {
       };
     },
     start: (role, epoch) => {
-      if (preview) return;
       if (state.status !== 'idle' && state.role === role && state.epoch === epoch) return;
       begin(role, epoch);
     },
     retry: () => {
-      if (preview || state.status !== 'error' || state.role === null || state.epoch === null)
-        return;
+      if (state.status !== 'error' || state.role === null || state.epoch === null) return;
       begin(state.role, state.epoch);
     },
     reset: () => {
@@ -364,7 +358,6 @@ export const hydrator: Hydrator = createHydrator({
   api: siteApi,
   cache: rowCache,
   reviewRole: siteReviewRole,
-  preview: PREVIEW_MODE,
 });
 bindToSession(hydrator, registerLogoutHook);
 
