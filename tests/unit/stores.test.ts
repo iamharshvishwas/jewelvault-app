@@ -979,7 +979,7 @@ describe('T-E05 (WEB05 clause) no business data in browser storage once the stoc
     }
   });
 
-  it('the files of src that still use browser storage are the ones other tasks own: the money side (WEB07), the hidden order book and the Supabase client (WEB15)', () => {
+  it("the one file of src that still uses browser storage is the money side's (WEB07; the preview build's sample data): the hidden Order Book's store keeps its orders in memory since the clean-up of 19 October (tests/unit/order-store.test.ts)", () => {
     const using = sourceFiles(SRC)
       .filter((file) => {
         const { identifiers } = codeWords(file);
@@ -987,7 +987,7 @@ describe('T-E05 (WEB05 clause) no business data in browser storage once the stoc
       })
       .map(rel)
       .sort();
-    expect(using).toEqual(['lib/appStore.ts', 'lib/orderStore.ts']);
+    expect(using).toEqual(['lib/appStore.ts']);
   });
 });
 

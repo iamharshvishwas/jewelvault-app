@@ -1,36 +1,15 @@
 'use client';
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import Link from 'next/link';
-import { getDesigns } from '@/lib/designStore';
 import StatusBadge from '@/components/ui/StatusBadge';
 import MaterialBadge from '@/components/ui/MaterialBadge';
 import { Edit, Plus, Printer, Share2, Tag } from 'lucide-react';
 import type { SkuStatus, Design } from '@/lib/mockData';
 
-function useDesignFromUrl(): Design | null {
-  const [design, setDesign] = useState<Design | null>(null);
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const id = params.get('id');
-    const found = getDesigns().find((d) => d.id === id) ?? getDesigns()[0] ?? null;
-    setDesign(found);
-  }, []);
-  return design;
-}
-
-export default function DesignInfoPanel() {
-  const design = useDesignFromUrl();
-
-  if (!design) {
-    return (
-      <div className="jewel-card p-5 h-full flex items-center justify-center">
-        <p className="text-muted-foreground text-sm">No design selected. Go back to <Link href="/inventory-management" className="text-primary hover:underline">Inventory</Link>.</p>
-      </div>
-    );
-  }
-
+export default function DesignInfoPanel({ design }: { design: Design }) {
   const inStockCount = design.skus.filter((s) => s.status === 'In Stock').length;
-  const displayStatus: SkuStatus = inStockCount > 0 ? 'In Stock' : (design.skus[0]?.status ?? 'Archived');
+  const displayStatus: SkuStatus =
+    inStockCount > 0 ? 'In Stock' : (design.skus[0]?.status ?? 'Archived');
 
   return (
     <div className="jewel-card p-5 h-full">
@@ -38,7 +17,12 @@ export default function DesignInfoPanel() {
       <div className="flex items-start justify-between mb-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-2xl font-bold text-foreground font-mono">{design.designNumber}</span>
+            <span
+              data-testid="design-number"
+              className="text-2xl font-bold text-foreground font-mono"
+            >
+              {design.designNumber}
+            </span>
             <StatusBadge status={displayStatus} />
           </div>
           {design.designName && (
@@ -60,7 +44,10 @@ export default function DesignInfoPanel() {
       {design.tags.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-4">
           {design.tags.map((tag) => (
-            <span key={`tag-${design.id}-${tag}`} className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
+            <span
+              key={`tag-${design.id}-${tag}`}
+              className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full"
+            >
               #{tag}
             </span>
           ))}
@@ -85,7 +72,9 @@ export default function DesignInfoPanel() {
       {/* Material */}
       <div className="flex items-center gap-2 mb-4">
         <MaterialBadge material={design.material} />
-        <span className="text-sm text-muted-foreground">{design.material} · {design.purity}</span>
+        <span className="text-sm text-muted-foreground">
+          {design.material} · {design.purity}
+        </span>
       </div>
 
       {/* Labour & Piroi */}
@@ -93,7 +82,9 @@ export default function DesignInfoPanel() {
         <div className="p-3 bg-muted/40 rounded-xl">
           <p className="text-xs text-muted-foreground mb-0.5">Default Labour Rate</p>
           <p className="text-sm font-semibold text-foreground">
-            {design.labour > 0 ? `₹${design.labour.toLocaleString('en-IN')}/${design.sellingMethod === 'By Weight' ? 'g' : 'pc'}` : '—'}
+            {design.labour > 0
+              ? `₹${design.labour.toLocaleString('en-IN')}/${design.sellingMethod === 'By Weight' ? 'g' : 'pc'}`
+              : '—'}
           </p>
         </div>
         <div className="p-3 bg-muted/40 rounded-xl">
