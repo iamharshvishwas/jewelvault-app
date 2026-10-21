@@ -90,9 +90,31 @@ describe('T-E04 the hidden screens cannot be reached by URL', () => {
   });
 });
 
+/** A design of the shop with no piece yet: what the design page's tabs are given since the page names its design once (the clean-up of 19 October). */
+const aDesign: Design = {
+  id: 'design-1',
+  designNumber: 'RING-00001',
+  designName: 'Plain ring',
+  category: 'Ring',
+  subcategory: 'Plain',
+  material: 'Gold',
+  purity: '22K',
+  sellingMethod: 'By Weight',
+  description: '',
+  notes: '',
+  tags: [],
+  images: [],
+  primaryImage: '/assets/images/no_image.png',
+  skus: [],
+  createdAt: '2026-10-15T09:00:00.000Z',
+  createdBy: 'Asha',
+  labour: 353,
+  piroi: 150,
+};
+
 describe('T-E04 the sample Audit and Sales tabs of the design page are gone', () => {
   it('the design page offers its pieces and nothing else: no "Sales History", no "Audit Log", no sample SET-00572 tab', () => {
-    const html = renderToStaticMarkup(React.createElement(DesignTabs));
+    const html = renderToStaticMarkup(React.createElement(DesignTabs, { design: aDesign }));
     expect(html).toContain('SKUs');
     expect(html).not.toMatch(/Sales History|Audit/i);
     expect(html).not.toContain('SET-00572');

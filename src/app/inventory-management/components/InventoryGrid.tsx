@@ -1,8 +1,10 @@
 'use client';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import AppImage from '@/components/ui/AppImage';
 import { getDesigns, removeDesign, removeDesigns } from '@/lib/designStore';
+import { filterDesigns } from '@/lib/inventoryFilter';
+import { clearInventoryFilter, useInventoryFilter } from '@/lib/inventoryFilterStore';
 import StatusBadge from '@/components/ui/StatusBadge';
 import MaterialBadge from '@/components/ui/MaterialBadge';
 import InventoryTable from './InventoryTable';
@@ -19,6 +21,7 @@ import {
   AlertTriangle,
   X,
   Package,
+  SearchX,
 } from 'lucide-react';
 import { useSession } from '@/lib/authStore';
 import type { SkuStatus, Design } from '@/lib/mockData';
@@ -118,11 +121,13 @@ function DeleteConfirmModal({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function InventoryGrid() {
+  const filter = useInventoryFilter();
   const [designs, setDesigns] = useState<Design[]>([]);
   const [view, setView] = useState<'grid' | 'table'>('grid');
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [chosenIds, setChosenIds] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState('sort-newest');
-  const [page, setPage] = useState(1);
+  // the page belongs to the filter it was chosen under: a change of filter is a new object, and the page is 1 again
+  const [pageAt, setPageAt] = useState({ filter, page: 1 });
   const [deleteTarget, setDeleteTarget] = useState<Design | null>(null);
   const { role } = useSession();
   const perPage = 8;
@@ -141,12 +146,22 @@ export default function InventoryGrid() {
     };
   }, []);
 
-  const total = designs.length;
+  // the designs the panel lets through; the grid, the table, the count and the pages are all made from these
+  const shown = useMemo(() => filterDesigns(designs, filter), [designs, filter]);
+  const total = shown.length;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
-  const paginated = designs.slice((page - 1) * perPage, page * perPage);
+  const page = Math.min(pageAt.filter === filter ? pageAt.page : 1, totalPages);
+  const setPage = (next: number) => setPageAt({ filter, page: next });
+  const paginated = shown.slice((page - 1) * perPage, page * perPage);
+
+  // a design the filter hides is not selected for a bulk action (it stays chosen, and is selected again when the filter lets it back in)
+  const selectedIds = useMemo(() => {
+    const visible = new Set(shown.map((d) => d.id));
+    return new Set([...chosenIds].filter((id) => visible.has(id)));
+  }, [chosenIds, shown]);
 
   const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => {
+    setChosenIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -155,23 +170,20 @@ export default function InventoryGrid() {
   };
 
   const selectAll = () => {
-    if (selectedIds.size === paginated.length) setSelectedIds(new Set());
-    else setSelectedIds(new Set(paginated.map((d) => d.id)));
+    if (selectedIds.size === paginated.length) setChosenIds(new Set());
+    else setChosenIds(new Set(paginated.map((d) => d.id)));
   };
 
   const handleDeleteConfirm = () => {
     if (!deleteTarget) return;
     removeDesign(deleteTarget.id);
     setDesigns([...getDesigns()]);
-    setSelectedIds((prev) => {
+    setChosenIds((prev) => {
       const next = new Set(prev);
       next.delete(deleteTarget.id);
       return next;
     });
     setDeleteTarget(null);
-    const newTotal = getDesigns().length;
-    const newTotalPages = Math.max(1, Math.ceil(newTotal / perPage));
-    if (page > newTotalPages) setPage(newTotalPages);
   };
 
   const handleDeleteSelected = () => {
@@ -187,7 +199,7 @@ export default function InventoryGrid() {
       return;
     removeDesigns(selectedIds);
     setDesigns([...getDesigns()]);
-    setSelectedIds(new Set());
+    setChosenIds((prev) => new Set([...prev].filter((id) => !selectedIds.has(id))));
   };
 
   // ── Empty State ──────────────────────────────────────────────────────────────
@@ -233,18 +245,22 @@ export default function InventoryGrid() {
               </option>
             ))}
           </select>
-          <span className="text-xs text-muted-foreground">{total} designs</span>
+          <span className="text-xs text-muted-foreground whitespace-nowrap">
+            {total} design{total !== 1 ? 's' : ''}
+          </span>
         </div>
 
         <div className="flex items-center bg-muted rounded-lg p-1">
           <button
             onClick={() => setView('grid')}
+            aria-label="Show as grid"
             className={`p-1.5 rounded-md transition-colors ${view === 'grid' ? 'bg-card shadow-sm text-primary' : 'text-muted-foreground'}`}
           >
             <Grid size={15} />
           </button>
           <button
             onClick={() => setView('table')}
+            aria-label="Show as table"
             className={`p-1.5 rounded-md transition-colors ${view === 'table' ? 'bg-card shadow-sm text-primary' : 'text-muted-foreground'}`}
           >
             <List size={15} />
@@ -282,7 +298,7 @@ export default function InventoryGrid() {
             )}
           </div>
           <button
-            onClick={() => setSelectedIds(new Set())}
+            onClick={() => setChosenIds(new Set())}
             className="ml-auto text-xs text-white/60 hover:text-white"
           >
             Clear
@@ -290,8 +306,29 @@ export default function InventoryGrid() {
         </div>
       )}
 
+      {/* Nothing passes the filter (the shop does have designs: "No designs yet" is for an empty shop) */}
+      {total === 0 && (
+        <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center">
+            <SearchX size={28} className="text-muted-foreground" />
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-foreground mb-1">
+              No design matches these filters
+            </h3>
+            <p className="text-sm text-muted-foreground max-w-xs">
+              Take a tick off, change the search or the weight, or clear the filters to see all{' '}
+              {designs.length} design{designs.length !== 1 ? 's' : ''} again.
+            </p>
+          </div>
+          <button onClick={clearInventoryFilter} className="btn-secondary py-2 text-xs">
+            Clear filters
+          </button>
+        </div>
+      )}
+
       {/* Grid View */}
-      {view === 'grid' && (
+      {total > 0 && view === 'grid' && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 gap-3">
           {paginated.map((design) => {
             const inStockCount = design.skus.filter((s) => s.status === 'In Stock').length;
@@ -387,7 +424,7 @@ export default function InventoryGrid() {
       )}
 
       {/* Table View */}
-      {view === 'table' && (
+      {total > 0 && view === 'table' && (
         <InventoryTable
           designs={paginated}
           selectedIds={selectedIds}
@@ -405,7 +442,7 @@ export default function InventoryGrid() {
           </span>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              onClick={() => setPage(Math.max(1, page - 1))}
               disabled={page === 1}
               className="w-7 h-7 rounded-lg border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-primary/40 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
             >
@@ -425,7 +462,7 @@ export default function InventoryGrid() {
               </button>
             ))}
             <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              onClick={() => setPage(Math.min(totalPages, page + 1))}
               disabled={page === totalPages}
               className="w-7 h-7 rounded-lg border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-primary/40 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
             >

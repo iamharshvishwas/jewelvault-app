@@ -748,8 +748,8 @@ test.describe('T-F03, PT-W3: 2,500 pieces, 2,000 customers and the stock side ar
     await expectApp(page, biller, 120_000);
     expect(calls.map((c) => c.resource)).not.toContain('sku-private');
     await expect(page.getByText('Physical SKUs')).toContainText(`${oracle.firstDesignSkus} pieces`);
-    await toggle.click();
-    await expect(originalColumn).toHaveCount(oracle.firstDesignSkus);
-    for (const text of await originalColumn.allInnerTexts()) expect(text.trim()).toBe('—');
+    // the biller has no button and no column: the weight is the owner's (the clean-up of 19 October)
+    await expect(toggle).toHaveCount(0);
+    await expect(originalColumn).toHaveCount(0);
   });
 });

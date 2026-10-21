@@ -2,7 +2,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { type Sku, type Design } from '@/lib/mockData';
-import { getDesigns as getDesignsFromStore } from '@/lib/designStore';
+import { findSkuByCode, getDesigns } from '@/lib/designStore';
+import { PREVIEW_MODE } from '@/lib/previewMode';
 import StatusBadge from '@/components/ui/StatusBadge';
 import MaterialBadge from '@/components/ui/MaterialBadge';
 import AppImage from '@/components/ui/AppImage';
@@ -27,21 +28,25 @@ import {
   Hash,
 } from 'lucide-react';
 
-// Build a flat lookup map: barcode/skuNumber → { sku, design }
+// A scanned or typed code is looked up in the stores (which read the cache, or in the preview build the sample store): `findSkuByCode` takes a piece number or a barcode, in any case.
 type SkuRecord = { sku: Sku; design: Design };
 
-function buildLookup(): Map<string, SkuRecord> {
-  const map = new Map<string, SkuRecord>();
-  for (const design of getDesignsFromStore()) {
-    for (const sku of design.skus) {
-      map.set(sku.barcode.toLowerCase(), { sku, design });
-      map.set(sku.skuNumber.toLowerCase(), { sku, design });
-    }
-  }
-  return map;
-}
+/** Where "View Design" goes: the design of THE PIECE on the card (the design page shows no other design than the one its address names). */
+const designAddress = (design: Design) => `/design-detail?id=${design.id}`;
 
-// SKU_LOOKUP is rebuilt dynamically on each scan to include newly added designs
+/**
+ * The preview build's help: the first pieces of its own sample store as buttons that "scan" them (their number, and their status when it is not In Stock). They are made from the store, not
+ * written here; a real build has none (its screen starts empty), and WEB15 removes this together with the preview switch.
+ */
+function quickScansOf(designs: readonly Design[]): Array<{ label: string; barcode: string }> {
+  return designs
+    .flatMap((design) => design.skus)
+    .slice(0, 4)
+    .map((sku) => ({
+      label: sku.status === 'In Stock' ? sku.skuNumber : `${sku.skuNumber} (${sku.status})`,
+      barcode: sku.barcode,
+    }));
+}
 
 type ScanState = 'idle' | 'camera' | 'found' | 'not-found' | 'already-sold';
 
@@ -55,6 +60,7 @@ export default function ScanDetailClient() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const quickScans = PREVIEW_MODE ? quickScansOf(getDesigns()) : [];
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
@@ -91,7 +97,7 @@ export default function ScanDetailClient() {
     const query = (value ?? manualInput).trim().toLowerCase();
     if (!query) return;
     stopCamera();
-        const found = buildLookup().get(query);
+    const found = findSkuByCode(query);
     if (!found) {
       setScanState('not-found');
       setResult(null);
@@ -176,7 +182,10 @@ export default function ScanDetailClient() {
               </div>
               {/* Close camera */}
               <button
-                onClick={() => { stopCamera(); setScanState('idle'); }}
+                onClick={() => {
+                  stopCamera();
+                  setScanState('idle');
+                }}
                 className="absolute top-3 right-3 bg-black/60 text-white rounded-full p-1.5 hover:bg-black/80 transition-colors"
               >
                 <X size={16} />
@@ -220,22 +229,22 @@ export default function ScanDetailClient() {
           {/* Manual Input */}
           <div className="flex gap-2">
             <div className="relative flex-1">
-              <ScanLine size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <ScanLine
+                size={16}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
               <input
                 ref={inputRef}
                 type="text"
                 value={manualInput}
                 onChange={(e) => setManualInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Enter SKU number or barcode (e.g. SET-00572-001)"
+                placeholder="Enter SKU number or barcode"
                 className="w-full pl-9 pr-4 py-2.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary font-mono"
                 autoFocus
               />
             </div>
-            <button
-              onClick={() => handleManualSearch()}
-              className="btn-primary px-4 py-2.5"
-            >
+            <button onClick={() => handleManualSearch()} className="btn-primary px-4 py-2.5">
               <Search size={16} />
               <span className="hidden sm:inline">Search</span>
             </button>
@@ -248,32 +257,32 @@ export default function ScanDetailClient() {
               <div>
                 <p className="text-sm font-semibold text-red-700">SKU Not Found</p>
                 <p className="text-xs text-red-600 mt-0.5">
-                  No article matches <span className="font-mono font-bold">{manualInput}</span>. Check the barcode or SKU number and try again.
+                  No article matches <span className="font-mono font-bold">{manualInput}</span>.
+                  Check the barcode or SKU number and try again.
                 </p>
               </div>
             </div>
           )}
 
-          {/* Quick demo scans */}
-          <div className="pt-1">
-            <p className="text-xs text-muted-foreground font-medium mb-2">Quick demo scans:</p>
-            <div className="flex flex-wrap gap-2">
-              {[
-                { label: 'SET-00572-001', barcode: 'JV-SET-00572-001' },
-                { label: 'SET-00572-003 (Sold)', barcode: 'JV-SET-00572-003' },
-                { label: 'RING-00821-001', barcode: 'JV-RING-00821-001' },
-                { label: 'ER-00341-002 (Approval)', barcode: 'JV-ER-00341-002' },
-              ].map((demo) => (
-                <button
-                  key={demo.barcode}
-                  onClick={() => handleSimulateScan(demo.barcode)}
-                  className="text-xs px-3 py-1.5 rounded-full border border-border bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors font-mono"
-                >
-                  {demo.label}
-                </button>
-              ))}
+          {/* The preview build's help: buttons made from its sample store */}
+          {PREVIEW_MODE && quickScans.length > 0 && (
+            <div className="pt-1">
+              <p className="text-xs text-muted-foreground font-medium mb-2">
+                Pieces of the sample stock:
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {quickScans.map((demo) => (
+                  <button
+                    key={demo.barcode}
+                    onClick={() => handleSimulateScan(demo.barcode)}
+                    className="text-xs px-3 py-1.5 rounded-full border border-border bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors font-mono"
+                  >
+                    {demo.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -283,19 +292,22 @@ export default function ScanDetailClient() {
       )}
 
       {/* ── SKU DETAIL RESULT ────────────────────────────────────────── */}
-      {scanState === 'found' && result && (
-        <SkuDetailCard record={result} onReset={handleReset} />
-      )}
+      {scanState === 'found' && result && <SkuDetailCard record={result} onReset={handleReset} />}
 
       {/* ── RECENT SCANS ─────────────────────────────────────────────── */}
       {scanHistory.length > 0 && scanState === 'idle' && (
         <div className="jewel-card p-4">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Recent Scans</p>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+            Recent Scans
+          </p>
           <div className="space-y-2">
             {scanHistory.map((rec) => (
               <button
                 key={rec.sku.id}
-                onClick={() => { setResult(rec); setScanState('found'); }}
+                onClick={() => {
+                  setResult(rec);
+                  setScanState('found');
+                }}
                 className="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-muted/50 transition-colors text-left"
               >
                 <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-muted">
@@ -308,8 +320,12 @@ export default function ScanDetailClient() {
                   />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-foreground font-mono">{rec.sku.skuNumber}</p>
-                  <p className="text-xs text-muted-foreground truncate">{rec.design.designName} · {rec.sku.category}</p>
+                  <p className="text-sm font-semibold text-foreground font-mono">
+                    {rec.sku.skuNumber}
+                  </p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {rec.design.designName} · {rec.sku.category}
+                  </p>
                 </div>
                 <StatusBadge status={rec.sku.status} />
                 <ChevronRight size={14} className="text-muted-foreground shrink-0" />
@@ -323,7 +339,7 @@ export default function ScanDetailClient() {
 }
 
 // ── Already Sold Card ──────────────────────────────────────────────────────────
-function AlreadySoldCard({ record, onReset }: { record: SkuRecord; onReset: () => void }) {
+export function AlreadySoldCard({ record, onReset }: { record: SkuRecord; onReset: () => void }) {
   const { sku, design } = record;
   return (
     <div className="space-y-4">
@@ -335,7 +351,8 @@ function AlreadySoldCard({ record, onReset }: { record: SkuRecord; onReset: () =
         <div>
           <p className="font-bold text-red-700 text-base">This SKU is Already Sold</p>
           <p className="text-sm text-red-600 mt-0.5">
-            <span className="font-mono font-bold">{sku.skuNumber}</span> has been sold and cannot be billed again.
+            <span className="font-mono font-bold">{sku.skuNumber}</span> has been sold and cannot be
+            billed again.
           </p>
         </div>
       </div>
@@ -382,7 +399,8 @@ function AlreadySoldCard({ record, onReset }: { record: SkuRecord; onReset: () =
         <div className="mt-4 p-3 bg-amber-50 border border-amber-100 rounded-lg flex items-start gap-2">
           <Info size={14} className="text-amber-600 shrink-0 mt-0.5" />
           <p className="text-xs text-amber-700">
-            Sale details are visible to authorised users only. Contact Admin to view invoice and customer information.
+            Sale details are visible to authorised users only. Contact Admin to view invoice and
+            customer information.
           </p>
         </div>
         <div className="flex gap-2 mt-4">
@@ -390,7 +408,10 @@ function AlreadySoldCard({ record, onReset }: { record: SkuRecord; onReset: () =
             <RefreshCw size={14} />
             Scan Another
           </button>
-          <Link href="/design-detail" className="btn-ghost py-2 flex-1 justify-center text-sm">
+          <Link
+            href={designAddress(design)}
+            className="btn-ghost py-2 flex-1 justify-center text-sm"
+          >
             <Package size={14} />
             View Design
           </Link>
@@ -401,7 +422,7 @@ function AlreadySoldCard({ record, onReset }: { record: SkuRecord; onReset: () =
 }
 
 // ── SKU Detail Card ────────────────────────────────────────────────────────────
-function SkuDetailCard({ record, onReset }: { record: SkuRecord; onReset: () => void }) {
+export function SkuDetailCard({ record, onReset }: { record: SkuRecord; onReset: () => void }) {
   const { sku, design } = record;
 
   const isActionable = sku.status === 'In Stock';
@@ -409,30 +430,62 @@ function SkuDetailCard({ record, onReset }: { record: SkuRecord; onReset: () => 
   const isOnApproval = sku.status === 'On Approval';
 
   const weightRows = [
-    { label: 'Gross Weight', value: sku.grossWeight > 0 ? `${sku.grossWeight.toFixed(3)} g` : null },
-    { label: 'Customer Net Weight', value: sku.customerNetWeight > 0 ? `${sku.customerNetWeight.toFixed(3)} g` : null },
+    {
+      label: 'Gross Weight',
+      value: sku.grossWeight > 0 ? `${sku.grossWeight.toFixed(3)} g` : null,
+    },
+    {
+      label: 'Customer Net Weight',
+      value: sku.customerNetWeight > 0 ? `${sku.customerNetWeight.toFixed(3)} g` : null,
+    },
     { label: 'Piroi', value: sku.piroi > 0 ? `₹${sku.piroi.toLocaleString('en-IN')}` : null },
   ].filter((r) => r.value !== null);
 
   const stoneRows = [
     { label: 'Stones', value: sku.stones > 0 ? `${sku.stones} pcs` : null },
-    { label: 'Stone Weight', value: sku.stoneWeight > 0 ? `${sku.stoneWeight.toFixed(3)} g` : null },
+    {
+      label: 'Stone Weight',
+      value: sku.stoneWeight > 0 ? `${sku.stoneWeight.toFixed(3)} g` : null,
+    },
     { label: 'Kundan', value: sku.kundan > 0 ? `${sku.kundan} pcs` : null },
-    { label: 'Kundan Weight', value: sku.kundanWeight > 0 ? `${sku.kundanWeight.toFixed(3)} g` : null },
+    {
+      label: 'Kundan Weight',
+      value: sku.kundanWeight > 0 ? `${sku.kundanWeight.toFixed(3)} g` : null,
+    },
   ].filter((r) => r.value !== null);
 
   return (
     <div className="space-y-4">
       {/* Status Banner */}
       {!isActionable && (
-        <div className={`flex items-center gap-3 p-3 rounded-xl border ${
-          isReserved ? 'bg-amber-50 border-amber-200' : isOnApproval ?'bg-blue-50 border-blue-200': 'bg-muted border-border'
-        }`}>
-          <AlertTriangle size={16} className={isReserved ? 'text-amber-600' : isOnApproval ? 'text-blue-600' : 'text-muted-foreground'} />
-          <p className={`text-sm font-medium ${isReserved ? 'text-amber-700' : isOnApproval ? 'text-blue-700' : 'text-muted-foreground'}`}>
+        <div
+          className={`flex items-center gap-3 p-3 rounded-xl border ${
+            isReserved
+              ? 'bg-amber-50 border-amber-200'
+              : isOnApproval
+                ? 'bg-blue-50 border-blue-200'
+                : 'bg-muted border-border'
+          }`}
+        >
+          <AlertTriangle
+            size={16}
+            className={
+              isReserved
+                ? 'text-amber-600'
+                : isOnApproval
+                  ? 'text-blue-600'
+                  : 'text-muted-foreground'
+            }
+          />
+          <p
+            className={`text-sm font-medium ${isReserved ? 'text-amber-700' : isOnApproval ? 'text-blue-700' : 'text-muted-foreground'}`}
+          >
             {isReserved && 'This article is currently Reserved and may not be available for sale.'}
-            {isOnApproval && 'This article is currently On Approval and cannot be sold until returned.'}
-            {!isReserved && !isOnApproval && `Status: ${sku.status} — confirm availability before proceeding.`}
+            {isOnApproval &&
+              'This article is currently On Approval and cannot be sold until returned.'}
+            {!isReserved &&
+              !isOnApproval &&
+              `Status: ${sku.status} — confirm availability before proceeding.`}
           </p>
         </div>
       )}
@@ -453,16 +506,24 @@ function SkuDetailCard({ record, onReset }: { record: SkuRecord; onReset: () => 
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-2 flex-wrap">
               <div>
-                <p className="text-xl font-bold text-foreground font-mono leading-tight">{sku.skuNumber}</p>
-                <p className="text-sm text-muted-foreground mt-0.5">{design.designName || design.designNumber}</p>
+                <p className="text-xl font-bold text-foreground font-mono leading-tight">
+                  {sku.skuNumber}
+                </p>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  {design.designName || design.designNumber}
+                </p>
               </div>
               <StatusBadge status={sku.status} />
             </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               <MaterialBadge material={sku.material} purity={sku.purity} />
-              <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">{sku.category}</span>
+              <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
+                {sku.category}
+              </span>
               {sku.subcategory && (
-                <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">{sku.subcategory}</span>
+                <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
+                  {sku.subcategory}
+                </span>
               )}
             </div>
           </div>
@@ -472,7 +533,12 @@ function SkuDetailCard({ record, onReset }: { record: SkuRecord; onReset: () => 
         <div className="p-5 space-y-4">
           {/* Design & SKU IDs */}
           <div className="grid grid-cols-2 gap-3">
-            <DetailCell icon={<Hash size={13} />} label="Design Number" value={sku.designNumber} mono />
+            <DetailCell
+              icon={<Hash size={13} />}
+              label="Design Number"
+              value={sku.designNumber}
+              mono
+            />
             <DetailCell icon={<Tag size={13} />} label="SKU Number" value={sku.skuNumber} mono />
           </div>
 
@@ -503,7 +569,10 @@ function SkuDetailCard({ record, onReset }: { record: SkuRecord; onReset: () => 
           {/* Labour & Selling */}
           <div className="grid grid-cols-2 gap-3">
             {sku.labour > 0 && (
-              <DetailCell label="Labour Rate" value={`₹${sku.labour.toLocaleString('en-IN')}/${sku.sellingMethod === 'By Weight' ? 'g' : 'pc'}`} />
+              <DetailCell
+                label="Labour Rate"
+                value={`₹${sku.labour.toLocaleString('en-IN')}/${sku.sellingMethod === 'By Weight' ? 'g' : 'pc'}`}
+              />
             )}
             <DetailCell label="Selling Method" value={sku.sellingMethod} />
           </div>
@@ -535,17 +604,20 @@ function SkuDetailCard({ record, onReset }: { record: SkuRecord; onReset: () => 
           )}
 
           {/* Inventory Confirmation */}
-          <div className={`flex items-center gap-3 p-3 rounded-xl border ${
-            isActionable
-              ? 'bg-emerald-50 border-emerald-200' :'bg-muted/40 border-border'
-          }`}>
+          <div
+            className={`flex items-center gap-3 p-3 rounded-xl border ${
+              isActionable ? 'bg-emerald-50 border-emerald-200' : 'bg-muted/40 border-border'
+            }`}
+          >
             {isActionable ? (
               <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
             ) : (
               <AlertCircle size={18} className="text-muted-foreground shrink-0" />
             )}
             <div>
-              <p className={`text-sm font-semibold ${isActionable ? 'text-emerald-700' : 'text-muted-foreground'}`}>
+              <p
+                className={`text-sm font-semibold ${isActionable ? 'text-emerald-700' : 'text-muted-foreground'}`}
+              >
                 {isActionable ? 'Available in Inventory' : `Not Available for Sale (${sku.status})`}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">
@@ -584,7 +656,7 @@ function SkuDetailCard({ record, onReset }: { record: SkuRecord; onReset: () => 
               Transfer
             </Link>
             <Link
-              href="/design-detail"
+              href={designAddress(design)}
               className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-sm font-semibold border border-border hover:bg-muted text-foreground transition-colors col-span-2 sm:col-span-1"
             >
               <Package size={15} />
@@ -631,7 +703,9 @@ function SectionLabel({ icon, label }: { icon: React.ReactNode; label: string })
   return (
     <div className="flex items-center gap-1.5">
       <span className="text-muted-foreground">{icon}</span>
-      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{label}</p>
+      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+        {label}
+      </p>
     </div>
   );
 }

@@ -2,37 +2,74 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 import { getCategories } from '@/lib/catalogStore';
+import { getDesigns } from '@/lib/designStore';
+import { getLocations } from '@/lib/settingsStore';
+import { countActiveFilters, locationOptions, type FilterSection } from '@/lib/inventoryFilter';
+import {
+  clearInventoryFilter,
+  setInventorySearch,
+  setInventoryWeight,
+  toggleInventoryOption,
+  useInventoryFilter,
+} from '@/lib/inventoryFilterStore';
 
 const MATERIALS = ['Gold', 'Silver'];
 const PURITIES = ['18K', '20K', '22K', '24K', '800', '925', '999'];
-const STATUSES = ['In Stock', 'Reserved', 'On Approval', 'Sold', 'Repair', 'Transferred', 'Missing', 'Damaged', 'Archived'];
-const LOCATIONS = ['Main Showroom', 'Jaishri Vault', 'Workshop', 'Exhibition'];
+// the ten statuses of a piece (spec D8)
+const STATUSES = [
+  'In Stock',
+  'Reserved',
+  'On Approval',
+  'Sold',
+  'Returned',
+  'Repair',
+  'Transferred',
+  'Missing',
+  'Damaged',
+  'Archived',
+];
 
-interface FilterSection {
+interface PanelSection {
   id: string;
+  key: FilterSection;
   label: string;
   options: string[];
 }
 
+const sameList = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((item, i) => item === b[i]);
+
 export default function InventoryFilters() {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set(['fs-material', 'fs-category', 'fs-status']));
-  const [selected, setSelected] = useState<Record<string, Set<string>>>({});
+  const [expanded, setExpanded] = useState<Set<string>>(
+    new Set(['fs-material', 'fs-category', 'fs-status'])
+  );
+  const filter = useInventoryFilter();
   const [categories, setCategories] = useState<string[]>(() => getCategories());
+  const [locations, setLocations] = useState<string[]>(() =>
+    locationOptions(getDesigns(), getLocations())
+  );
 
   useEffect(() => {
-    const interval = setInterval(() => setCategories(getCategories()), 1000);
+    const interval = setInterval(() => {
+      setCategories(getCategories());
+      const next = locationOptions(getDesigns(), getLocations());
+      setLocations((prev) => (sameList(prev, next) ? prev : next));
+    }, 1000);
     return () => clearInterval(interval);
   }, []);
 
-  const filterSections: FilterSection[] = useMemo(
+  // what is ticked belongs to this screen: leaving it clears the filter, so a design added elsewhere is never hidden by a tick nobody remembers
+  useEffect(() => clearInventoryFilter, []);
+
+  const filterSections: PanelSection[] = useMemo(
     () => [
-      { id: 'fs-material', label: 'Material', options: MATERIALS },
-      { id: 'fs-category', label: 'Category', options: categories },
-      { id: 'fs-purity', label: 'Purity', options: PURITIES },
-      { id: 'fs-status', label: 'Status', options: STATUSES },
-      { id: 'fs-location', label: 'Location', options: LOCATIONS },
+      { id: 'fs-material', key: 'material', label: 'Material', options: MATERIALS },
+      { id: 'fs-category', key: 'category', label: 'Category', options: categories },
+      { id: 'fs-purity', key: 'purity', label: 'Purity', options: PURITIES },
+      { id: 'fs-status', key: 'status', label: 'Status', options: STATUSES },
+      { id: 'fs-location', key: 'location', label: 'Location', options: locations },
     ],
-    [categories]
+    [categories, locations]
   );
 
   const toggle = (sectionId: string) => {
@@ -44,27 +81,21 @@ export default function InventoryFilters() {
     });
   };
 
-  const toggleOption = (sectionId: string, option: string) => {
-    setSelected((prev) => {
-      const sectionSet = new Set(prev[sectionId] ?? []);
-      if (sectionSet.has(option)) sectionSet.delete(option);
-      else sectionSet.add(option);
-      return { ...prev, [sectionId]: sectionSet };
-    });
-  };
-
-  const totalActive = Object.values(selected).reduce((a, s) => a + s.size, 0);
-
-  const clearAll = () => setSelected({});
+  const totalActive = countActiveFilters(filter);
 
   return (
     <aside className="hidden lg:block w-52 xl:w-56 flex-shrink-0">
       <div className="jewel-card p-3 sticky top-4">
         {/* Header */}
         <div className="flex items-center justify-between mb-3 pb-2 border-b border-border">
-          <span className="text-xs font-semibold text-foreground uppercase tracking-wider">Filters</span>
+          <span className="text-xs font-semibold text-foreground uppercase tracking-wider">
+            Filters
+          </span>
           {totalActive > 0 && (
-            <button onClick={clearAll} className="flex items-center gap-1 text-xs text-primary hover:underline">
+            <button
+              onClick={clearInventoryFilter}
+              className="flex items-center gap-1 text-xs text-primary hover:underline"
+            >
               <X size={11} /> Clear ({totalActive})
             </button>
           )}
@@ -74,7 +105,10 @@ export default function InventoryFilters() {
         <div className="mb-3">
           <input
             type="text"
+            value={filter.search}
+            onChange={(e) => setInventorySearch(e.target.value)}
             placeholder="Search designs, SKUs..."
+            aria-label="Search designs and SKUs"
             className="input-field text-xs py-1.5"
           />
         </div>
@@ -83,10 +117,13 @@ export default function InventoryFilters() {
         <div className="space-y-1">
           {filterSections.map((section) => {
             const isExpanded = expanded.has(section.id);
-            const sectionSelected = selected[section.id] ?? new Set();
+            const sectionSelected = new Set(filter[section.key]);
 
             return (
-              <div key={section.id} className="border-b border-border last:border-0 pb-2 mb-2 last:pb-0 last:mb-0">
+              <div
+                key={section.id}
+                className="border-b border-border last:border-0 pb-2 mb-2 last:pb-0 last:mb-0"
+              >
                 <button
                   onClick={() => toggle(section.id)}
                   className="w-full flex items-center justify-between py-1.5 text-xs font-semibold text-foreground hover:text-primary transition-colors"
@@ -114,10 +151,12 @@ export default function InventoryFilters() {
                           <input
                             type="checkbox"
                             checked={checked}
-                            onChange={() => toggleOption(section.id, option)}
+                            onChange={() => toggleInventoryOption(section.key, option)}
                             className="w-3.5 h-3.5 rounded border-border accent-primary"
                           />
-                          <span className={`text-xs transition-colors ${checked ? 'text-primary font-semibold' : 'text-muted-foreground group-hover:text-foreground'}`}>
+                          <span
+                            className={`text-xs transition-colors ${checked ? 'text-primary font-semibold' : 'text-muted-foreground group-hover:text-foreground'}`}
+                          >
                             {option}
                           </span>
                         </label>
@@ -134,9 +173,27 @@ export default function InventoryFilters() {
         <div className="mt-3 pt-3 border-t border-border">
           <p className="text-xs font-semibold text-foreground mb-2">Weight Range (g)</p>
           <div className="flex items-center gap-2">
-            <input type="number" placeholder="Min" className="input-field text-xs py-1.5 w-full" min={0} step={0.001} />
+            <input
+              type="number"
+              value={filter.weightMin}
+              onChange={(e) => setInventoryWeight('min', e.target.value)}
+              placeholder="Min"
+              aria-label="Minimum gross weight in grams"
+              className="input-field text-xs py-1.5 w-full"
+              min={0}
+              step={0.001}
+            />
             <span className="text-muted-foreground text-xs">–</span>
-            <input type="number" placeholder="Max" className="input-field text-xs py-1.5 w-full" min={0} step={0.001} />
+            <input
+              type="number"
+              value={filter.weightMax}
+              onChange={(e) => setInventoryWeight('max', e.target.value)}
+              placeholder="Max"
+              aria-label="Maximum gross weight in grams"
+              className="input-field text-xs py-1.5 w-full"
+              min={0}
+              step={0.001}
+            />
           </div>
         </div>
       </div>
