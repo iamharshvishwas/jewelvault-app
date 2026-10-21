@@ -668,11 +668,10 @@ test.describe('T-E01: the session at the next poll (A10, U6, C18)', () => {
     await expect(aside(page)).toContainText('Biller', { timeout: 20_000 });
     await expectApp(page, user);
     expect(Date.now() - at, 'within one poll interval and a little').toBeLessThan(15_000);
-    // the owner-only data is gone from memory: the same screen, no reload, shows the piece without it
+    // the owner-only data is gone from memory, and so is the button (the weight is the owner's, the clean-up of 19 October): the same screen, no reload, shows the piece without either
     await expect(page.getByText('Physical SKUs')).toContainText('1 pieces');
-    await toggle.click();
-    await expect(originalColumn).toHaveCount(1);
-    expect((await originalColumn.first().innerText()).trim()).toBe('—');
+    await expect(toggle).toHaveCount(0);
+    await expect(originalColumn).toHaveCount(0);
     expect(hydrated).not.toContain('sku-private');
     expect(hydrated.length, "the biller's 14 tables").toBe(14);
 
