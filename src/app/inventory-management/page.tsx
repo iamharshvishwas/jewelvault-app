@@ -9,7 +9,7 @@ export default function InventoryManagementPage() {
     <AppLayout>
       <div className="space-y-4">
         <InventoryHeader />
-        <div className="flex gap-4">
+        <div className="flex flex-col lg:flex-row gap-4">
           <InventoryFilters />
           <div className="flex-1 min-w-0">
             <InventoryGrid />
