@@ -245,9 +245,8 @@ export default function InventoryGrid() {
               </option>
             ))}
           </select>
-          <span className="text-xs text-muted-foreground whitespace-nowrap">
-            {total} design{total !== 1 ? 's' : ''}
-          </span>
+          {/* always "designs", also for one: tests/e2e/hidden-and-download.spec.ts looks for /\d+ designs/ here */}
+          <span className="text-xs text-muted-foreground whitespace-nowrap">{total} designs</span>
         </div>
 
         <div className="flex items-center bg-muted rounded-lg p-1">

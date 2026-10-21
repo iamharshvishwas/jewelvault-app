@@ -188,7 +188,7 @@ test.describe.serial('the filter panel of the inventory', () => {
 
     await openInventory(page, owner);
     await expect(headerLine(page)).toHaveText(line(all.d, all.s, all.i));
-    await expect(toolbarCount(page)).toHaveText(`${all.d} design${all.d === 1 ? '' : 's'}`);
+    await expect(toolbarCount(page)).toHaveText(`${all.d} designs`);
     await expect(clearButton(page)).toHaveCount(0);
 
     await option(page, 'Gold').check();
@@ -199,7 +199,7 @@ test.describe.serial('the filter panel of the inventory', () => {
     await clearButton(page).click();
     await expect(option(page, 'Gold')).not.toBeChecked();
     await expect(headerLine(page)).toHaveText(line(all.d, all.s, all.i));
-    await expect(toolbarCount(page)).toHaveText(`${all.d} design${all.d === 1 ? '' : 's'}`);
+    await expect(toolbarCount(page)).toHaveText(`${all.d} designs`);
     await expect(clearButton(page)).toHaveCount(0);
   });
 
