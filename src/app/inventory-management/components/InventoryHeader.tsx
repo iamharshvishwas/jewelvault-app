@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import {
   Plus,
@@ -13,38 +13,42 @@ import {
   FileText,
 } from 'lucide-react';
 import { getDesigns } from '@/lib/designStore';
+import { filterDesigns, inventoryStats } from '@/lib/inventoryFilter';
+import { useInventoryFilter } from '@/lib/inventoryFilterStore';
+import type { Design } from '@/lib/mockData';
 import { downloadCsv, downloadExcel, printPdf, type ExportRow } from '@/lib/exportUtils';
 import { inventoryExportRows } from '@/lib/inventoryExport';
 import { useSession } from '@/lib/authStore';
 
 export default function InventoryHeader() {
   const [view, setView] = useState<'grid' | 'table'>('grid');
-  const [stats, setStats] = useState({ designs: 0, skus: 0, inStock: 0 });
+  const filter = useInventoryFilter();
+  const [allDesigns, setAllDesigns] = useState<Design[]>([]);
   const { role } = useSession();
   const isAdmin = role === 'owner';
 
   useEffect(() => {
-    const compute = () => {
-      const designs = getDesigns();
-      const allSkus = designs?.flatMap((d) => d?.skus);
-      setStats({
-        designs: designs?.length,
-        skus: allSkus?.length,
-        inStock: allSkus?.filter((s) => s?.status === 'In Stock')?.length,
-      });
-    };
+    const compute = () => setAllDesigns(getDesigns());
     compute();
     const interval = setInterval(compute, 800);
     return () => clearInterval(interval);
   }, []);
+
+  // the line under the title is the designs the filter panel lets through, with all the pieces of those designs
+  const stats = useMemo(
+    () => inventoryStats(filterDesigns(allDesigns, filter)),
+    [allDesigns, filter]
+  );
+  // the exports below are of the whole stock, filter or not, and say so with their own count
+  const exportSkus = useMemo(() => inventoryStats(allDesigns).skus, [allDesigns]);
 
   const inventoryRows = (): ExportRow[] => inventoryExportRows(getDesigns(), role);
 
   const exportInventory = (format: 'csv' | 'excel' | 'pdf') => {
     const rows = inventoryRows();
     if (format === 'csv') downloadCsv('Inventory SKU Export', rows);
-    if (format === 'excel') downloadExcel('Inventory SKU Export', rows, `${stats.skus} SKUs`);
-    if (format === 'pdf') printPdf('Inventory SKU Export', rows, `${stats.skus} SKUs`);
+    if (format === 'excel') downloadExcel('Inventory SKU Export', rows, `${exportSkus} SKUs`);
+    if (format === 'pdf') printPdf('Inventory SKU Export', rows, `${exportSkus} SKUs`);
   };
 
   return (
