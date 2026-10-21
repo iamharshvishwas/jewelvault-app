@@ -570,6 +570,10 @@ export interface HealthAge {
 /**
  * `GET /v1/dashboard/health` (the owner's dashboard line, spec section 12, I12; `readHealth` of the API). The API works out `level` and `reasons`; the screen repeats them and never
  * decides a threshold. A reason this build does not know is still shown (see `healthLine.ts`).
+ *
+ * `folder_probe`, `photo_files` and `clock_ahead` are the figures behind the reasons of the API task RV3a (jewelvault-api, `docs/handoffs.md`, section "RV3a"; `readHealth` in
+ * `src/reads/health.ts`). They are OPTIONAL here: an API built before RV3a does not send them, and the line must work without them. A figure explains a reason, it is never the reason, and
+ * the screen decides nothing from it.
  */
 export interface DashboardHealth {
   level: 'red' | 'amber' | 'green';
@@ -607,6 +611,22 @@ export interface DashboardHealth {
     fell: boolean;
     fell_at: TimestampText | null;
   } | null;
+  /** RV3a-F3: the newest probe of the backup folder, null when there never was one. `ok: false` carries the error `code` (ENOENT, EACCES ...) and `where` (folder, daily, monthly, photos ...). */
+  folder_probe?: {
+    ok: boolean;
+    code: string | null;
+    where: string | null;
+    at: TimestampText;
+  } | null;
+  /** RV3a-F1: photo copies written again in the last 7 days (and when last), and copies found damaged that still wait for somebody (and when they were found). */
+  photo_files?: {
+    repaired: number;
+    repaired_at: TimestampText | null;
+    damaged: number;
+    damaged_at: TimestampText | null;
+  };
+  /** RV3a-F4: the newest good backup or photo copy that is dated in the future (a wrong clock on the server that makes the backups), and how many hours ahead it is; null when there is none. */
+  clock_ahead?: { last_at: TimestampText; hours: number } | null;
   rights: { delete: boolean; drop: boolean; extra: string[] };
   now: TimestampText;
 }

@@ -7,8 +7,11 @@
 //   - repeats the level the API gave, and lists the reasons in the order it gave them, each as a plain sentence;
 //   - puts a fact (the dump, the database, the download ...) in the colour of the reason that belongs to it, or of the state the API computed for it (download, pull);
 //   - shows a reason it does not know with its code, in the colour of the line, rather than hide it;
-//   - invents no reason: a missing backup folder that `readHealth` has not turned red yet (API34 writes the signal, `readHealth` does not read it yet) is shown as a folder with no record,
-//     not as a problem, and the sentence for `backup_folder_unusable` is ready for the day the API sends it.
+//   - invents no reason: a folder with no record yet, and no reason from the API, is shown as "Not recorded yet", not as a problem.
+// The reasons of the API task RV3a (jewelvault-api, docs/handoffs.md, section "RV3a") are all worded here: `backup_folder_unusable` (the backup folder is missing or cannot be written to; the
+// API reads the folder signal of API34 since RV3a-F3), `backup_photos_damaged` (red) and `backup_photos_repaired` (amber), both about the photo copies, and `backup_clock_ahead` (a good run
+// dated in the future). The figures that come with them, `folder_probe`, `photo_files` and `clock_ahead`, are OPTIONAL: an older API does not send them, and the line is the same without
+// them. A figure never makes a reason and never sets a colour; the one place the line uses one is the words of the "Backup folder" fact (see `folderValue`).
 // Money and days are the API's own text and numbers; nothing here adds anything up. This file imports no client and no store (C9).
 import type { DashboardHealth, ReviewListName, ReviewWire } from '@/lib/api/types';
 import { REVIEW_LISTS } from '@/lib/api/types';
@@ -78,6 +81,8 @@ const RED_REASONS: Readonly<Record<string, string>> = {
   photo_copy_stale: 'The last copy of the photos is too old. Tell Harsh.',
   backup_files_fell: 'Files are missing from the backup folder. Tell Harsh.',
   backup_folder_unusable: 'The backup folder is missing or cannot be written to. Tell Harsh.',
+  backup_photos_damaged: 'A photo copy in the backup folder is damaged. Tell Harsh.',
+  backup_clock_ahead: 'A backup is dated in the future, so its age cannot be trusted. Tell Harsh.',
   db_size: 'The database is above its size limit. Tell Harsh.',
   download_red: 'Download everything has not been used for too long. Do it now.',
 };
@@ -86,6 +91,8 @@ const RED_REASONS: Readonly<Record<string, string>> = {
 const AMBER_REASONS: Readonly<Record<string, string>> = {
   download_amber: 'It is time to use Download everything.',
   pulled_amber: "Harsh's weekly pull of the backup is late.",
+  backup_photos_repaired:
+    'Photo copies were missing from the backup folder and have been copied again. Tell Harsh.',
   delete_or_drop_right:
     'The database login can delete or drop data, which it should not. Tell Harsh.',
 };
@@ -99,6 +106,9 @@ const FACT_OF_REASON: Readonly<Record<string, FactId>> = {
   dump_stale: 'backup',
   photo_copy_never: 'photos',
   photo_copy_stale: 'photos',
+  backup_photos_damaged: 'photos',
+  backup_photos_repaired: 'photos',
+  backup_clock_ahead: 'backup',
   backup_files_fell: 'folder',
   backup_folder_unusable: 'folder',
   db_size: 'database',
@@ -185,6 +195,19 @@ function toneFrom(reasons: ReadonlySet<string>, fact: FactId, ok: boolean): Tone
   return ok ? 'ok' : 'unknown';
 }
 
+/**
+ * The words of the "Backup folder" fact: the size and the files the last good run recorded, or "Cannot be used" when the API says the folder is unusable. The REASON (`backup_folder_unusable`)
+ * decides that, as it decides the colour; the figure `folder_probe` (RV3a) only confirms it, so a failed probe that a newer good run has already healed (the API sends no reason then) leaves
+ * the recorded size and a calm colour, and a reason from an API that sends no figure keeps the recorded size under a red colour. Nothing is read from the probe's code or place: those are for Harsh.
+ */
+function folderValue(health: DashboardHealth, reasons: ReadonlySet<string>): string {
+  if (reasons.has('backup_folder_unusable') && health.folder_probe?.ok === false)
+    return 'Cannot be used';
+  return health.folder
+    ? `${bytesShown(health.folder.bytes)} · ${plural(health.folder.files, 'file')}`
+    : 'Not recorded yet';
+}
+
 function factsOf(health: DashboardHealth): HealthFact[] {
   const reasons = new Set(health.reasons);
   const today = kolkataDate(health.now);
@@ -200,9 +223,7 @@ function factsOf(health: DashboardHealth): HealthFact[] {
   const age = (value: { age_hours: number | null }) =>
     value.age_hours === null ? 'None yet' : hoursAgo(value.age_hours);
 
-  const folder = health.folder
-    ? `${bytesShown(health.folder.bytes)} · ${plural(health.folder.files, 'file')}`
-    : 'Not recorded yet';
+  const folder = folderValue(health, reasons);
 
   const download = health.download;
   let downloadText = 'No record yet';

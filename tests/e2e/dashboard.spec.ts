@@ -778,6 +778,56 @@ test.describe("T-B18 / T-R03 / T-R05 E2E: the owner's dashboard line turns red a
     await expect(line(page).fact('download')).toContainText('36 days ago');
   });
 
+  test('RV3a words: the four reasons about the backup folder, the photo copies and the clock arrive as plain sentences in the API order, and the folder says it cannot be used', async ({
+    page,
+  }) => {
+    // The lane's own night is healthy; the health body is then made to carry what an API with RV3a sends for a broken folder, a damaged and a repaired photo copy and a clock that is ahead.
+    // The words and the colours are the website's, so the body is written here, not worked out by the lane's API (which may be older than RV3a): every other field is the lane's own.
+    await laneSql(HEALTHY_SQL(kolkataDate(1)));
+    await page.route('**/v1/dashboard/health', async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as { now: string };
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          level: 'red',
+          reasons: [
+            'backup_folder_unusable',
+            'backup_photos_damaged',
+            'backup_clock_ahead',
+            'backup_photos_repaired',
+          ],
+          folder_probe: { ok: false, code: 'ENOENT', where: 'folder', at: body.now },
+          photo_files: { repaired: 2, repaired_at: body.now, damaged: 1, damaged_at: body.now },
+          clock_ahead: { last_at: body.now, hours: 3 },
+        },
+      });
+    });
+    await open(page, e2eLogin('owner'));
+    await expect(line(page).root).toBeVisible({ timeout: 60_000 });
+    await expect(line(page).root).toHaveAttribute('data-level', 'red');
+    await expect(line(page).headline).toHaveText('Problem');
+    // the sentences, in the order the API gave the codes
+    await expect(page.locator('[data-testid^="health-reason-"]')).toHaveText([
+      'The backup folder is missing or cannot be written to. Tell Harsh.',
+      'A photo copy in the backup folder is damaged. Tell Harsh.',
+      'A backup is dated in the future, so its age cannot be trusted. Tell Harsh.',
+      'Photo copies were missing from the backup folder and have been copied again. Tell Harsh.',
+    ]);
+    for (const code of ['backup_folder_unusable', 'backup_photos_damaged', 'backup_clock_ahead']) {
+      await expect(line(page).reason(code)).toHaveAttribute('data-tone', 'red');
+    }
+    await expect(line(page).reason('backup_photos_repaired')).toHaveAttribute('data-tone', 'amber');
+    // the fact each reason belongs to takes its colour; the folder says it cannot be used instead of its last size
+    await expect(line(page).fact('folder')).toContainText('Cannot be used');
+    for (const id of ['folder', 'photos', 'backup']) {
+      await expect(line(page).fact(id)).toHaveAttribute('data-tone', 'red');
+    }
+    await expect(line(page).fact('database')).toHaveAttribute('data-tone', 'ok');
+    await expect(line(page).root).not.toContainText('Something needs a look');
+  });
+
   test('red: the nightly check is 30 hours old (the job stopped)', async ({ page }) => {
     await laneSql(HEALTHY_SQL(kolkataDate(1)));
     await laneSql(

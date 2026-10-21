@@ -3,8 +3,9 @@
 //   and since the last weekly pull, and yesterday's review counts, and it turns red or amber as `GET /v1/dashboard/health` says.
 //
 // THE RULE OF THIS SCREEN: the API (`readHealth`, API12/API32/API35) works out the level and the reasons and the route only repeats them, so the screen never decides a threshold. It maps each
-// reason to a plain sentence and puts the fact it belongs to in the colour of that reason; a reason it does not know is still shown, in the colour of the line. The folder-probe signal of
-// API34 (a `backup_runs` row of kind db_dump, ok 0, with detail.folder_probe) is not read by `readHealth` yet: the screen shows whatever the API sends and never invents the reason.
+// reason to a plain sentence and puts the fact it belongs to in the colour of that reason; a reason it does not know is still shown, in the colour of the line. The four reasons of the API
+// task RV3a (`backup_folder_unusable`, `backup_photos_damaged`, `backup_photos_repaired`, `backup_clock_ahead`) are worded below; the three figures that come with them (`folder_probe`,
+// `photo_files`, `clock_ahead`) are optional, because an API built before RV3a does not send them, and they decide nothing: the screen never invents a reason from a figure.
 //
 // Three layers: `buildHealthLine` (the model, pure), the store that reads the two calls (`createBooksServer`), and the card drawn from the model (`HealthLineView`, server-side React).
 //
@@ -316,7 +317,7 @@ describe('PT-W12 the dashboard line shows whatever the API sends and invents no 
     expect(amber.reasons[0].tone).toBe('amber');
   });
 
-  it('the folder reason of spec 5.2.2 is worded when the API starts sending it, and the folder fact turns red with it', async () => {
+  it('the folder reason of spec 5.2.2 (sent by the API since RV3a) is worded, and the folder fact turns red with it', async () => {
     const { buildHealthLine } = await model();
     const line = buildHealthLine(
       ready(greenHealth({ level: 'red', reasons: ['backup_folder_unusable'] }))
@@ -329,7 +330,7 @@ describe('PT-W12 the dashboard line shows whatever the API sends and invents no 
     expect(factOf(line, 'folder').tone).toBe('red');
   });
 
-  it('a missing folder that readHealth has not turned red yet is NOT shown as a problem (no reason, no red): the API has not said so', async () => {
+  it('a folder with no record yet and no reason from the API is NOT shown as a problem (no reason, no red): the API has not said so', async () => {
     const { buildHealthLine } = await model();
     const line = buildHealthLine(ready(greenHealth({ folder: null })));
     expect(line.level).toBe('green');
@@ -345,6 +346,348 @@ describe('PT-W12 the dashboard line shows whatever the API sends and invents no 
     );
     expect(line.level).toBe('green');
     expect(factOf(line, 'backup')).toMatchObject({ value: '5 days ago', tone: 'ok' });
+  });
+});
+
+describe('PT-W12 / RV3a the dashboard line: the four reasons the API added for the backup folder, the photo copies and the clock', () => {
+  const photoFiles = (over: Partial<NonNullable<DashboardHealth['photo_files']>> = {}) => ({
+    repaired: 0,
+    repaired_at: null,
+    damaged: 0,
+    damaged_at: null,
+    ...over,
+  });
+  const probeFailed = {
+    ok: false,
+    code: 'ENOENT',
+    where: 'folder',
+    at: '2026-10-16T01:10:00.000000Z',
+  };
+
+  const cases: Array<{
+    code: string;
+    level: 'red' | 'amber';
+    change: Partial<DashboardHealth>;
+    fact: string;
+    sentence: string;
+  }> = [
+    {
+      code: 'backup_photos_damaged',
+      level: 'red',
+      change: {
+        photo_files: photoFiles({ damaged: 2, damaged_at: '2026-10-15T21:12:00.000000Z' }),
+      },
+      fact: 'photos',
+      sentence: 'A photo copy in the backup folder is damaged. Tell Harsh.',
+    },
+    {
+      code: 'backup_clock_ahead',
+      level: 'red',
+      change: { clock_ahead: { last_at: '2026-10-16T10:00:00.000000Z', hours: 3 } },
+      fact: 'backup',
+      sentence: 'A backup is dated in the future, so its age cannot be trusted. Tell Harsh.',
+    },
+    {
+      code: 'backup_photos_repaired',
+      level: 'amber',
+      change: {
+        photo_files: photoFiles({ repaired: 3, repaired_at: '2026-10-15T21:12:00.000000Z' }),
+      },
+      fact: 'photos',
+      sentence:
+        'Photo copies were missing from the backup folder and have been copied again. Tell Harsh.',
+    },
+    {
+      code: 'backup_folder_unusable',
+      level: 'red',
+      change: { folder_probe: probeFailed },
+      fact: 'folder',
+      sentence: 'The backup folder is missing or cannot be written to. Tell Harsh.',
+    },
+  ];
+
+  for (const { code, level, change, fact, sentence } of cases) {
+    it(`${code}: the line is ${level === 'red' ? 'red' : 'amber (a reminder)'}, the sentence is plain, and only the ${fact} fact changes colour`, async () => {
+      const { buildHealthLine } = await model();
+      const line = buildHealthLine(ready(greenHealth({ ...change, level, reasons: [code] })));
+      expect(line.level).toBe(level);
+      expect(line.headline).toBe(level === 'red' ? 'Problem' : 'Reminder');
+      expect(line.reasons).toEqual([{ code, text: sentence, tone: level }]);
+      expect(factOf(line, fact).tone).toBe(level);
+      // every other fact is as healthy as it was
+      expect(line.facts.filter((f) => f.tone !== 'ok').map((f) => f.id)).toEqual([fact]);
+      // one short sentence for Siddhi's staff: no code word, and it says who can fix it
+      expect(sentence.length).toBeLessThanOrEqual(90);
+      expect(sentence).not.toContain('_');
+      expect(sentence.endsWith('Tell Harsh.')).toBe(true);
+    });
+  }
+
+  it('the facts keep what the API measured: a damaged copy or a wrong clock changes the colour, not the age shown', async () => {
+    const { buildHealthLine } = await model();
+    const damaged = buildHealthLine(
+      ready(
+        greenHealth({
+          level: 'red',
+          reasons: ['backup_photos_damaged'],
+          photo_files: photoFiles({ damaged: 1, damaged_at: '2026-10-15T21:12:00.000000Z' }),
+        })
+      )
+    );
+    expect(factOf(damaged, 'photos')).toMatchObject({ value: '10 hours ago', tone: 'red' });
+    const ahead = buildHealthLine(
+      ready(
+        greenHealth({
+          level: 'red',
+          reasons: ['backup_clock_ahead'],
+          clock_ahead: { last_at: '2026-10-16T12:00:00.000000Z', hours: 5 },
+        })
+      )
+    );
+    expect(factOf(ahead, 'backup')).toMatchObject({ value: '10 hours ago', tone: 'red' });
+  });
+
+  it('reasons come in the order the API gave them, each in its own colour, and every fact takes the first colour the API listed for it', async () => {
+    const { buildHealthLine } = await model();
+    const line = buildHealthLine(
+      ready(
+        greenHealth({
+          level: 'red',
+          reasons: [
+            'dump_stale',
+            'backup_folder_unusable',
+            'backup_photos_damaged',
+            'backup_clock_ahead',
+            'download_amber',
+            'backup_photos_repaired',
+            'delete_or_drop_right',
+          ],
+          db_dump: { last_at: '2026-10-14T01:10:00.000000Z', age_hours: 30.5 },
+          download: {
+            state: 'amber',
+            from: 'last_download',
+            reference_date: '2026-09-12',
+            age_days: 33,
+          },
+          rights: { delete: true, drop: false, extra: ['DELETE'] },
+          folder_probe: probeFailed,
+          photo_files: photoFiles({
+            repaired: 1,
+            repaired_at: '2026-10-15T21:12:00.000000Z',
+            damaged: 1,
+            damaged_at: '2026-10-15T21:12:00.000000Z',
+          }),
+          clock_ahead: { last_at: '2026-10-16T10:00:00.000000Z', hours: 3 },
+        })
+      )
+    );
+    expect(line.level).toBe('red');
+    expect(line.reasons.map((r) => [r.code, r.tone])).toEqual([
+      ['dump_stale', 'red'],
+      ['backup_folder_unusable', 'red'],
+      ['backup_photos_damaged', 'red'],
+      ['backup_clock_ahead', 'red'],
+      ['download_amber', 'amber'],
+      ['backup_photos_repaired', 'amber'],
+      ['delete_or_drop_right', 'amber'],
+    ]);
+    expect(line.reasons.some((r) => r.text.startsWith('Something needs a look'))).toBe(false);
+    // damaged (red) comes before repaired (amber) in the API's order, so the photo copy is red
+    expect(factOf(line, 'photos').tone).toBe('red');
+    expect(factOf(line, 'backup').tone).toBe('red');
+    expect(factOf(line, 'folder').tone).toBe('red');
+    expect(factOf(line, 'download').tone).toBe('amber');
+  });
+
+  it('a repaired photo copy alone is a reminder, and the same code in a red line keeps its amber colour', async () => {
+    const { buildHealthLine } = await model();
+    const line = buildHealthLine(
+      ready(greenHealth({ level: 'red', reasons: ['dump_stale', 'backup_photos_repaired'] }))
+    );
+    expect(line.reasons.map((r) => [r.code, r.tone])).toEqual([
+      ['dump_stale', 'red'],
+      ['backup_photos_repaired', 'amber'],
+    ]);
+    expect(factOf(line, 'photos').tone).toBe('amber');
+  });
+
+  describe('the Backup folder fact', () => {
+    it('says "Cannot be used" when the API says the folder is unusable and its newest probe failed', async () => {
+      const { buildHealthLine } = await model();
+      const line = buildHealthLine(
+        ready(
+          greenHealth({
+            level: 'red',
+            reasons: ['backup_folder_unusable'],
+            folder_probe: probeFailed,
+          })
+        )
+      );
+      expect(factOf(line, 'folder')).toEqual({
+        id: 'folder',
+        label: 'Backup folder',
+        value: 'Cannot be used',
+        tone: 'red',
+      });
+    });
+
+    it('says it too when the folder has no recorded size at all', async () => {
+      const { buildHealthLine } = await model();
+      const line = buildHealthLine(
+        ready(
+          greenHealth({
+            level: 'red',
+            reasons: ['backup_folder_unusable'],
+            folder: null,
+            folder_probe: probeFailed,
+          })
+        )
+      );
+      expect(factOf(line, 'folder')).toMatchObject({ value: 'Cannot be used', tone: 'red' });
+    });
+
+    it('keeps the last recorded size and files when the API sends the reason without the figure (an older build)', async () => {
+      const { buildHealthLine } = await model();
+      const line = buildHealthLine(
+        ready(greenHealth({ level: 'red', reasons: ['backup_folder_unusable'] }))
+      );
+      expect(factOf(line, 'folder')).toMatchObject({ value: '1.16 GB · 83 files', tone: 'red' });
+    });
+
+    it('keeps the colour from the reason, never from the figure: a failed probe that a newer good run already healed (no reason) stays green', async () => {
+      const { buildHealthLine } = await model();
+      const line = buildHealthLine(ready(greenHealth({ folder_probe: probeFailed })));
+      expect(line.level).toBe('green');
+      expect(line.reasons).toEqual([]);
+      expect(factOf(line, 'folder')).toMatchObject({ value: '1.16 GB · 83 files', tone: 'ok' });
+    });
+
+    it('a probe that passed (the heal row) changes nothing', async () => {
+      const { buildHealthLine } = await model();
+      const line = buildHealthLine(
+        ready(
+          greenHealth({
+            folder_probe: { ok: true, code: null, where: null, at: '2026-10-16T01:10:00.000000Z' },
+          })
+        )
+      );
+      expect(factOf(line, 'folder')).toMatchObject({ value: '1.16 GB · 83 files', tone: 'ok' });
+    });
+  });
+
+  describe('a health body without the new figures, or with them empty', () => {
+    it('the base body of an API built before RV3a has none of the three keys, and draws as before', async () => {
+      const { buildHealthLine } = await model();
+      const base = greenHealth();
+      expect('photo_files' in base).toBe(false);
+      expect('folder_probe' in base).toBe(false);
+      expect('clock_ahead' in base).toBe(false);
+      const line = buildHealthLine(ready(base));
+      expect(line.level).toBe('green');
+      expect(line.reasons).toEqual([]);
+      expect(factOf(line, 'folder')).toMatchObject({ value: '1.16 GB · 83 files', tone: 'ok' });
+    });
+
+    it('each new reason still gets its sentence and its colour when none of the figures is there', async () => {
+      const { buildHealthLine } = await model();
+      for (const { code, level, sentence, fact } of cases) {
+        const line = buildHealthLine(ready(greenHealth({ level, reasons: [code] })));
+        expect(line.reasons).toEqual([{ code, text: sentence, tone: level }]);
+        expect(factOf(line, fact).tone).toBe(level);
+      }
+    });
+
+    it('figures that say "nothing happened" (null, or zero counts) add no reason and change no fact', async () => {
+      const { buildHealthLine } = await model();
+      const plain = buildHealthLine(ready(greenHealth()));
+      const quiet = buildHealthLine(
+        ready(greenHealth({ folder_probe: null, clock_ahead: null, photo_files: photoFiles() }))
+      );
+      expect(quiet).toEqual(plain);
+    });
+
+    it('a figure alone invents nothing: damaged copies, a clock ahead and a failed probe without any reason from the API leave the line green', async () => {
+      const { buildHealthLine } = await model();
+      const line = buildHealthLine(
+        ready(
+          greenHealth({
+            photo_files: photoFiles({ damaged: 4, damaged_at: '2026-10-15T21:12:00.000000Z' }),
+            clock_ahead: { last_at: '2026-10-16T12:00:00.000000Z', hours: 5 },
+          })
+        )
+      );
+      expect(line.level).toBe('green');
+      expect(line.reasons).toEqual([]);
+      expect(line.facts.every((f) => f.tone === 'ok')).toBe(true);
+    });
+  });
+
+  describe('the card drawn from the model', () => {
+    it('shows each new reason with its sentence and colour, the photo copy and the backup facts in their colours, and the folder as "Cannot be used"', async () => {
+      const html = await drawCard(({ el, m, c }) => {
+        const view = ready(
+          greenHealth({
+            level: 'red',
+            reasons: [
+              'backup_folder_unusable',
+              'backup_photos_damaged',
+              'backup_clock_ahead',
+              'backup_photos_repaired',
+            ],
+            folder_probe: probeFailed,
+            photo_files: photoFiles({
+              repaired: 1,
+              repaired_at: '2026-10-15T21:12:00.000000Z',
+              damaged: 1,
+              damaged_at: '2026-10-15T21:12:00.000000Z',
+            }),
+            clock_ahead: { last_at: '2026-10-16T10:00:00.000000Z', hours: 3 },
+          })
+        );
+        return el(c.HealthLineView, { model: m.buildHealthLine(view) });
+      });
+      expect(attrOf(html, 'health-line', 'data-level')).toBe('red');
+      expect(textOf(html, 'health-reason-backup_folder_unusable')).toBe(
+        'The backup folder is missing or cannot be written to. Tell Harsh.'
+      );
+      expect(textOf(html, 'health-reason-backup_photos_damaged')).toBe(
+        'A photo copy in the backup folder is damaged. Tell Harsh.'
+      );
+      expect(textOf(html, 'health-reason-backup_clock_ahead')).toBe(
+        'A backup is dated in the future, so its age cannot be trusted. Tell Harsh.'
+      );
+      expect(textOf(html, 'health-reason-backup_photos_repaired')).toBe(
+        'Photo copies were missing from the backup folder and have been copied again. Tell Harsh.'
+      );
+      for (const code of [
+        'backup_folder_unusable',
+        'backup_photos_damaged',
+        'backup_clock_ahead',
+      ]) {
+        expect(attrOf(html, `health-reason-${code}`, 'data-tone')).toBe('red');
+      }
+      expect(attrOf(html, 'health-reason-backup_photos_repaired', 'data-tone')).toBe('amber');
+      expect(attrOf(html, 'health-photos', 'data-tone')).toBe('red');
+      expect(attrOf(html, 'health-backup', 'data-tone')).toBe('red');
+      expect(attrOf(html, 'health-folder', 'data-tone')).toBe('red');
+      expect(textOf(html, 'health-folder')).toContain('Cannot be used');
+      expect(html).not.toContain('Something needs a look');
+    });
+
+    it('a repaired photo copy alone draws an amber card with one amber reason', async () => {
+      const html = await drawCard(({ el, m, c }) =>
+        el(c.HealthLineView, {
+          model: m.buildHealthLine(
+            ready(greenHealth({ level: 'amber', reasons: ['backup_photos_repaired'] }))
+          ),
+        })
+      );
+      expect(attrOf(html, 'health-line', 'data-level')).toBe('amber');
+      expect(textOf(html, 'health-headline')).toBe('Reminder');
+      expect(attrOf(html, 'health-reason-backup_photos_repaired', 'data-tone')).toBe('amber');
+      expect(attrOf(html, 'health-photos', 'data-tone')).toBe('amber');
+      expect(attrOf(html, 'health-folder', 'data-tone')).toBe('ok');
+    });
   });
 });
 
