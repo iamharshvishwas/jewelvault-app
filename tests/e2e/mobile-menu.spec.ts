@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { clearLoginCounters } from './clear-counters';
 import { e2eLogin, type E2eLogin } from './global-setup';
+import { roomInTheMinute } from './pacing';
 
 // FB-A1 (Siddhi's phone list #1, #2, #3): the ☰ of the top bar was dead on a phone. Under 1024 px it now opens the same Sidebar as a drawer, in a real browser at 375 x 812 against the
 // real API of a lane.
@@ -94,6 +95,8 @@ test.beforeEach(async () => {
 
 /** Signs in on the login screen and waits for the top bar: the data gate has opened. */
 async function openApp(page: Page, who: E2eLogin, target = '/') {
+  // every sign-in loads all the data, and the API allows one person 300 calls a minute: wait for room, so that this spec does not use up the minute of the spec that runs after it
+  await roomInTheMinute(page, 100);
   await page.goto(target);
   await expect(page.getByLabel('Email')).toBeVisible();
   await page.getByLabel('Email').fill(who.email);
