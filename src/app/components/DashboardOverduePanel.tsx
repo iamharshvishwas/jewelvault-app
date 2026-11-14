@@ -3,6 +3,7 @@ import React from 'react';
 import Link from 'next/link';
 import { AlertTriangle } from 'lucide-react';
 import { getOverdueCustomers } from '@/lib/appStore';
+import { useSession } from '@/lib/authStore';
 import { useBusinessToday } from '@/lib/businessClock';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { paiseShown } from '@/lib/ledgerView';
@@ -16,13 +17,14 @@ import { OVERDUE_DAYS } from '@/lib/selectors';
 /** On a phone (under 640 px) the card keeps the name, the amount and the days: the mobile and the date of the oldest bill have no room, and are on the customer's ledger one tap away. */
 const PHONE_HIDDEN: ReadonlySet<string> = new Set(['Mobile', 'Oldest pending bill']);
 
-/** How many customers the card lists; the owner has the whole list in Reports > Payments (Download outstanding list). */
+/** How many customers the card lists; the owner has the whole list in Reports > Payments (Download outstanding list). The biller cannot open Reports, so the card sends the biller to the owner. */
 const SHOWN = 10;
 
 export default function DashboardOverduePanel() {
   useRowCacheVersion('bill-summary', 'customers');
   useBusinessToday(); // draws the card again at midnight in India (the list itself is of today's date)
   const rows = getOverdueCustomers();
+  const { role } = useSession();
 
   return (
     <section data-testid="overdue-panel" className="jewel-card p-4 space-y-3">
@@ -91,7 +93,10 @@ export default function DashboardOverduePanel() {
           </table>
           {rows.length > SHOWN && (
             <p data-testid="overdue-more" className="mt-2 text-xs text-muted-foreground">
-              And {rows.length - SHOWN} more. The owner has the whole list in Reports, Payments.
+              And {rows.length - SHOWN} more.{' '}
+              {role === 'owner'
+                ? 'The owner has the whole list in Reports, Payments.'
+                : 'Ask the owner for the full list.'}
             </p>
           )}
         </div>

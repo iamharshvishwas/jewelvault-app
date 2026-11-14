@@ -359,6 +359,8 @@ describe('FB-D3 the CSV of the outstanding list', () => {
 
 // ================================================================================================ the readers over the store
 
+type Role = 'owner' | 'biller';
+
 async function world(now: string) {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(now));
@@ -415,6 +417,7 @@ async function world(now: string) {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.doUnmock('@/lib/authStore');
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -464,10 +467,51 @@ describe('FB-D3 the dashboard card "Payment pending over 60 days"', () => {
       .replace(/\s+/g, ' ')
       .trim();
 
-  async function draw(now: string) {
+  async function draw(now: string, { role, extra = 0 }: { role?: Role; extra?: number } = {}) {
     await world(now);
+    if (extra > 0) await moreOverdue(extra);
+    if (role) {
+      vi.doMock('@/lib/authStore', async (importOriginal) => ({
+        ...(await importOriginal<typeof import('@/lib/authStore')>()),
+        useSession: () => ({ role }),
+      }));
+    }
     const panel = await import('@/app/components/DashboardOverduePanel');
     return renderToStaticMarkup(React.createElement(panel.default));
+  }
+
+  /** `count` more customers, each with a bill of 100.00 pending that is 105 days old on 2026-11-15, on top of Meera of the world. */
+  async function moreOverdue(count: number) {
+    const cache = await import('@/lib/cache/cache');
+    const rowCache = cache.rowCache as unknown as {
+      merge: (resource: string, rows: readonly object[]) => number;
+    };
+    const customers = [];
+    const bills = [];
+    const summaries = [];
+    for (let i = 0; i < count; i++) {
+      const id = uuid(6100 + i);
+      customers.push(customerRow(id, { name: `Overdue ${i + 1}`, mobile: `90001701${10 + i}` }));
+      const owed = billRow(20 + i, id, {
+        bill_no: `W17-X${i + 1}`,
+        bill_date: '2026-08-01',
+        grand_total: '100.00',
+      });
+      bills.push(owed);
+      summaries.push(
+        summaryRow(owed, {
+          received: '0.00',
+          pending: '100.00',
+          fine_settled: '0.000',
+          fine_pending: '0.000',
+          payment_status: 'Pending',
+          item_count: 1,
+        })
+      );
+    }
+    rowCache.merge('customers', customers);
+    rowCache.merge('bills', bills);
+    rowCache.merge('bill-summary', summaries);
   }
 
   it("lists the overdue customer with the amount, the oldest bill date and the days, and the name opens that customer's ledger", async () => {
@@ -489,6 +533,35 @@ describe('FB-D3 the dashboard card "Payment pending over 60 days"', () => {
     const html = await draw('2026-11-14T10:00:00.000Z');
     expect(plain(html)).toContain('No customer has a payment pending for more than 60 days.');
     expect(html).not.toContain('data-testid="overdue-row"');
+  });
+
+  // Wave 2 fix 2 (M2): the card lists ten; the rest is "And N more", and where the whole list is depends on who is looking. The owner has it in Reports, Payments; the biller cannot open
+  // Reports, so the biller is told to ask the owner.
+  it('over ten customers, the owner is told where the whole list is: Reports, Payments', async () => {
+    const html = await draw('2026-11-15T10:00:00.000Z', { role: 'owner', extra: 11 });
+    expect(plain(/data-testid="overdue-count"[^>]*>([\s\S]*?)<\/span>/.exec(html)![1])).toBe(
+      '12 customers'
+    );
+    expect(html.match(/data-testid="overdue-row"/g)).toHaveLength(10);
+    expect(plain(/data-testid="overdue-more"[^>]*>([\s\S]*?)<\/p>/.exec(html)![1])).toBe(
+      'And 2 more. The owner has the whole list in Reports, Payments.'
+    );
+  });
+
+  it('over ten customers, the biller, who cannot open Reports, is told to ask the owner', async () => {
+    const html = await draw('2026-11-15T10:00:00.000Z', { role: 'biller', extra: 11 });
+    expect(html.match(/data-testid="overdue-row"/g)).toHaveLength(10);
+    const more = plain(/data-testid="overdue-more"[^>]*>([\s\S]*?)<\/p>/.exec(html)![1]);
+    expect(more).toBe('And 2 more. Ask the owner for the full list.');
+    expect(plain(html)).not.toContain('Reports');
+  });
+
+  it('up to ten customers there is no "And N more" line, for either of them', async () => {
+    for (const role of ['owner', 'biller'] as const) {
+      const html = await draw('2026-11-15T10:00:00.000Z', { role, extra: 9 });
+      expect(html.match(/data-testid="overdue-row"/g)).toHaveLength(10);
+      expect(html).not.toContain('data-testid="overdue-more"');
+    }
   });
 
   it('is for the owner and the biller: the dashboard draws it for those two roles and not for the staff', () => {
