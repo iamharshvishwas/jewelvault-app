@@ -1,7 +1,7 @@
 // The owner's actions without the screens (spec C13, X4, X5, X10, X11, X12, K3, K5, K6, Y8, Y10; task WEB11). Everything the dialogs and the billing screen work out is here, so that it can
 // be tested without a browser:
 //
-//   - THE REQUESTS. `buildReasonBody` (cancel X5, void X4: a reason of 3 to 500 characters once trimmed), `buildRefundBody` (X11), `buildOpeningBody` (X12) and `buildReissueBody` (X10: the
+//   - THE REQUESTS. `buildReasonBody` (cancel X5, void X4: the reason is optional (FB-D1); a typed one is 3 to 500 characters once trimmed), `buildRefundBody` (X11), `buildOpeningBody` (X12) and `buildReissueBody` (X10: the
 //     corrected bill WITHOUT its customer, which cannot change, with the reason). Money goes out as text with two decimals and silver with three, so the same form typed two ways is the
 //     same body (and so the same Idempotency-Key, see moneyServer); a blank optional field is left out; the sentence for what is wrong is given before any call is made.
 //   - THE ANSWERS. `savedCancelFrom`, `savedVoidFrom`, `savedRefundFrom` and `savedOpeningFrom` turn the rows an answer returned into what the dialog shows. Nothing is added up here that the
@@ -38,19 +38,24 @@ import { assertBusinessDate, formatGrams, formatRupees, parseGrams, parseRupees 
 export const OWNER_ACTIONS = ['cancel', 'reissue', 'void', 'refund', 'opening'] as const;
 export type OwnerAction = (typeof OWNER_ACTIONS)[number];
 
-/** X4 and X5: the reason is 3 to 500 characters once trimmed (the API's rule, D11 and D13 are VARCHAR(500)). */
+/**
+ * X4, X5 and X10: the reason is optional (FB-D1: with the box empty the body has no `reason` and the API stores "No reason given"); a reason that is typed is 3 to 500 characters once
+ * trimmed (the API's rule, D11 and D13 are VARCHAR(500)), so REASON_MIN applies only when something is typed.
+ */
 export const REASON_MIN = 3;
 export const REASON_MAX = 500;
 
 // ------------------------------------------------------------------------------------------------ the requests
 
 export interface ReasonBody {
-  reason: string;
+  /** Absent when nothing was typed: the API then stores "No reason given" (FB-D1). */
+  reason?: string;
 }
 
-/** The body of a cancel (X5) or a void (X4), or the sentence that says what is wrong with the reason. */
+/** The body of a cancel (X5) or a void (X4), or the sentence that says what is wrong with the reason. An empty or blank box is no reason: `{}`. */
 export function buildReasonBody(text: string): { body: ReasonBody } | { error: string } {
   const reason = text.trim();
+  if (reason === '') return { body: {} };
   if (reason.length < REASON_MIN)
     return { error: `Give a reason of at least ${REASON_MIN} characters.` };
   if (reason.length > REASON_MAX)
@@ -168,7 +173,7 @@ export function buildOpeningBody(input: OpeningInput): { body: OpeningBody } | {
   };
 }
 
-export type ReissueBody = Omit<BillBody, 'customer_id'> & { reason: string };
+export type ReissueBody = Omit<BillBody, 'customer_id'> & ReasonBody;
 
 /**
  * The body of a re-issue (X10): the corrected bill as the billing screen built it, without its customer (the customer is the old bill's and cannot change, K6; the API refuses even the old
@@ -181,7 +186,7 @@ export function buildReissueBody(
   const reason = buildReasonBody(reasonText);
   if ('error' in reason) return reason;
   const { customer_id: _customerCannotChange, ...rest } = bill;
-  return { body: { reason: reason.body.reason, ...rest } };
+  return { body: { ...reason.body, ...rest } };
 }
 
 // ------------------------------------------------------------------------------------------------ the answers
@@ -402,7 +407,7 @@ const WHAT: Record<OwnerAction, { thing: string; doing: string; only: string }> 
   },
 };
 
-const REASON_SENTENCE = `Give a reason of ${REASON_MIN} to ${REASON_MAX} characters.`;
+const REASON_SENTENCE = `Give a reason of ${REASON_MIN} to ${REASON_MAX} characters, or leave it empty.`;
 
 /** What an unconfirmed outcome tells the person: the books are read again at once (C17), and pressing the button again never does the thing twice (L5). */
 const unconfirmedHelp = (error: ErrorLike): string =>

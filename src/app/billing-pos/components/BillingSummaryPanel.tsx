@@ -64,7 +64,7 @@ interface BillingSummaryPanelProps {
   onNewSale: () => void;
   /**
    * A re-issue (X10, WEB11): the corrected bill is sent to the old bill's re-issue instead of being saved as a new bill. The customer is the old bill's and is not sent (K6); the
-   * reason (3 to 500 characters) is typed on the screen.
+   * reason is typed on the screen (optional, FB-D1: left empty, the API stores "No reason given"; typed, 3 to 500 characters).
    */
   reissue?: {
     billId: string;

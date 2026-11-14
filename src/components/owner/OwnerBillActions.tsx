@@ -121,8 +121,8 @@ export default function OwnerBillActions({ billId, compact = false }: OwnerBillA
           reasonLabel="Why is this bill cancelled?"
           confirmLabel="Cancel this bill"
           savingLabel="Cancelling…"
-          run={async (reason) => {
-            const answer = await saveCancel(facts.customerId, facts.id, { reason });
+          run={async (body) => {
+            const answer = await saveCancel(facts.customerId, facts.id, body);
             return <CancelDone saved={savedCancelFrom(answer)} />;
           }}
           failureOf={(error) => ownerActionFailure(error, { action: 'cancel' })}

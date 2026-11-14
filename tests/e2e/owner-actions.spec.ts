@@ -456,6 +456,32 @@ test.describe('PT-W11: the owner cancels a bill (X5, K3)', () => {
     await expect(page.getByTestId('cancel-bill')).toHaveCount(0);
   });
 
+  test('FB-C2: the reason is optional: with the reason box empty the bill is cancelled, the request has no reason, and the estimate says "No reason given"', async ({
+    page,
+  }) => {
+    const { requests } = callsTo(page, isCancel);
+    await openLedger(page, e2eLogin('owner'));
+    await openCard(page, NAMES.priya);
+    await openTab(page, 'Invoices');
+    await invoiceRow(page, 'W11-0001').getByTestId('cancel-bill').click();
+    await expect(cancelDialog(page)).toContainText('Cancel W11-0001');
+    await expect(page.getByTestId('cancel-reason')).toHaveValue('');
+    await page.getByTestId('cancel-confirm').click();
+    await expect(page.getByTestId('cancel-done')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('cancel-result')).toContainText('W11-0001 is cancelled');
+    expect(requests).toHaveLength(1);
+    expect(requests[0].postDataJSON()).toEqual({});
+    expect(await billOf('W11-0001')).toEqual(['cancelled', 'No reason given', '7220.00', '-']);
+
+    await page.getByTestId('cancel-close').click();
+    await expect(invoiceRow(page, 'W11-0001')).toContainText('Cancelled');
+    await invoiceRow(page, 'W11-0001').getByRole('link', { name: 'View' }).click();
+    await expect(page.getByTestId('estimate-cancelled')).toBeVisible();
+    await expect(page.getByTestId('estimate-cancel-reason')).toContainText(
+      'Reason: No reason given'
+    );
+  });
+
   test("a bill with money on it: the money it had received is applied to the customer's older bill, and the answer says so", async ({
     page,
   }) => {
@@ -964,13 +990,14 @@ test.describe('PT-W11: the owner re-issues a bill (X10, K6)', () => {
     await expect(page.getByLabel('Labour rate W11-S2')).toHaveValue('300.00');
     await expect(page.getByTestId('grand-total')).toHaveText('₹7,220');
 
-    // a reason is needed; the screen says so before any call
+    // the reason is optional (FB-D1), but a typed one of fewer than 3 characters is refused; the screen says so before any call
     const reissueCalls = callsTo(
       page,
       (url, method) => method === 'POST' && url.endsWith('/reissue')
     );
     await page.getByLabel('Labour rate W11-S2').fill('400');
     await expect(page.getByTestId('grand-total')).toHaveText('₹7,320');
+    await page.getByTestId('reissue-reason').fill('ab');
     await page.getByTestId('save-bill').click();
     await expect(page.getByTestId('bill-save-error')).toContainText('at least 3 characters');
     expect(reissueCalls.requests).toHaveLength(0);

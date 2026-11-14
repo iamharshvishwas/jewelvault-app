@@ -44,7 +44,7 @@ const isHeld = (status: string): status is HeldStatus =>
   (HELD_STATUSES as readonly string[]).includes(status);
 
 // The billing screen, and the same screen in RE-ISSUE mode (X10, WEB11): `/billing-pos?reissue=<bill id>` opens it with the lines of that bill in it, for the owner to correct. The
-// customer is the old bill's and cannot change (K6); the pieces the old bill sold may be scanned again (the cancel frees them in the same transaction); the person gives a reason; Save
+// customer is the old bill's and cannot change (K6); the pieces the old bill sold may be scanned again (the cancel frees them in the same transaction); the person may give a reason (optional, FB-D1); Save
 // sends the corrected bill to the old bill's re-issue instead of making a new bill, and the old bill is cancelled in the same step. For anyone but the owner, and for a bill that cannot
 // be re-issued, the screen says why and shows no form.
 export default function BillingPOSClient() {
@@ -357,12 +357,12 @@ function BillingScreen({ reissue }: { reissue: ReissueReady | null }) {
                 pieces are put back and billed again. Nothing is edited in place.
               </p>
               <label className="text-xs font-semibold text-foreground block">
-                Reason for the correction (required)
+                Reason for the correction (optional)
                 <textarea
                   data-testid="reissue-reason"
                   value={reissueReason}
                   onChange={(event) => setReissueReason(event.target.value)}
-                  placeholder={`${REASON_MIN} to ${REASON_MAX} characters`}
+                  placeholder={`Optional: ${REASON_MIN} to ${REASON_MAX} characters`}
                   rows={2}
                   className="input-field resize-none text-sm mt-1.5 font-normal"
                 />
