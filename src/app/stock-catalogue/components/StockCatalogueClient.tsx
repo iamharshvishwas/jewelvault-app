@@ -1,11 +1,13 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Printer } from 'lucide-react';
 import { BUSINESS_NAME } from '@/lib/businessConfig';
 import { useBusinessToday } from '@/lib/businessClock';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { getDesigns } from '@/lib/designStore';
+import { imagesSettled } from '@/lib/imageWait';
 import { mgShown } from '@/lib/ledgerView';
 import { photoUrl } from '@/lib/photos';
 import { getSettings } from '@/lib/settingsStore';
@@ -15,8 +17,14 @@ import { catalogueRows, type CatalogueRow } from '@/lib/stockCatalogue';
 // photo, design number, name, purity, the range of the gross weights of the pieces in stock and how many there are, and "Print / Save PDF" gives the browser's print of that sheet (the rules
 // are in src/styles/tailwind.css under `.print-catalogue-sheet`; the same print shell as the estimate, WEB13). The rows are `catalogueRows` (src/lib/stockCatalogue.ts): never the owner's original
 // weight, never a price. The screen is drawn again when the designs or their pieces change in memory.
+// Wave 2 fix 2: a shop with hundreds of designs must not fetch hundreds of pictures the moment the screen opens, so on the screen the photos are the 320 px thumbnails, loaded lazily and decoded
+// off the main thread. "Print / Save PDF" first switches the sheet to the full pictures (1000 px: a thumbnail is soft on paper) loaded eagerly, waits until every picture has loaded (or failed, or
+// 15 seconds have gone by: a broken photo never stops a paper) and only then asks the browser to print; `afterprint` puts the screen back as it was.
 
 const DESIGNS = ['users', 'categories', 'subcategories', 'designs', 'skus', 'settings'] as const;
+
+/** The longest the print waits for the pictures (a photo that never arrives is a paper without that photo, not a button that does nothing). */
+const PICTURES_WAIT_MS = 15_000;
 
 const day = (businessDate: string) =>
   new Date(`${businessDate}T12:00:00.000Z`).toLocaleDateString('en-IN');
@@ -27,7 +35,7 @@ function grossShown(row: CatalogueRow): string {
     : `${mgShown(row.grossMinMg).replace(/ g$/, '')} - ${mgShown(row.grossMaxMg)}`;
 }
 
-function Card({ row }: { row: CatalogueRow }) {
+function Card({ row, printing }: { row: CatalogueRow; printing: boolean }) {
   return (
     <article
       data-testid="catalogue-card"
@@ -35,12 +43,12 @@ function Card({ row }: { row: CatalogueRow }) {
     >
       <div className="print-catalogue-photo aspect-square w-full rounded-lg bg-muted">
         {row.photoId ? (
-          // eslint-disable-next-line @next/next/no-img-element -- the API's own picture, served as stored (the build has no image optimiser); eager, because a paper must not wait for a scroll
+          // eslint-disable-next-line @next/next/no-img-element -- the API's own picture, served as stored (the build has no image optimiser); the thumbnail, lazily, on the screen; the full picture, eagerly, for paper
           <img
-            src={photoUrl(row.photoId, 'thumb')}
+            src={photoUrl(row.photoId, printing ? 'full' : 'thumb')}
             alt={`${row.designNumber} ${row.designName}`.trim()}
-            loading="eager"
-            decoding="sync"
+            loading={printing ? 'eager' : 'lazy'}
+            decoding="async"
             className="h-full w-full rounded-lg object-cover"
           />
         ) : (
@@ -64,6 +72,11 @@ export default function StockCatalogueClient() {
   useRowCacheVersion(...DESIGNS);
   const today = useBusinessToday();
   const [chosen, setChosen] = useState<string[]>([]);
+  // the sheet is being got ready for paper: full pictures, loaded eagerly (until `afterprint`)
+  const [printing, setPrinting] = useState(false);
+  const sheet = useRef<HTMLElement>(null);
+  const preparing = useRef(false);
+  const alive = useRef(true);
   const designs = getDesigns();
   const { business } = getSettings();
   const shopName = business.legalName.trim() || BUSINESS_NAME;
@@ -84,6 +97,29 @@ export default function StockCatalogueClient() {
     .map((category) => ({ category, rows: rows.filter((row) => row.category === category) }))
     .filter((group) => group.rows.length > 0);
 
+  useEffect(() => {
+    alive.current = true;
+    const after = () => setPrinting(false);
+    window.addEventListener('afterprint', after);
+    return () => {
+      alive.current = false;
+      window.removeEventListener('afterprint', after);
+    };
+  }, []);
+
+  const handlePrint = async () => {
+    if (preparing.current) return;
+    preparing.current = true;
+    try {
+      flushSync(() => setPrinting(true));
+      await imagesSettled(sheet.current, PICTURES_WAIT_MS);
+    } finally {
+      preparing.current = false;
+    }
+    // a person who has left the screen in the meantime is not printing it
+    if (alive.current) window.print();
+  };
+
   const toggle = (category: string) =>
     setChosen((before) =>
       before.includes(category) ? before.filter((name) => name !== category) : [...before, category]
@@ -101,7 +137,7 @@ export default function StockCatalogueClient() {
         <button
           type="button"
           data-testid="print-catalogue"
-          onClick={() => window.print()}
+          onClick={() => void handlePrint()}
           className="btn-primary py-2"
         >
           <Printer size={15} />
@@ -144,7 +180,7 @@ export default function StockCatalogueClient() {
         </p>
       </div>
 
-      <section className="print-catalogue-sheet space-y-5 text-foreground">
+      <section ref={sheet} className="print-catalogue-sheet space-y-5 text-foreground">
         <div className="print-catalogue-head border-b border-border pb-3">
           <h2 data-testid="catalogue-shop-name" className="text-xl font-bold">
             {shopName}
@@ -163,7 +199,7 @@ export default function StockCatalogueClient() {
               <h3 className="text-base font-bold mb-2">{group.category}</h3>
               <div className="print-catalogue-grid grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
                 {group.rows.map((row) => (
-                  <Card key={row.designNumber} row={row} />
+                  <Card key={row.designNumber} row={row} printing={printing} />
                 ))}
               </div>
             </section>

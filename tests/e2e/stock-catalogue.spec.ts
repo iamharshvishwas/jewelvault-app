@@ -171,6 +171,25 @@ async function printed(page: Page, name: string) {
   return readPdf(pdf);
 }
 
+/** Stands in for the browser's print dialog: it counts the calls and notes how many pictures of the sheet were not yet loaded at the time of the call. It fires no `afterprint`. */
+async function stubPrint(page: Page) {
+  await page.evaluate(() => {
+    const mine = window as unknown as { __printCalls: number; __printIncomplete: number };
+    mine.__printCalls = 0;
+    mine.__printIncomplete = -1;
+    window.print = () => {
+      mine.__printCalls += 1;
+      mine.__printIncomplete = [
+        ...document.querySelectorAll<HTMLImageElement>('.print-catalogue-sheet img'),
+      ].filter((img) => !(img.complete && img.naturalWidth > 0)).length;
+    };
+  });
+}
+const printCalls = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __printCalls: number }).__printCalls);
+const printIncomplete = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __printIncomplete: number }).__printIncomplete);
+
 const card = (page: Page, designNo: string) =>
   page.getByTestId('catalogue-card').filter({ hasText: designNo });
 
@@ -209,6 +228,9 @@ test.describe('FB-D2: the ready-stock catalogue by category as a PDF', () => {
     // the photo: an img on the API's photo address, and it has loaded
     const image = ring.locator('img');
     await expect(image).toHaveAttribute('src', `${apiUrl}/v1/photos/${ids.ringPhoto}/thumb`);
+    // Wave 2 fix 2: on the screen a photo is lazy and decoded off the main thread (a big shop does not fetch every photo at once)
+    await expect(image).toHaveAttribute('loading', 'lazy');
+    await expect(image).toHaveAttribute('decoding', 'async');
     await expect
       .poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0))
       .toBe(true);
@@ -217,18 +239,15 @@ test.describe('FB-D2: the ready-stock catalogue by category as a PDF', () => {
     expect(screenText).not.toContain('₹');
     expect(screenText).not.toContain(ORIGINAL_WEIGHT);
 
-    // print: the button asks the browser to print; the paper is what Chromium lays out in print media
-    await page.evaluate(() => {
-      const mine = window as unknown as { __printCalls: number };
-      mine.__printCalls = 0;
-      window.print = () => {
-        mine.__printCalls += 1;
-      };
-    });
+    // print: the button gets the sheet ready (the full pictures, eager), waits for them and then asks the browser to print; the paper is what Chromium lays out in print media
+    await stubPrint(page);
     await page.getByRole('button', { name: 'Print / Save PDF' }).click();
-    expect(
-      await page.evaluate(() => (window as unknown as { __printCalls: number }).__printCalls)
-    ).toBe(1);
+    await expect.poll(() => printCalls(page)).toBe(1);
+    // the print waited for the pictures: every one of them was loaded when the browser was asked
+    expect(await printIncomplete(page), 'pictures not yet loaded when the print was asked').toBe(0);
+    // the paper has the full picture (M3: a thumbnail is soft on paper), loaded eagerly
+    await expect(image).toHaveAttribute('src', `${apiUrl}/v1/photos/${ids.ringPhoto}/full`);
+    await expect(image).toHaveAttribute('loading', 'eager');
     const bars = await page.evaluate(() =>
       [...document.querySelectorAll('aside a, aside button, header a, header button, nav a')]
         .map((el) => (el.textContent ?? '').replace(/\s+/g, ' ').trim())
@@ -251,6 +270,24 @@ test.describe('FB-D2: the ready-stock catalogue by category as a PDF', () => {
     expect(all(ORIGINAL_WEIGHT), 'no original weight on the paper').toBe(0);
     for (const word of bars) expect(all(word), `"${word}" (an app bar) on the paper`).toBe(0);
     expect(countIn(pages[0], 'Ring')).toBeGreaterThan(0); // the category heading
+    // when the print is over the screen goes back to the thumbnail, lazy
+    await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+    await expect(image).toHaveAttribute('src', `${apiUrl}/v1/photos/${ids.ringPhoto}/thumb`);
+    await expect(image).toHaveAttribute('loading', 'lazy');
+  });
+
+  // a photo that cannot be had must not stop a paper: the print is asked for all the same
+  test('a photo that fails to load does not hold the print back', async ({ page }) => {
+    const { apiUrl } = e2eLane();
+    await page.route(`${apiUrl}/v1/photos/*/full`, (route) => route.abort());
+    await openCatalogue(page, e2eLogin('owner'));
+    await stubPrint(page);
+    await page.getByRole('button', { name: 'Print / Save PDF' }).click();
+    await expect.poll(() => printCalls(page), { timeout: 10_000 }).toBe(1);
+    await expect(card(page, 'W16-R1').locator('img')).toHaveAttribute(
+      'src',
+      `${apiUrl}/v1/photos/${ids.ringPhoto}/full`
+    );
   });
 
   test('choosing both categories prints both, and clearing the choice shows every category again', async ({

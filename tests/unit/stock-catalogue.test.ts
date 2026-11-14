@@ -230,7 +230,7 @@ describe('FB-D2 catalogueRows: which designs, in which order', () => {
 
 // ================================================================================================ the screen, over the stores
 
-async function world() {
+async function world({ extra = 0 }: { extra?: number } = {}) {
   vi.resetModules();
   vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', API);
@@ -283,6 +283,22 @@ async function world() {
     skuRow(4, 2, { sku_no: 'RING-00002-001', gross_weight: '9.000', status: 'Sold' }),
     skuRow(5, 3, { sku_no: 'CH-00003-001', gross_weight: '20.125', status: 'In Stock' }),
   ]);
+  // `extra` more rings In Stock, each with its own photo (a big shop: the screen must not fetch them all at once)
+  rowCache.merge(
+    'designs',
+    Array.from({ length: extra }, (_, i) =>
+      designRow(100 + i, {
+        design_no: `RING-${String(100 + i).padStart(5, '0')}`,
+        category_id: uuid(101),
+        primary_photo_id: uuid(5000 + i),
+        photo_ids: [uuid(5000 + i)],
+      })
+    )
+  );
+  rowCache.merge(
+    'skus',
+    Array.from({ length: extra }, (_, i) => skuRow(100 + i, 100 + i, { status: 'In Stock' }))
+  );
   // the owner's weight of the first piece: no figure on the screen is this one
   rowCache.merge('sku-private', [skuPrivateRow(1, '34.987')]);
   return renderToStaticMarkup(React.createElement(screen.default as never));
@@ -326,6 +342,24 @@ describe('FB-D2 the catalogue screen', () => {
     const chain = plain(cards[0][1]);
     expect(chain).toContain('20.125 g');
     expect(chain).toContain('1 piece in stock');
+  });
+
+  // Wave 2 fix 2 (I2, M3): on the screen the photos are the small pictures, loaded lazily and decoded off the main thread; the full pictures, loaded eagerly, are for paper only (the print button
+  // switches to them, and waits for them: tests/e2e/stock-catalogue.spec.ts)
+  it('300 designs: every photo on the screen is a thumbnail loaded lazily and decoded asynchronously, none eager and none synchronous', async () => {
+    const html = await world({ extra: 300 });
+    const images = [...html.matchAll(/<img\b[^>]*>/g)].map((m) => m[0]);
+    // the 300 and the one ring of the shop that has a photo
+    expect(images).toHaveLength(301);
+    expect(html.match(/data-testid="catalogue-card"/g)).toHaveLength(302);
+    for (const tag of images) {
+      expect(tag).toContain('loading="lazy"');
+      expect(tag).toContain('decoding="async"');
+      expect(tag).toMatch(/src="[^"]*\/v1\/photos\/[0-9a-f-]{36}\/thumb"/);
+    }
+    expect(html).not.toContain('loading="eager"');
+    expect(html).not.toContain('decoding="sync"');
+    expect(html).not.toContain('/full"');
   });
 
   it('has no design that is sold out, no price and no original weight', async () => {
