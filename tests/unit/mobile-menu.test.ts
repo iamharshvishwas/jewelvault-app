@@ -103,3 +103,27 @@ describe('PT-FBA2 bottom bar', () => {
     expect(html).not.toContain('href="/estimate"');
   });
 });
+
+// FB-F1 (Siddhi #13): the Order Book is in the menu of every role (the side bar, so also the phone drawer) and in the bottom bar of a phone.
+describe('FB-F1 Order Book in the menus', () => {
+  it.each(['owner', 'biller', 'staff'] as const)(
+    'the %s has Order Book in the side bar and the drawer, linking to /order-book',
+    (role) => {
+      for (const html of [
+        drawer(role),
+        renderToStaticMarkup(
+          createElement(Sidebar, { collapsed: false, onToggle: noop, session: who(role) })
+        ),
+      ]) {
+        expect(html).toContain('>Order Book<');
+        expect(html).toContain('href="/order-book"');
+      }
+    }
+  );
+
+  it.each(['owner', 'biller', 'staff'] as const)('the %s has Orders in the bottom bar', (role) => {
+    const html = bottomBar(role);
+    expect(html).toContain('>Orders<');
+    expect(html).toContain('href="/order-book"');
+  });
+});

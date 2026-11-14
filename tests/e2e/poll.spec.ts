@@ -332,14 +332,14 @@ test.describe('T-E02: a change made by somebody else shows on the other browser 
 test.describe('T-E07: polling (C3, C4)', () => {
   test.describe.configure({ timeout: 180_000 });
 
-  test('the browser polls every 8 seconds, one request at a time, for the 15 resources of the owner, from 30 seconds before the first page', async ({
+  test('the browser polls every 8 seconds, one request at a time, for the 16 resources of the owner, from 30 seconds before the first page', async ({
     page,
   }) => {
     const owner = e2eLogin('owner');
     const polls = trackPolls(page);
     await signInAs(page, owner);
     await expect.poll(() => polls.length, { timeout: 60_000 }).toBeGreaterThanOrEqual(4);
-    expect(polls[0].resources).toHaveLength(15);
+    expect(polls[0].resources).toHaveLength(16); // FB-F1: the Order Book's `orders` is the 16th
     expect(polls[0].limit).toBe(1000);
     const gaps = polls.slice(1, 4).map((call, i) => call.at - polls[i].at);
     for (const gap of gaps) {
@@ -447,8 +447,8 @@ test.describe('T-E07: polling (C3, C4)', () => {
     await expect(card(page, 'POLL-ORDINARY')).toBeVisible({ timeout: 10_000 });
     await importing;
     await expect(card(page, 'POLL-IMPORT')).toBeVisible({ timeout: 20_000 });
-    // data_epoch changed: the screen hydrated again, all 15 tables from their first page
-    expect(hydrated.length - pagesBefore).toBeGreaterThanOrEqual(15);
+    // data_epoch changed: the screen hydrated again, all 16 tables from their first page
+    expect(hydrated.length - pagesBefore).toBeGreaterThanOrEqual(16);
     await expectApp(page, owner);
   });
 
@@ -673,7 +673,7 @@ test.describe('T-E01: the session at the next poll (A10, U6, C18)', () => {
     await expect(toggle).toHaveCount(0);
     await expect(originalColumn).toHaveCount(0);
     expect(hydrated).not.toContain('sku-private');
-    expect(hydrated.length, "the biller's 14 tables").toBe(14);
+    expect(hydrated.length, "the biller's 15 tables").toBe(15); // FB-F1: orders included
 
     // `me` once for the change, and no loop: a minute later it is still once, and the polls go on, as a biller
     await sleep(20_000);
@@ -682,7 +682,7 @@ test.describe('T-E01: the session at the next poll (A10, U6, C18)', () => {
       .slice(pollsBefore)
       .filter((call) => !call.resources.includes('sku-private'));
     expect(asBiller.length).toBeGreaterThanOrEqual(2);
-    for (const call of asBiller) expect(call.resources).toHaveLength(14);
+    for (const call of asBiller) expect(call.resources).toHaveLength(15);
     await expect(page.locator('main').getByRole('alert')).toHaveCount(0);
     void apiUrl;
   });

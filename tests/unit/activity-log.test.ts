@@ -326,6 +326,100 @@ describe('FB-D4 describeAudit: the time in India, the person, the change in plai
 
 // ================================================================================================ the read
 
+// FB-F1 (F-extra-4): the Order Book's rows and the three money and photo changes that had no words. The facts are the API's audit rows: an insert or update of `orders` carries the whole
+// row (order_no, status) in new_row and, for an update, old_row; a void of a receipt and a cancel of a bill are updates whose new_row has the new `status`; the removal of a photo is an `event`
+// of the table `design_photos` whose new_row names `photo_removed` (src/photos/photoStore.ts of the API).
+describe('FB-F1 describeAudit: the Order Book, a voided payment, a cancelled bill and a removed photo', () => {
+  const order = (status: string) => ({ order_no: 'ORD-2026-0007', status, description: 'Ring' });
+
+  it('a new order is "New order <order_no>"', () => {
+    expect(
+      describeAudit(row({ action: 'insert', table_name: 'orders', new_row: order('open') }), users)
+        .what
+    ).toBe('New order ORD-2026-0007');
+  });
+
+  it('a change of status is "Order <order_no> marked <Status>", in the words of the screen', () => {
+    expect(
+      describeAudit(
+        row({
+          action: 'update',
+          table_name: 'orders',
+          old_row: order('in_progress'),
+          new_row: order('ready'),
+        }),
+        users
+      ).what
+    ).toBe('Order ORD-2026-0007 marked Ready');
+    expect(
+      describeAudit(
+        row({
+          action: 'update',
+          table_name: 'orders',
+          old_row: order('open'),
+          new_row: order('in_progress'),
+        }),
+        users
+      ).what
+    ).toBe('Order ORD-2026-0007 marked In progress');
+  });
+
+  it('any other change of an order is "Order <order_no> edited"', () => {
+    expect(
+      describeAudit(
+        row({
+          action: 'update',
+          table_name: 'orders',
+          old_row: order('open'),
+          new_row: { ...order('open'), photo_ids: ['x'] },
+        }),
+        users
+      ).what
+    ).toBe('Order ORD-2026-0007 edited');
+  });
+
+  it('a receipt updated to voided is "Payment voided"', () => {
+    expect(
+      describeAudit(
+        row({
+          action: 'update',
+          table_name: 'receipts',
+          old_row: { status: 'active', amount: '500.00' },
+          new_row: { status: 'voided', amount: '500.00', void_reason: 'No reason given' },
+        }),
+        users
+      ).what
+    ).toBe('Payment voided');
+  });
+
+  it('a bill updated to cancelled is "Bill cancelled"', () => {
+    expect(
+      describeAudit(
+        row({
+          action: 'update',
+          table_name: 'bills',
+          old_row: { status: 'active', bill_no: 'JV-0021' },
+          new_row: { status: 'cancelled', bill_no: 'JV-0021' },
+        }),
+        users
+      ).what
+    ).toBe('Bill cancelled');
+  });
+
+  it('the removal of a photo is "Photo removed"', () => {
+    expect(
+      describeAudit(
+        row({
+          action: 'event',
+          table_name: 'design_photos',
+          new_row: { event: 'photo_removed', photo_id: uuid(1), order_id: uuid(2) },
+        }),
+        users
+      ).what
+    ).toBe('Photo removed');
+  });
+});
+
 describe('FB-D4 readAuditPage', () => {
   function booksWith(get: (path: string, options?: unknown) => Promise<unknown>) {
     return createBooksServer({

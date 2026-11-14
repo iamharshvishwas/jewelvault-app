@@ -11,6 +11,7 @@ import DashboardHealthLine from './components/DashboardHealthLine';
 import DashboardDownloadCard from './components/DashboardDownloadCard';
 import DashboardEveningCheck from './components/DashboardEveningCheck';
 import DashboardOverduePanel from './components/DashboardOverduePanel';
+import DashboardOrdersPanel from './components/DashboardOrdersPanel';
 import { BUSINESS_LOCATION, BUSINESS_NAME } from '@/lib/businessConfig';
 import { useSession } from '@/lib/authStore';
 
@@ -60,6 +61,9 @@ export default function HomePage() {
 
         {/* KPI Grid */}
         <DashboardKpiGrid role={role} />
+
+        {/* FB-F1: the orders due in the next 2 days or overdue, for every role (staff without the customer) */}
+        <DashboardOrdersPanel />
 
         {/* FB-D3: the customers with a payment pending for more than 60 days (V1), for the owner and the biller */}
         {(role === 'owner' || role === 'biller') && <DashboardOverduePanel />}

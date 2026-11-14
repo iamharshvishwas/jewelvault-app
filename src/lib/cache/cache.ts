@@ -36,6 +36,7 @@ export const KEY_FIELD: Readonly<Record<SyncResource, string>> = {
   receipts: 'id',
   'receipt-allocations': 'id',
   'customer-balances': 'id',
+  orders: 'id',
 };
 
 /** A row the API sent that cannot be kept: no key, or no stamp this screen can read. The message names the resource, never the row. */

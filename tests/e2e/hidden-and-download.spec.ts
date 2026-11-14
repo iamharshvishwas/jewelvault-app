@@ -297,7 +297,8 @@ const auditRowsOfLastDownload = async () =>
 test.describe('T-E04 E2E: the hidden screens cannot be reached', () => {
   test.describe.configure({ timeout: 300_000 });
 
-  const HIDDEN = ['/order-book', '/catalogue', '/customer-catalogue'];
+  // FB-F1: the Order Book is built and open to every role; the public catalogue and its admin screen stay hidden
+  const HIDDEN = ['/catalogue', '/customer-catalogue'];
 
   test('a visitor with no session gets the login screen at every hidden URL, never the screen', async ({
     page,
@@ -305,7 +306,7 @@ test.describe('T-E04 E2E: the hidden screens cannot be reached', () => {
     for (const url of HIDDEN) {
       await page.goto(url);
       await expect(page.getByLabel('Email')).toBeVisible();
-      await expect(page.getByRole('heading', { name: /order book|catalogue/i })).toHaveCount(0);
+      await expect(page.getByRole('heading', { name: /catalogue/i })).toHaveCount(0);
     }
   });
 
@@ -319,10 +320,10 @@ test.describe('T-E04 E2E: the hidden screens cannot be reached', () => {
         await expect(page.getByText('Not available for your role')).toBeVisible({
           timeout: 60_000,
         });
-        await expect(page.getByRole('heading', { name: /order book|catalogue/i })).toHaveCount(0);
+        await expect(page.getByRole('heading', { name: /catalogue/i })).toHaveCount(0);
         // nothing of the screens themselves: not the search box of the catalogue, not the order form
         await expect(page.getByRole('main').getByPlaceholder(/search/i)).toHaveCount(0);
-        await expect(page.getByRole('main')).not.toContainText(/Receive Order|Catalogue/);
+        await expect(page.getByRole('main')).not.toContainText(/Catalogue/);
       }
       // the menus of the page (the side bar and the bottom bar): no link to a hidden screen, and no label for one
       const hrefs = await page
@@ -335,7 +336,7 @@ test.describe('T-E04 E2E: the hidden screens cannot be reached', () => {
           )
         )
       ).toEqual([]);
-      await expect(aside(page)).not.toContainText(/Order Book|Customer Catalogue/);
+      await expect(aside(page)).not.toContainText(/Customer Catalogue/);
     });
   }
 

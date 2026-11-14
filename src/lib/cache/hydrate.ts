@@ -65,10 +65,17 @@ export const MONEY_SIDE: readonly SyncResource[] = [
   'receipt-allocations',
   'customer-balances',
 ];
-const HYDRATE_ORDER: readonly SyncResource[] = [...STOCK_SIDE, 'users', ...MONEY_SIDE];
+/** FB-F1 (FB-E1, FB-D8): the Order Book, last. Every role reads it (staff see the list, never the customer: ruling A4). */
+const ORDER_BOOK: readonly SyncResource[] = ['orders'];
+const HYDRATE_ORDER: readonly SyncResource[] = [
+  ...STOCK_SIDE,
+  'users',
+  ...MONEY_SIDE,
+  ...ORDER_BOOK,
+];
 
-// The roles of the permission matrix of the API (A4, C3): the owner reads all 15; the biller all but the owner-only weight; staff the stock, the
-// categories, the rates, the settings and the people. A role is asked for nothing it may not read, because the API answers the whole call
+// The roles of the permission matrix of the API (A4, C3): the owner reads all 16; the biller all but the owner-only weight; staff the stock, the
+// categories, the rates, the settings, the people and the orders. A role is asked for nothing it may not read, because the API answers the whole call
 // 403 for one resource it forbids. tests/e2e/hydrate.spec.ts checks this table against the real API for each role.
 const NOT_READ: Record<AuthRole, readonly SyncResource[]> = {
   owner: [],

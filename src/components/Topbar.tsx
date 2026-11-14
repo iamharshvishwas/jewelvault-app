@@ -52,10 +52,12 @@ export default function Topbar({ onMenuClick, menuOpen, session }: TopbarProps) 
         </div>
       </div>
 
+      {/* FB-F1: the btn-* classes are utilities with a `display` of their own, which beats a plain `hidden`; the `max-*:hidden` variants come later in the CSS and keep these
+          buttons off a phone, so the bar fits 375 px (it used to run to 469 px for the owner, its bell and avatar cut off) */}
       <div className="ml-auto flex items-center gap-2">
         {/* Quick Add */}
         {canAccessPath(session.role, '/add-design') && (
-          <Link href="/add-design" className="btn-primary hidden sm:flex py-2">
+          <Link href="/add-design" className="btn-primary hidden max-sm:hidden sm:flex py-2">
             <Plus size={15} />
             <span>Add Design</span>
           </Link>
@@ -63,7 +65,7 @@ export default function Topbar({ onMenuClick, menuOpen, session }: TopbarProps) 
 
         {/* New Sale */}
         {canAccessPath(session.role, '/billing-pos') && (
-          <Link href="/billing-pos" className="btn-secondary hidden md:flex py-2">
+          <Link href="/billing-pos" className="btn-secondary hidden max-md:hidden md:flex py-2">
             <span>New Sale</span>
           </Link>
         )}
@@ -86,7 +88,7 @@ export default function Topbar({ onMenuClick, menuOpen, session }: TopbarProps) 
         <button
           type="button"
           onClick={() => void signOut()}
-          className="btn-ghost p-2 hidden sm:inline-flex"
+          className="btn-ghost p-2 hidden max-sm:hidden sm:inline-flex"
           title="Logout"
         >
           <LogOut size={16} />

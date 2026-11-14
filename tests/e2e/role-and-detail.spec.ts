@@ -321,7 +321,7 @@ test.describe('CL19-2 E2E: the design page and the scan screen show what the add
 test.describe('CL19-3 E2E: no jaishri.* key is read or written, and the browser holds nothing of the application’s', () => {
   test.describe.configure({ timeout: 240_000 });
 
-  test('a session through the dashboard, the detail screens and the closed Order Book touches no jaishri.* key; the old order key is neither read nor wiped', async ({
+  test('a session through the dashboard, the detail screens and the Order Book touches no jaishri.* key; the old order key is neither read nor wiped', async ({
     page,
   }) => {
     const owner = e2eLogin('owner');
@@ -354,8 +354,11 @@ test.describe('CL19-3 E2E: no jaishri.* key is read or written, and the browser 
       };
     });
 
-    await open(page, owner, '/order-book'); // closed to every role: the gate does not draw the screen
-    await expect(page.getByText('Not available for your role')).toBeVisible({ timeout: 60_000 });
+    // FB-F1: the Order Book is open now and reads the API's orders from memory; the prototype's old order is not among them
+    await open(page, owner, '/order-book');
+    await expect(page.getByRole('heading', { name: 'Order Book', level: 1 })).toBeVisible({
+      timeout: 60_000,
+    });
     await expect(page.getByText('OLD-ORDER-0001')).toHaveCount(0);
     for (const route of [
       '/',

@@ -2,7 +2,14 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Package, ReceiptText, ScanLine, ShoppingCart } from 'lucide-react';
+import {
+  ClipboardList,
+  LayoutDashboard,
+  Package,
+  ReceiptText,
+  ScanLine,
+  ShoppingCart,
+} from 'lucide-react';
 import { canAccessPath, type AuthSession } from '@/lib/authStore';
 
 const MOBILE_NAV = [
@@ -23,6 +30,8 @@ const MOBILE_NAV = [
   { id: 'mnav-sale', label: 'Sale', href: '/billing-pos', icon: <ShoppingCart size={20} /> },
   // FB-A2: the saved estimates were not reachable from a phone (the owner and the biller; staff may not open the screen)
   { id: 'mnav-estimates', label: 'Estimates', href: '/estimate', icon: <ReceiptText size={20} /> },
+  // FB-F1: the Order Book (every role)
+  { id: 'mnav-orders', label: 'Orders', href: '/order-book', icon: <ClipboardList size={20} /> },
 ];
 
 export default function MobileNav({ session }: { session: AuthSession }) {
@@ -49,7 +58,8 @@ export default function MobileNav({ session }: { session: AuthSession }) {
             <Link
               key={item?.id}
               href={item?.href}
-              className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-sm transition-colors ${
+              // six buttons for the owner (FB-F1 added Orders): a narrow side padding keeps them all inside a 375 px phone
+              className={`flex flex-col items-center gap-0.5 px-1.5 py-1.5 rounded-sm transition-colors ${
                 isActive ? 'text-primary' : 'text-muted-foreground'
               }`}
             >

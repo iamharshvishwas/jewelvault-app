@@ -22,7 +22,7 @@ import { e2eLane, e2eLogin, type E2eLogin, type E2eRole } from './global-setup';
 // Run: LANE=b JV_API_DIR=<checkout of jewelvault-api> E2E=1 npx playwright test tests/e2e/hydrate.spec.ts
 
 const ROLES: readonly E2eRole[] = ['owner', 'biller', 'staff'];
-/** The 15 sync resources of the API (A4), in the address form. */
+/** The 16 sync resources of the API (A4; FB-E1 added the Order Book's `orders`), in the address form. */
 const SYNC_RESOURCES = [
   'users',
   'settings',
@@ -39,6 +39,7 @@ const SYNC_RESOURCES = [
   'receipts',
   'receipt-allocations',
   'customer-balances',
+  'orders',
 ] as const;
 
 // ------------------------------------------------------------------------------------------------ the page
@@ -401,16 +402,16 @@ test.describe('T-E05: the data gate (C2, C8, U7, U8)', () => {
     });
     await signInAs(page, owner);
 
-    // nothing has arrived: the count is 0 of the owner's 15 tables, and not a word of the application is on screen
-    await expect(progress(page)).toHaveText('0 of 15 tables', { timeout: 60_000 });
+    // nothing has arrived: the count is 0 of the owner's 16 tables, and not a word of the application is on screen
+    await expect(progress(page)).toHaveText('0 of 16 tables', { timeout: 60_000 });
     await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0');
     await noApp(page);
     await expect(page.getByRole('heading', { name: 'Daily Metal Rates' })).toHaveCount(0);
 
-    // every table but one has arrived: 14 of 15, and still no application
+    // every table but one has arrived: 15 of 16, and still no application
     releaseAll();
-    await expect(progress(page)).toHaveText('14 of 15 tables');
-    await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '14');
+    await expect(progress(page)).toHaveText('15 of 16 tables');
+    await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '15');
     await noApp(page);
     await expect(page.getByRole('heading', { name: 'Daily Metal Rates' })).toHaveCount(0);
 
@@ -433,7 +434,8 @@ test.describe('T-E05: the data gate (C2, C8, U7, U8)', () => {
       }
       allowed[role].sort();
     }
-    expect(allowed.owner).toHaveLength(15);
+    expect(allowed.owner).toHaveLength(16);
+    expect(allowed.staff).toContain('orders'); // FB-F1: staff read the Order Book
     expect(allowed.biller).not.toContain('sku-private');
     expect(allowed.staff).not.toContain('customers');
 
@@ -545,7 +547,7 @@ test.describe('T-E05: the data gate (C2, C8, U7, U8)', () => {
     await submitLogin(page, owner);
     await expectApp(page, owner);
     expect(resourcesOf(calls)).toEqual([...SYNC_RESOURCES].sort());
-    expect(calls.filter((c) => c.updatedAfter === null)).toHaveLength(15);
+    expect(calls.filter((c) => c.updatedAfter === null)).toHaveLength(16);
   });
 });
 
@@ -668,7 +670,7 @@ test.describe('T-F03, PT-W3: 2,500 pieces, 2,000 customers and the stock side ar
       () => (window as unknown as { __progress: string[] }).__progress
     );
     expect(shown.length).toBeGreaterThan(0);
-    const done = shown.map((text) => Number(/^(\d+) of 15 tables$/.exec(text)?.[1]));
+    const done = shown.map((text) => Number(/^(\d+) of 16 tables$/.exec(text)?.[1]));
     expect(done.every((n) => Number.isInteger(n))).toBe(true);
     expect(done).toEqual([...done].sort((a, b) => a - b)); // the count only goes up
 
