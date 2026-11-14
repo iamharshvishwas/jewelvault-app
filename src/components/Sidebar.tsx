@@ -31,6 +31,7 @@ import {
   X,
   ScanLine,
   ScrollText,
+  ClipboardList,
 } from 'lucide-react';
 
 interface NavItem {
@@ -42,7 +43,8 @@ interface NavItem {
   children?: NavItem[];
 }
 
-// C15: Order Book, the public catalogue and its admin screen are not connected and not reachable in M1, so the menu does not offer them (the route table in authStore closes them as well).
+// C15: the public catalogue and its admin screen are not connected and not reachable in M1, so the menu does not offer them (the route table in authStore closes them as well).
+// FB-F1: the Order Book is, for every role (staff read it).
 const NAV_ITEMS: NavItem[] = [
   {
     id: 'nav-dashboard',
@@ -126,6 +128,12 @@ const NAV_ITEMS: NavItem[] = [
         icon: <CreditCard size={15} />,
       },
     ],
+  },
+  {
+    id: 'nav-order-book',
+    label: 'Order Book',
+    href: '/order-book',
+    icon: <ClipboardList size={18} />,
   },
   {
     id: 'nav-stock',

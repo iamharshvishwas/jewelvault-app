@@ -66,8 +66,8 @@ function isRole(value: unknown): value is AuthRole {
 // ------------------------------------------------------------------------------------------------ screens by role
 
 // Spec 1.3, "Screens by role": a front-end rule that mirrors the rules of the API (the API is the real wall, section 3). A route that is
-// not in this list is closed to everybody, which is how the screens that are "hidden in M1" (/order-book, /catalogue,
-// /customer-catalogue) stay hidden. /scan-detail is not in the table of 1.3; it stays as the prototype had it, for the owner only.
+// not in this list is closed to everybody, which is how the screens that are "hidden in M1" (/catalogue,
+// /customer-catalogue) stay hidden. FB-F1 opened /order-book: the owner and the biller make and move orders, staff read the list (the screen draws no button for them). /scan-detail is not in the table of 1.3; it stays as the prototype had it, for the owner only.
 const SCREENS: ReadonlyArray<{ path: string; roles: readonly AuthRole[] }> = [
   { path: '/', roles: ['owner', 'biller', 'staff'] },
   { path: '/billing-pos', roles: ['owner', 'biller'] },
@@ -77,6 +77,7 @@ const SCREENS: ReadonlyArray<{ path: string; roles: readonly AuthRole[] }> = [
   { path: '/design-detail', roles: ['owner', 'biller', 'staff'] },
   { path: '/print-tags', roles: ['owner', 'biller', 'staff'] },
   { path: '/stock-catalogue', roles: ['owner', 'biller', 'staff'] },
+  { path: '/order-book', roles: ['owner', 'biller', 'staff'] },
   { path: '/add-design', roles: ['owner', 'staff'] },
   { path: '/edit-stock', roles: ['owner', 'staff'] },
   { path: '/reports', roles: ['owner'] },

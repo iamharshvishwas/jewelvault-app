@@ -327,17 +327,18 @@ test.describe('T-E01: the login screen', () => {
 
 test.describe('T-E01: a login per role, and the menus of the role (U5)', () => {
   // [role, links the menu must offer, links it must not]
+  // FB-F1: the Order Book is in every role's menu now (staff read it)
   const MENUS: Array<[E2eRole, string[], string[]]> = [
-    ['owner', ['Reports', 'Add Design', 'New Estimate', 'Customers & Ledger'], ['Order Book']],
+    ['owner', ['Reports', 'Add Design', 'New Estimate', 'Customers & Ledger', 'Order Book'], []],
     [
       'biller',
-      ['New Estimate', 'Customers & Ledger', 'Stock List'],
-      ['Reports', 'Add Design', 'Edit Stock', 'Order Book'],
+      ['New Estimate', 'Customers & Ledger', 'Stock List', 'Order Book'],
+      ['Reports', 'Add Design', 'Edit Stock'],
     ],
     [
       'staff',
-      ['Add Design', 'Edit Stock', 'Stock List'],
-      ['Reports', 'New Estimate', 'Customers & Ledger', 'Order Book'],
+      ['Add Design', 'Edit Stock', 'Stock List', 'Order Book'],
+      ['Reports', 'New Estimate', 'Customers & Ledger'],
     ],
   ];
 
@@ -374,7 +375,7 @@ test.describe('T-E01: a login per role, and the menus of the role (U5)', () => {
     await expect(page.getByText('Not available for your role')).toBeVisible();
     await page.goto('/add-design');
     await expect(page.getByText('Not available for your role')).toHaveCount(0);
-    await page.goto('/order-book');
+    await page.goto('/catalogue'); // hidden in M1 for every role (the Order Book is open since FB-F1)
     await expect(page.getByText('Not available for your role')).toBeVisible();
   });
 

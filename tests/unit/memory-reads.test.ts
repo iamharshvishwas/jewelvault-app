@@ -103,12 +103,14 @@ const stores = ['designStore', 'catalogStore', 'settingsStore', 'appStore', 'ord
 
 describe('C9 (T-E02 clause): the screens that re-read the stores every second read memory only', () => {
   // WEB10: the spec counted 16 files with a timer in the prototype. The estimate screen was one of them (a one-second tick that redrew it after an edit); a saved bill is read-only now and
-  // the screen is drawn again when memory changes (`useRowCacheVersion`, the way WEB05 hears of a poll), so it keeps no timer and there are 15.
-  it('there are 15 of them (the spec counted 16: the estimate screen now redraws on a change of memory, not on a timer)', () => {
-    expect(screens.map((file) => path.relative(root, file))).toHaveLength(15);
-    expect(screens.map((file) => path.relative(root, file))).not.toContain(
-      'src/app/estimate/components/EstimateViewClient.tsx'
-    );
+  // the screen is drawn again when memory changes (`useRowCacheVersion`, the way WEB05 hears of a poll), so it keeps no timer. FB-F1 rebuilt the Order Book the same way, so there are 14.
+  it('there are 14 of them (the spec counted 16: the estimate screen and the Order Book now redraw on a change of memory, not on a timer)', () => {
+    expect(screens.map((file) => path.relative(root, file))).toHaveLength(14);
+    for (const gone of [
+      'src/app/estimate/components/EstimateViewClient.tsx',
+      'src/app/order-book/components/OrderBookClient.tsx',
+    ])
+      expect(screens.map((file) => path.relative(root, file))).not.toContain(gone);
   });
 
   for (const file of screens) {

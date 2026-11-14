@@ -352,6 +352,26 @@ export interface CustomerBalanceRow {
   updated_at: TimestampText;
 }
 
+/** FB-D8 (Lane E, FB-E1): the five statuses of an order, as the API's CHECK has them (lower case; the screen's words are in src/lib/orderStatus.ts). */
+export type OrderStatus = 'open' | 'in_progress' | 'ready' | 'delivered' | 'cancelled';
+
+/**
+ * FB-D8 (Siddhi #13): one order of the Order Book, as `GET /v1/sync/orders` and the writes of FB-E1 send it. An order holds NO MONEY (an advance is an ordinary payment in the ledger). Staff read
+ * the row too, but the screen shows them no customer (ruling A4): `customer_id` is never looked up for staff.
+ */
+export interface OrderRow extends Stamps {
+  id: UuidText;
+  /** `ORD-2026-0001`: the API's number, from the series of the Asia/Kolkata year. */
+  order_no: string;
+  customer_id: UuidText;
+  description: string;
+  delivery_date: DateText | null;
+  status: OrderStatus;
+  /** At most 3, in the order they were added. */
+  photo_ids: UuidText[];
+  notes: string | null;
+}
+
 /** The name of a resource in the address `/v1/sync/<resource>` and in a poll, and the row it gives. */
 export interface SyncRows {
   users: UserRow;
@@ -369,6 +389,7 @@ export interface SyncRows {
   receipts: ReceiptRow;
   'receipt-allocations': ReceiptAllocationRow;
   'customer-balances': CustomerBalanceRow;
+  orders: OrderRow;
 }
 export type SyncResource = keyof SyncRows;
 
@@ -388,6 +409,7 @@ export const SYNC_RESOURCES: readonly SyncResource[] = [
   'receipts',
   'receipt-allocations',
   'customer-balances',
+  'orders',
 ];
 
 // ------------------------------------------------------------------------------------------------ the read side (NODE-DESIGN 4.2; handoff API11)
@@ -487,6 +509,11 @@ export interface CancelBillResponse {
 /** X6 `POST /v1/customers` (201). */
 export interface CreateCustomerResponse {
   customer: CustomerRow;
+}
+
+/** FB-E1 `POST /v1/orders` (201): the order in the wire form of the sync read. */
+export interface CreateOrderResponse {
+  order: OrderRow;
 }
 
 /** X8 `POST /v1/designs` (201). `sku_private` is there only for a caller who may enter the original weight (the owner), one row for each piece that has one (D9). */

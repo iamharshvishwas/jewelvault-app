@@ -10,7 +10,8 @@
 //     it is asked for more). A page that fails keeps the rows already drawn and can be asked again.
 import { PricingError, formatGrams, parseGrams, parseRupees } from './pricing';
 import { paiseShown } from './ledgerView';
-import type { AuditPageResponse, AuditRow } from './api/types';
+import type { AuditPageResponse, AuditRow, OrderStatus } from './api/types';
+import { ORDER_STATUS_LABEL } from './orderStatus';
 
 export type { AuditRow } from './api/types';
 
@@ -89,6 +90,24 @@ function receiptWords(facts: Record<string, unknown> | null): string {
   }
 }
 
+/** An update whose row's `status` became `status` (and was something else before, when the row before is known). */
+function changedTo(row: AuditRow, status: string): boolean {
+  if (textOf(row.new_row?.status) !== status) return false;
+  return row.old_row === null || textOf(row.old_row.status) !== status;
+}
+
+/** "New order ORD-2026-0007", "Order ORD-2026-0007 marked Ready", "Order ORD-2026-0007 edited". */
+function orderWords(row: AuditRow): string {
+  const number = textOf(row.new_row?.order_no);
+  if (row.action === 'insert') return joined('New order', number);
+  const status = textOf(row.new_row?.status);
+  const before = textOf(row.old_row?.status);
+  const label = ORDER_STATUS_LABEL[status as OrderStatus];
+  if (row.old_row !== null && status !== before && label !== undefined)
+    return `${joined('Order', number)} marked ${label}`;
+  return `${joined('Order', number)} edited`;
+}
+
 function whatShown(row: AuditRow): string {
   const facts = row.new_row;
   if (row.action === 'event' && row.table_name === 'users') {
@@ -109,6 +128,23 @@ function whatShown(row: AuditRow): string {
   }
   if (row.action === 'update' && row.table_name === 'designs') {
     return joined('Stock edited', textOf(facts?.design_no));
+  }
+  // FB-F1 (F-extra-4): the Order Book, a void, a cancel and the removal of a photo
+  if (row.table_name === 'orders' && (row.action === 'insert' || row.action === 'update')) {
+    return orderWords(row);
+  }
+  if (row.action === 'update' && row.table_name === 'receipts' && changedTo(row, 'voided')) {
+    return 'Payment voided';
+  }
+  if (row.action === 'update' && row.table_name === 'bills' && changedTo(row, 'cancelled')) {
+    return 'Bill cancelled';
+  }
+  if (
+    row.action === 'event' &&
+    row.table_name === 'design_photos' &&
+    textOf(facts?.event) === 'photo_removed'
+  ) {
+    return 'Photo removed';
   }
   return `${capitalised(row.action)} ${row.table_name.replace(/_/g, ' ')}`;
 }

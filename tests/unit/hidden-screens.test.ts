@@ -49,7 +49,8 @@ function strings(file: string): string[] {
   return out;
 }
 
-const HIDDEN = ['/order-book', '/catalogue', '/customer-catalogue'];
+// FB-F1: the Order Book is built (on the API, FB-E1) and open to every role; the public catalogue and its admin screen stay hidden.
+const HIDDEN = ['/catalogue', '/customer-catalogue'];
 const ROLES: AuthRole[] = ['owner', 'biller', 'staff'];
 
 describe('T-E04 the hidden screens cannot be reached by URL', () => {
@@ -76,7 +77,7 @@ describe('T-E04 the hidden screens cannot be reached by URL', () => {
     const mentions: string[] = [];
     for (const file of sourceFiles()) {
       const name = rel(file);
-      if (/^app\/(order-book|catalogue|customer-catalogue)\//.test(name)) continue;
+      if (/^app\/(catalogue|customer-catalogue)\//.test(name)) continue;
       for (const s of strings(file)) {
         if (
           HIDDEN.some(

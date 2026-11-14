@@ -223,6 +223,8 @@ export function photoErrorMessage(error: unknown): string {
       switch (error.details.reason) {
         case 'design_full':
           return 'A design can have at most 3 photos.';
+        case 'order_full':
+          return 'An order can have at most 3 photos.';
         case 'unattached_count':
         case 'unattached_bytes':
           return 'Too many photos are waiting for a design to be saved. Save the designs you have started first.';
@@ -267,15 +269,22 @@ function photoFailure(error: unknown): unknown {
   });
 }
 
+/** What a photo belongs to: a design (P2) or an order of the Order Book (FB-E1: `PUT /v1/orders/:order_id/photos/:photo_id`, the same store and the same rules, 3 an order). */
+export type PhotoOwner = 'designs' | 'orders';
+
 /**
- * Uploads the two objects of a photo under the design's id: the full picture, then the thumbnail. A kind that is stored for this design id is not sent again; "duplicate" from
+ * Uploads the two objects of a photo under the design's (or the order's) id: the full picture, then the thumbnail. A kind that is stored for this id is not sent again; "duplicate" from
  * the server counts as stored (insert-only, and the id is this page's own). Any other refusal ends the upload and is thrown as an ApiError with the plain words of C13.
  */
-export async function uploadPhoto(designId: string, photo: PhotoToUpload): Promise<void> {
+export async function uploadPhoto(
+  designId: string,
+  photo: PhotoToUpload,
+  owner: PhotoOwner = 'designs'
+): Promise<void> {
   for (const kind of ['full', 'thumb'] as const) {
     if (photo.stored[kind] === designId) continue;
     try {
-      await api.upload(`/v1/designs/${designId}/photos/${photo.photoId}`, photo[kind], {
+      await api.upload(`/v1/${owner}/${designId}/photos/${photo.photoId}`, photo[kind], {
         query: { kind },
       });
     } catch (error) {

@@ -25,7 +25,8 @@ export type EditableResource =
   | 'categories'
   | 'subcategories'
   | 'daily-rates'
-  | 'customers';
+  | 'customers'
+  | 'orders';
 export type InsertableResource = 'categories' | 'subcategories' | 'daily-rates';
 
 const ADDRESS: Readonly<Record<EditableResource, string>> = {
@@ -35,6 +36,7 @@ const ADDRESS: Readonly<Record<EditableResource, string>> = {
   subcategories: '/v1/subcategories',
   'daily-rates': '/v1/daily-rates',
   customers: '/v1/customers',
+  orders: '/v1/orders', // FB-E1: the status and the photo ids of an order (FB-F1)
 };
 
 // ------------------------------------------------------------------------------------------------ the error of a save

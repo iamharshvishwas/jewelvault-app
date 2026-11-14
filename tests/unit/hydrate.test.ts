@@ -60,16 +60,28 @@ const smallShop = (): FakeApiOptions['tables'] => ({
   receipts: [],
   'receipt-allocations': [],
   'customer-balances': [],
+  orders: [],
 });
 
 describe('T-E05 which resources a role loads (C3, A4)', () => {
-  it('the owner loads all 15, the biller all but sku-private, staff the 7 of the stock side and the people', () => {
-    expect(resourcesFor('owner')).toHaveLength(15);
+  // FB-F1: the Order Book (FB-E1's `orders`) is read by all three roles: staff see the list too (without the customer, ruling A4)
+  it('the owner loads all 16, the biller all but sku-private, staff the 7 of the stock side, the people and the orders', () => {
+    expect(resourcesFor('owner')).toHaveLength(16);
     expect([...resourcesFor('owner')].sort()).toEqual([...SYNC_RESOURCES].sort());
-    expect(resourcesFor('biller')).toHaveLength(14);
+    expect(resourcesFor('biller')).toHaveLength(15);
+    expect(resourcesFor('biller')).toContain('orders');
     expect(resourcesFor('biller')).not.toContain('sku-private');
     expect([...resourcesFor('staff')].sort()).toEqual(
-      ['categories', 'daily-rates', 'designs', 'settings', 'skus', 'subcategories', 'users'].sort()
+      [
+        'categories',
+        'daily-rates',
+        'designs',
+        'orders',
+        'settings',
+        'skus',
+        'subcategories',
+        'users',
+      ].sort()
     );
   });
 
@@ -127,21 +139,21 @@ describe('T-E05 the first hydrate (C2)', () => {
     staff.hydrator.start('staff', 1);
     await staff.hydrator.settled();
     expect(new Set(staff.calls.map((c) => c.resource))).toEqual(new Set(resourcesFor('staff')));
-    expect(staff.hydrator.getState().tablesTotal).toBe(7);
+    expect(staff.hydrator.getState().tablesTotal).toBe(8);
   });
 
-  it('shows progress: "0 of 15 tables" at the start, one more table each time one is whole, "15 of 15" at the end', async () => {
+  it('shows progress: "0 of 16 tables" at the start, one more table each time one is whole, "16 of 16" at the end', async () => {
     const { hydrator } = setup({ tables: smallShop() });
     const seen: HydrateState[] = [];
     hydrator.subscribe(() => seen.push(hydrator.getState()));
     hydrator.start('owner', 1);
     expect(hydrator.getState().status).toBe('loading');
-    expect(progressText(hydrator.getState())).toBe('0 of 15 tables');
+    expect(progressText(hydrator.getState())).toBe('0 of 16 tables');
     await hydrator.settled();
-    expect(progressText(hydrator.getState())).toBe('15 of 15 tables');
+    expect(progressText(hydrator.getState())).toBe('16 of 16 tables');
     const done = seen.map((s) => s.tablesDone);
     expect(done).toEqual([...done].sort((a, b) => a - b)); // never goes back
-    expect(new Set(done)).toEqual(new Set(Array.from({ length: 16 }, (_, i) => i)));
+    expect(new Set(done)).toEqual(new Set(Array.from({ length: 17 }, (_, i) => i)));
     expect(Math.max(...seen.map((s) => s.rowsLoaded))).toBe(12);
     expect(progressText({ tablesDone: 3, tablesTotal: 8 })).toBe('3 of 8 tables');
   });
@@ -204,8 +216,8 @@ describe('T-E05 the first hydrate (C2)', () => {
       status: 'ready',
       role: 'owner',
       epoch: 3,
-      tablesDone: 15,
-      tablesTotal: 15,
+      tablesDone: 16,
+      tablesTotal: 16,
       rowsLoaded: 1,
       error: null,
       firstServerTime: null,
@@ -459,7 +471,7 @@ describe('T-E05 a failed load shows an error with a retry and never sample data 
     fail = false;
     hydrator.retry();
     expect(hydrator.getState().status).toBe('loading');
-    expect(progressText(hydrator.getState())).toBe('0 of 15 tables');
+    expect(progressText(hydrator.getState())).toBe('0 of 16 tables');
     await hydrator.settled();
     expect(hydrator.getState()).toMatchObject({
       status: 'ready',

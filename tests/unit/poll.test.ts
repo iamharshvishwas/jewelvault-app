@@ -89,10 +89,10 @@ describe('T-E07 the first poll and the cursors (C3, C4)', () => {
     expect(t.poller.getState().polls).toBe(1);
   });
 
-  it('a biller asks for 14 resources and staff for 7: never one the role may not read', async () => {
+  it('a biller asks for 15 resources and staff for 8: never one the role may not read', async () => {
     const biller = boot({}, { role: 'biller' });
     await settle();
-    expect(Object.keys(rounds(biller.server)[0].cursors ?? {})).toHaveLength(14);
+    expect(Object.keys(rounds(biller.server)[0].cursors ?? {})).toHaveLength(15);
     expect(rounds(biller.server)[0].cursors).not.toHaveProperty('sku-private');
     const staff = boot({}, { role: 'staff' });
     await settle();
@@ -697,7 +697,7 @@ describe('T-E01 a demoted owner loses sku_private and the audit data within one 
     expect(t.server.count('me')).toBe(mes + 1);
     const after = rounds(t.server).slice(-5);
     for (const round of after) {
-      expect(Object.keys(round.cursors ?? {})).toHaveLength(14);
+      expect(Object.keys(round.cursors ?? {})).toHaveLength(15);
       expect(round.cursors).not.toHaveProperty('sku-private');
     }
     expect(t.poller.getState().failures).toBe(0);
@@ -706,7 +706,7 @@ describe('T-E01 a demoted owner loses sku_private and the audit data within one 
   it("staff to biller: the poll is answered, but its `role` is another than the session's: `me` is asked once and the screen hydrates again", async () => {
     const t = boot({}, { role: 'staff' });
     await settle();
-    expect(Object.keys(rounds(t.server)[0].cursors ?? {})).toHaveLength(7);
+    expect(Object.keys(rounds(t.server)[0].cursors ?? {})).toHaveLength(8);
     const mes = t.server.count('me');
     t.server.role = 'biller';
     await settle(8);
@@ -716,7 +716,7 @@ describe('T-E01 a demoted owner loses sku_private and the audit data within one 
     expect(t.hydrator.getState()).toMatchObject({
       status: 'ready',
       role: 'biller',
-      tablesTotal: 14,
+      tablesTotal: 15,
     });
     await settle(120);
     expect(t.server.count('me')).toBe(mes + 1);

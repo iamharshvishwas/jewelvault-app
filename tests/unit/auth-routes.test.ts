@@ -42,8 +42,8 @@ const SCREENS: Array<[string, AuthRole[]]> = [
   ['/reports', ['owner']],
   ['/settings', ['owner']],
   ['/activity-log', ['owner']], // FB-D4
+  ['/order-book', ALL], // FB-F1: the owner and the biller make and move orders, staff read the list (the buttons are the screen's)
   // "hidden in M1" for every role (section 1.3, C15)
-  ['/order-book', []],
   ['/catalogue', []],
   ['/customer-catalogue', []],
   // not in the table of 1.3: kept as the prototype had it (the owner only)
