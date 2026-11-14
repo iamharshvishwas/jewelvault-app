@@ -6,7 +6,13 @@ import QRCode from 'qrcode';
 import { Printer, Search } from 'lucide-react';
 import { getDesigns } from '@/lib/designStore';
 import { getSettings } from '@/lib/settingsStore';
-import { TAG_BARCODE_OPTIONS, tagBarcodeValue, tagShortName } from '@/lib/tagBarcode';
+import {
+  TAG_BARCODE_OPTIONS,
+  TAG_MIN_HEIGHT_MM,
+  tagBarcodeLayout,
+  tagBarcodeValue,
+  tagShortName,
+} from '@/lib/tagBarcode';
 import type { Sku } from '@/lib/mockData';
 
 // FB-B1: a real Code 128 of the piece barcode, drawn by JsBarcode into an svg that fills the width of the tag's barcode end (a scanner needs its bars as wide as the tag allows).
@@ -77,7 +83,9 @@ function Tag({ sku }: { sku: Sku }) {
     tag.showPiroi && sku.piroi > 0 ? `Piroi ${sku.piroi.toFixed(2)}` : '',
   ].filter(Boolean);
   const tagWidth = Math.max(tag.widthMm, 58);
-  const tagHeight = Math.max(tag.heightMm, 13);
+  const tagHeight = Math.max(tag.heightMm, TAG_MIN_HEIGHT_MM);
+  // FB-B fix: the barcode end is laid out for the height of this tag (a small tag has no room for the QR)
+  const barcodeEnd = tagBarcodeLayout(tagHeight, tag.barcodeHeightMm);
   const endWidth = (tagWidth - 10) / 2;
 
   return (
@@ -104,11 +112,13 @@ function Tag({ sku }: { sku: Sku }) {
 
       <div className="print-tag-end print-tag-barcode" style={{ width: `${endWidth}mm` }}>
         <div className="tag-code-text">{sku.barcode}</div>
-        <Code128 value={tagBarcodeValue(sku)} heightMm={Math.max(tag.barcodeHeightMm, 8)} />
-        <div className="tag-scan-row">
-          <SmallQrCode value={tagBarcodeValue(sku)} />
-        </div>
-        <div className="tag-barcode-number">{sku.skuNumber}</div>
+        <Code128 value={tagBarcodeValue(sku)} heightMm={barcodeEnd.barcodeMm} />
+        {barcodeEnd.showQr && (
+          <div className="tag-scan-row">
+            <SmallQrCode value={tagBarcodeValue(sku)} />
+          </div>
+        )}
+        {barcodeEnd.showNumber && <div className="tag-barcode-number">{sku.skuNumber}</div>}
       </div>
     </div>
   );

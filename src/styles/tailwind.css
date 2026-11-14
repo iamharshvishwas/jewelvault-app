@@ -290,6 +290,7 @@
   }
   .tag-code128 {
     display: block;
+    flex: none;
     width: 100%;
     margin: 0.6mm 0;
     background: #ffffff;

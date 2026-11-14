@@ -5,6 +5,9 @@
 //   - the options the tag draws it with, the value it encodes, and the short name the tag prints
 //   - the tag page draws one `svg[data-testid="tag-code128"]` for each tag, keeps the QR, and no longer draws the old bars
 //
+//   - FB-B fix 2: the barcode end of the tag fits every tag size the Settings allow (height from 13 mm, any barcode height): the Code 128 is always there and at least 4 mm high, the QR and
+//     the second printing of the piece number only where they fit; the default 28 mm tag is laid out as before
+//
 // The page is drawn on the server side of React over the real stores (tests/unit/support/rows.ts); the browser half (the svg really drawn, printed) is tests/e2e/print.spec.ts.
 //
 // Run: npm test -- tests/unit/tag-barcode.test.ts
@@ -13,8 +16,14 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BUSINESS_SHORT_NAME } from '@/lib/businessConfig';
-import { TAG_BARCODE_OPTIONS, tagBarcodeValue, tagShortName } from '@/lib/tagBarcode';
-import { categoryRow, designRow, skuRow, uuid } from './support/rows';
+import {
+  TAG_BARCODE_OPTIONS,
+  TAG_ROOM_MM,
+  tagBarcodeLayout,
+  tagBarcodeValue,
+  tagShortName,
+} from '@/lib/tagBarcode';
+import { categoryRow, designRow, settingRow, skuRow, uuid } from './support/rows';
 
 // JsBarcode ships no types for its inner modules: the encoder and its symbol table are read the way node reads them.
 const nodeRequire = createRequire(__filename);
@@ -118,7 +127,7 @@ describe('FB-B1 the tag barcode is a real Code 128 of the piece barcode', () => 
 
 // ================================================================================================ the tag page
 
-async function drawTags() {
+async function drawTags(template?: Record<string, unknown>) {
   vi.resetModules();
   vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.test');
@@ -126,6 +135,7 @@ async function drawTags() {
     import('@/lib/cache/cache'),
     import('@/app/print-tags/components/PrintTagsClient'),
   ]);
+  if (template) cache.rowCache.merge('settings', [settingRow('tag_template', template)]);
   cache.rowCache.merge('categories', [categoryRow(1, 'Ring', 'RING')]);
   cache.rowCache.merge('designs', [
     designRow(1, { design_no: 'RING-00001', name: 'Alpha ring', category_id: uuid(101) }),
@@ -153,5 +163,93 @@ describe('FB-B1 the tag page draws the Code 128 and keeps the QR', () => {
     expect(html).toContain('BC-RING-00001-001');
     expect(html).not.toContain('>JGP<');
     expect(html).toContain(`>${BUSINESS_SHORT_NAME}<`);
+  });
+});
+
+// ================================================================================================ FB-B fix 2: every tag size
+
+/** What the layout puts in the barcode end, in mm, from the numbers it hands back. */
+function used(layout: ReturnType<typeof tagBarcodeLayout>) {
+  return (
+    layout.barcodeMm +
+    TAG_ROOM_MM.text +
+    TAG_ROOM_MM.margin +
+    (layout.showNumber ? TAG_ROOM_MM.text : 0) +
+    (layout.showQr ? TAG_ROOM_MM.qr : 0)
+  );
+}
+const roomOf = (heightMm: number) => heightMm - TAG_ROOM_MM.chrome;
+
+describe('FB-B fix 2 the barcode end of the tag fits every tag size the Settings allow', () => {
+  it('the default tag (28 mm high, barcode 8 mm) is laid out as before: a Code 128 8 mm high, the QR and the piece number under it', () => {
+    expect(tagBarcodeLayout(28, 8)).toEqual({ barcodeMm: 8, showQr: true, showNumber: true });
+  });
+
+  it('the smallest tag (13 mm) keeps a scannable Code 128 (4 mm or more) and drops the QR and the second piece number, which do not fit', () => {
+    const layout = tagBarcodeLayout(13, 8);
+    expect(layout.showQr).toBe(false);
+    expect(layout.showNumber).toBe(false);
+    expect(layout.barcodeMm).toBeGreaterThanOrEqual(TAG_ROOM_MM.minBarcode);
+    expect(used(layout)).toBeLessThanOrEqual(roomOf(13));
+  });
+
+  it('a height below 13 is the 13 the tag page already raises it to; rubbish in the Settings is the default barcode height and the smallest tag', () => {
+    expect(tagBarcodeLayout(5, 8)).toEqual(tagBarcodeLayout(13, 8));
+    expect(tagBarcodeLayout(Number.NaN, 8)).toEqual(tagBarcodeLayout(13, 8));
+    expect(tagBarcodeLayout(28, Number.NaN)).toEqual(tagBarcodeLayout(28, 8));
+    expect(tagBarcodeLayout(28, -3)).toEqual(tagBarcodeLayout(28, 8));
+  });
+
+  it('keeps the stack inside the tag for EVERY height from 13 to 80 mm and EVERY barcode height from 0 to 60 mm, with a Code 128 of at least 4 mm', () => {
+    for (let height = 13; height <= 80; height += 0.5) {
+      for (let wanted = 0; wanted <= 60; wanted += 1) {
+        const layout = tagBarcodeLayout(height, wanted);
+        const where = `height ${height}, barcode ${wanted}`;
+        expect(layout.barcodeMm, where).toBeGreaterThanOrEqual(TAG_ROOM_MM.minBarcode);
+        expect(used(layout), where).toBeLessThanOrEqual(roomOf(height) + 1e-9);
+      }
+    }
+  });
+
+  it('a barcode taller than the room is cut to the room, and one shorter than 8 mm is the 8 mm the tag always had when there is room', () => {
+    const tall = tagBarcodeLayout(28, 30);
+    expect(tall.barcodeMm).toBeLessThan(30);
+    expect(used(tall)).toBeLessThanOrEqual(roomOf(28) + 1e-9);
+    expect(tagBarcodeLayout(40, 5).barcodeMm).toBe(8);
+    expect(tagBarcodeLayout(40, 12).barcodeMm).toBe(12);
+  });
+
+  it('the QR is on a tag as soon as it fits beside a Code 128 of 6 mm or more, and not before', () => {
+    let first: number | null = null;
+    for (let height = 13; height <= 40; height += 0.1) {
+      const layout = tagBarcodeLayout(height, 8);
+      if (layout.showQr) {
+        first = first ?? height;
+        expect(layout.barcodeMm).toBeGreaterThanOrEqual(6);
+      } else {
+        expect(first, `the QR does not come and go (height ${height})`).toBeNull();
+      }
+    }
+    expect(first).not.toBeNull();
+    expect(first as number).toBeLessThanOrEqual(28);
+  });
+
+  it('the tag page at the smallest size: one Code 128 for each tag at the height the layout gives, no QR, no second piece number', async () => {
+    const html = await drawTags({ heightMm: 13 });
+    const layout = tagBarcodeLayout(13, 8);
+    expect(html.match(/data-testid="tag-code128"/g)).toHaveLength(2);
+    expect(html.match(new RegExp(`style="height:${layout.barcodeMm}mm"`, 'g'))).toHaveLength(2);
+    expect(html).not.toContain('tag-qr');
+    expect(html).not.toContain('tag-barcode-number');
+    expect(html).toContain('BC-RING-00001-001'); // the barcode is still printed in words
+  });
+
+  it('the tag page at the default size is as before: QR and second piece number, the Code 128 8 mm high', async () => {
+    for (const html of [await drawTags(), await drawTags({ heightMm: 28, barcodeHeightMm: 8 })]) {
+      expect(html.match(/data-testid="tag-code128"/g)).toHaveLength(2);
+      expect(html.match(/style="height:8mm"/g)).toHaveLength(2);
+      expect(html.match(/class="tag-qr tag-qr-empty"/g)).toHaveLength(2);
+      expect(html.match(/class="tag-barcode-number"/g)).toHaveLength(2);
+    }
   });
 });
