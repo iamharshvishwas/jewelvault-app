@@ -8,6 +8,7 @@ import {
   Mail,
   MapPin,
   Phone,
+  Printer,
   RotateCcw,
   Trash2,
   TrendingDown,
@@ -40,6 +41,7 @@ import {
 import type { Customer, LedgerEntry } from '@/lib/mockData';
 import { PREVIEW_MODE } from '@/lib/previewMode';
 import CustomerInvoiceList from './CustomerInvoiceList';
+import CustomerLedgerPrint from './CustomerLedgerPrint';
 import CustomerLedgerTable from './CustomerLedgerTable';
 import CustomerPaymentsTab from './CustomerPaymentsTab';
 import ReceivePaymentPanel from './ReceivePaymentPanel';
@@ -52,6 +54,8 @@ import ReceivePaymentPanel from './ReceivePaymentPanel';
 // again after a change, has no event of its own, so it is looked at once a second and drawn again only when it is another ledger.
 // The prototype's Delete buttons exist in a preview build only: a bill, a payment and a customer are never deleted on the API. WEB11: the owner (and nobody else) has "Hand money back" (X11)
 // and "Opening balance" (X12) here, a Void on each receipt of the Payments tab (X4) and Cancel and Re-issue on each bill of the Invoices tab (X5, X10).
+// FB-D1: "Print / Save PDF" asks the browser to print the customer's ledger. On paper the card is only its sheet (CustomerLedgerPrint, the rules `.ledger-card-root` and `.print-ledger-sheet` of
+// src/styles/tailwind.css), whichever tab is open.
 
 const TABS = [
   { id: 'ctab-ledger', label: 'Ledger' },
@@ -211,7 +215,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
   ];
 
   return (
-    <div className="space-y-4 fade-in">
+    <div className="ledger-card-root space-y-4 fade-in">
       <div className="jewel-card p-5">
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
@@ -247,6 +251,15 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
             <button onClick={() => setShowPaymentPanel((p) => !p)} className="btn-primary py-2">
               <CreditCard size={14} />
               Receive Payment
+            </button>
+            <button
+              type="button"
+              data-testid="print-ledger"
+              onClick={() => window.print()}
+              className="btn-secondary py-2"
+            >
+              <Printer size={14} />
+              Print / Save PDF
             </button>
             {ownerActions && (
               <>
@@ -362,6 +375,8 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
           )}
         </div>
       </div>
+
+      <CustomerLedgerPrint customer={customer} entries={ledger} />
     </div>
   );
 }

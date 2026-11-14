@@ -140,7 +140,8 @@ export default function CustomerLedgerClient() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      {/* FB-D1: on paper only the open customer's ledger is printed (CustomerDetail), not the page around it */}
+      <div className="flex items-center justify-between print:hidden">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Customer Ledger</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
@@ -292,8 +293,8 @@ export default function CustomerLedgerClient() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-4 gap-4">
-        <div className="lg:col-span-1">
+      <div className="grid grid-cols-1 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-4 gap-4 print:block">
+        <div className="lg:col-span-1 print:hidden">
           <CustomerList
             customers={customers}
             selectedId={selectedCustomer?.id ?? null}
@@ -305,7 +306,7 @@ export default function CustomerLedgerClient() {
             <div
               role="alert"
               data-testid="ledger-error"
-              className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+              className="mb-3 flex print:hidden items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
             >
               <span>{ledger.message ?? 'The ledger could not be loaded.'}</span>
               <button
@@ -318,7 +319,10 @@ export default function CustomerLedgerClient() {
             </div>
           )}
           {selectedCustomer && ledger.state === 'loading' && ledger.empty && (
-            <p data-testid="ledger-loading" className="mb-3 text-xs text-muted-foreground">
+            <p
+              data-testid="ledger-loading"
+              className="mb-3 text-xs text-muted-foreground print:hidden"
+            >
               Loading the ledger…
             </p>
           )}

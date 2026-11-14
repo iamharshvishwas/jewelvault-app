@@ -552,6 +552,86 @@
     page-break-before: avoid;
   }
 
+  /* FB-D1 (Siddhi #4): a customer's ledger. On paper the customer card is its sheet and nothing else (the card's own parts, the panels that may be open and the tabs are not printed); the
+     sheet flows over as many pages as the rows need, a row is never cut, the header row comes back on every page and the totals are kept whole, not alone on a page. */
+  .ledger-card-root > :not(.print-ledger-sheet) {
+    display: none !important;
+  }
+  .print-ledger-sheet {
+    position: static !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    color: #111111 !important;
+    background: #ffffff !important;
+  }
+  .print-ledger-sheet h1 {
+    font-size: 17pt !important;
+    line-height: 1.15 !important;
+  }
+  .print-ledger-sheet p,
+  .print-ledger-sheet span,
+  .print-ledger-sheet strong,
+  .print-ledger-sheet td,
+  .print-ledger-sheet th {
+    color: #111111 !important;
+  }
+  .print-ledger-sheet table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+  .print-ledger-sheet thead {
+    display: table-header-group;
+  }
+  .print-ledger-sheet tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .print-ledger-sheet th {
+    background: #f3f3f3 !important;
+    border-top: 1px solid #cfcfcf !important;
+    border-bottom: 1px solid #cfcfcf !important;
+    font-size: 7pt !important;
+    padding: 1.6mm 1.2mm !important;
+    letter-spacing: 0 !important;
+    text-align: left !important;
+  }
+  .print-ledger-sheet td {
+    border-bottom: 1px solid #eeeeee !important;
+    font-size: 7.5pt !important;
+    padding: 1.6mm 1.2mm !important;
+    vertical-align: top !important;
+  }
+  .print-ledger-head {
+    padding-bottom: 3mm !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .print-ledger-party {
+    padding-top: 3mm !important;
+    padding-bottom: 3mm !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .print-ledger-totals {
+    margin-top: 4mm !important;
+    max-width: 75mm !important;
+    font-size: 8.5pt !important;
+    line-height: 1.25 !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    /* and never alone: when the block does not fit under the last rows, the last row goes over to its page with it */
+    break-before: avoid;
+    page-break-before: avoid;
+  }
+
   /* The tags: a grid that runs over as many pages as there are tags; a tag is never cut. */
   .print-tags-grid {
     display: flex !important;

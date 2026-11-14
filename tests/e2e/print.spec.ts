@@ -20,6 +20,9 @@ import { countIn, readPdf, squash, type PdfPage } from './pdf-text';
 // The bills are written as root in the lane's container (the billing screen that makes them is WEB08's and is proved in billing.spec.ts); the pieces are shared by all of them. Everything the
 // tests made, and the two Settings values they change, is put back (the volume case of hydrate.spec.ts needs a lane without bills, pieces or counters).
 //
+//   FB-D1 (Siddhi #4): a customer's ledger of 1, 30 and 120 rows printed from the customer card: the customer's name on the first page, `Balance` with the right figure on the last, every row once,
+//        the header row on every page that holds rows, and no word of the side bar or the top bar on any page.
+//
 // Run: E2E=1 LANE=b JV_API_DIR=<checkout of jewelvault-api> npx playwright test tests/e2e/print.spec.ts
 
 // ------------------------------------------------------------------------------------------------ the lane's database (the container of this lane only)
@@ -287,8 +290,78 @@ function fixtureSql(): string {
       );
     }
   }
+  sql.push(ledgerFixtureSql());
   // what the money services do on every bill (D23): the customer gets a new `updated_at`, which is how the polls find the change
   sql.push(`UPDATE customers SET updated_at = CURRENT_TIMESTAMP(6) WHERE name LIKE 'W13 %';`);
+  return sql.join(' ');
+}
+
+// ------------------------------------------------------------------------------------------------ FB-D1: the customers whose ledgers are printed
+
+/**
+ * Three customers with a ledger of 1, 30 and 120 rows of V3: a bill with nothing paid; 15 bills each followed by a payment; 60 bills each followed by a payment. A bill is one row and a payment is one row,
+ * on the day of the bill (the bills are 1 to 59 days old), the payment an hour after the bill. Bill j is 1,000 + 10 j rupees and payment j is 500 + j rupees (whole rupees, so the figures are exact).
+ */
+const LEDGERS = [
+  { key: 'one', name: 'W13 Ledger One', mobile: '9000130011', bills: 1, payments: 0 },
+  { key: 'thirty', name: 'W13 Ledger Thirty', mobile: '9000130012', bills: 15, payments: 15 },
+  {
+    key: 'hundred',
+    name: 'W13 Ledger Hundred Twenty',
+    mobile: '9000130013',
+    bills: 60,
+    payments: 60,
+  },
+] as const;
+type LedgerKey = (typeof LEDGERS)[number]['key'];
+const ledgerIds = new Map(LEDGERS.map((l) => [l.key, randomUUID()] as const));
+const billNoOf = (key: LedgerKey, j: number) => `W13-L${key[0].toUpperCase()}-${pad(j, 3)}`;
+const billRupees = (j: number) => 1000 + 10 * j;
+const paymentRupees = (j: number) => 500 + j;
+
+/** What the customer owes at the end of the ledger, in rupees: the bills less the payments. */
+function ledgerBalance(ledger: (typeof LEDGERS)[number]): number {
+  let balance = 0;
+  for (let j = 1; j <= ledger.bills; j++) balance += billRupees(j);
+  for (let j = 1; j <= ledger.payments; j++) balance -= paymentRupees(j);
+  return balance;
+}
+
+function ledgerFixtureSql(): string {
+  const sql: string[] = [];
+  for (const ledger of LEDGERS) {
+    const customer = ledgerIds.get(ledger.key)!;
+    sql.push(
+      `INSERT INTO customers (id, name, mobile, customer_type) VALUES ('${customer}', '${ledger.name}', '${ledger.mobile}', 'Retail');`
+    );
+    const bills: string[] = [];
+    const receipts: string[] = [];
+    const allocations: string[] = [];
+    for (let j = 1; j <= ledger.bills; j++) {
+      const day = `CURDATE() - INTERVAL ${ledger.bills - j} DAY`;
+      const billId = randomUUID();
+      bills.push(
+        `('${billId}', '${billNoOf(ledger.key, j)}', '${customer}', ${day}, 'Retail', ${billRupees(j)}.00, ${billRupees(j)}.00, 0.000, TIMESTAMP(${day}, '12:00:00'))`
+      );
+      if (j <= ledger.payments) {
+        const receiptId = randomUUID();
+        receipts.push(
+          `('${receiptId}', '${customer}', 'money', 'Cash', ${paymentRupees(j)}.00, ${day}, TIMESTAMP(${day}, '13:00:00'))`
+        );
+        allocations.push(
+          `('${randomUUID()}', '${receiptId}', '${billId}', '${customer}', ${paymentRupees(j)}.00, 0.000)`
+        );
+      }
+    }
+    sql.push(
+      `INSERT INTO bills (id, bill_no, customer_id, bill_date, sale_type, subtotal, grand_total, fine_weight_due, created_at) VALUES ${bills.join(', ')};`
+    );
+    if (receipts.length > 0)
+      sql.push(
+        `INSERT INTO receipts (id, customer_id, kind, mode, amount, paid_on, created_at) VALUES ${receipts.join(', ')};`,
+        `INSERT INTO receipt_allocations (id, receipt_id, bill_id, customer_id, amount, fine_grams) VALUES ${allocations.join(', ')};`
+      );
+  }
   return sql.join(' ');
 }
 
@@ -934,3 +1007,117 @@ test.describe('FB-B fix: the barcode end of the tag fits every tag size the Sett
     }
   });
 });
+
+// ------------------------------------------------------------------------------------------------ FB-D1: the ledger on paper
+
+/** The way the screens write a business date (the Asia/Kolkata day of the instant). */
+const dateShown = (instant: number) =>
+  new Date(
+    `${new Date(instant + 19_800_000).toISOString().slice(0, 10)}T12:00:00.000Z`
+  ).toLocaleDateString('en-IN');
+/** ₹1,23,456 as the screens write whole rupees. */
+const inr = (rupees: number) => `₹${new Intl.NumberFormat('en-IN').format(rupees)}`;
+
+async function openLedger(page: Page, who: E2eLogin, ledger: (typeof LEDGERS)[number]) {
+  await open(page, who, '/customer-ledger', () =>
+    expect(page.getByRole('heading', { name: 'Customer Ledger' })).toBeVisible({ timeout: 60_000 })
+  );
+  await page.getByPlaceholder('Search customers...').fill(ledger.name);
+  await page.getByRole('button', { name: new RegExp(ledger.name) }).click();
+  await expect(page.getByRole('heading', { name: ledger.name, level: 2 })).toBeVisible();
+  // the ledger is read from the server once the card is open: every row of it is on the screen before anything is printed
+  await expect(page.getByTestId('ledger-row')).toHaveCount(ledger.bills + ledger.payments, {
+    timeout: 60_000,
+  });
+}
+
+test.describe('FB-D1: a customer ledger prints (or is saved) as a PDF', () => {
+  test.describe.configure({ timeout: 240_000 });
+
+  for (const ledger of LEDGERS) {
+    const rows = ledger.bills + ledger.payments;
+    test(`${rows} ledger ${rows === 1 ? 'row' : 'rows'}: the customer first, the Balance last, every row once, no application bar`, async ({
+      page,
+    }) => {
+      await openLedger(page, e2eLogin('owner'), ledger);
+      // the button asks the browser to print (the print dialog itself is the browser's; the PDF is what Chromium lays out in print media)
+      await page.evaluate(() => {
+        const mine = window as unknown as { __printCalls: number };
+        mine.__printCalls = 0;
+        window.print = () => {
+          mine.__printCalls += 1;
+        };
+      });
+      await page.getByRole('button', { name: 'Print / Save PDF' }).click();
+      expect(
+        await page.evaluate(() => (window as unknown as { __printCalls: number }).__printCalls)
+      ).toBe(1);
+      // on the screen the sheet is not there
+      await expect(page.getByTestId('ledger-print-row').first()).toBeHidden();
+
+      const pages = await printed(page);
+      for (const [i, one] of pages.entries()) {
+        expect(one.width, `page ${i + 1} width`).toBeCloseTo(A4.width, 0);
+        expect(one.height, `page ${i + 1} height`).toBeCloseTo(A4.height, 0);
+      }
+      // the customer, their mobile, the shop and the day, on the first page
+      expect(countIn(pages[0], ledger.name), 'the customer is named on page 1').toBeGreaterThan(0);
+      expect(countIn(pages[0], ledger.mobile)).toBeGreaterThan(0);
+      expect(countIn(pages[0], business.legalName || 'Jaishri Gold Palace')).toBeGreaterThan(0);
+      expect(countIn(pages[0], `As of ${dateShown(Date.now())}`)).toBe(1);
+
+      // every row of the ledger is on the paper exactly once, in order, and the header row is on every page that holds rows
+      for (let j = 1; j <= ledger.bills; j++) {
+        const number = billNoOf(ledger.key, j);
+        expect(
+          pages.reduce((sum, one) => sum + countIn(one, `Invoice ${number}`), 0),
+          `${number} is on the paper once`
+        ).toBe(1);
+      }
+      const rowPages = pages.filter((one) => countIn(one, 'Invoice W13-L') > 0);
+      for (const one of rowPages)
+        expect(hasLedgerHeader(one), 'the header row is on a page of rows').toBe(true);
+      if (rows > 60)
+        expect(pages.length, '120 rows run over more than one page').toBeGreaterThan(1);
+
+      // the Balance, with the right figure, on the last page; the totals are not alone on it (the last row is there too)
+      const last = pages[pages.length - 1];
+      const owed = ledgerBalance(ledger);
+      expect(
+        squash(last.lines[lastLineOf(last, 'Balance')] ?? ''),
+        'Balance on the last page'
+      ).toBe(`Balance${inr(owed)}`);
+      expect(
+        last.lines.filter((line) => /^\d{2}\/\d{2}\/\d{4}/.test(squash(line))).length,
+        'the totals are not alone on the last page: a row of the ledger is there too'
+      ).toBeGreaterThan(0);
+      // and nowhere else
+      expect(pages.slice(0, -1).reduce((sum, one) => sum + lastLineOf(one, 'Balance') + 1, 0)).toBe(
+        0
+      );
+      const debit = Array.from({ length: ledger.bills }, (_, j) => billRupees(j + 1)).reduce(
+        (a, b) => a + b,
+        0
+      );
+      expect(squash(last.lines[lastLineOf(last, 'Total Debit')] ?? '')).toBe(
+        `TotalDebit${inr(debit)}`
+      );
+      expect(lastLineOf(last, 'Total Credit')).toBeGreaterThan(-1);
+      expect(lastLineOf(last, 'Silver Fine Balance')).toBeGreaterThan(-1);
+    });
+  }
+
+  test('the same sheet prints from the other tabs of the card, and the biller can print too', async ({
+    page,
+  }) => {
+    await openLedger(page, e2eLogin('biller'), LEDGERS[0]);
+    await page.getByRole('button', { name: /^Invoices/ }).click();
+    const pages = await printed(page);
+    expect(countIn(pages[0], LEDGERS[0].name)).toBeGreaterThan(0);
+    expect(countIn(pages[0], `Invoice ${billNoOf('one', 1)}`)).toBe(1);
+  });
+});
+
+/** The header row of the ledger sheet: a line that starts with Date and Type. */
+const hasLedgerHeader = (one: PdfPage) =>
+  one.lines.some((line) => squash(line).toUpperCase().startsWith('DATETYPE'));
