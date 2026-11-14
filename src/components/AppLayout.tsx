@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import Sidebar from './Sidebar';
@@ -38,6 +38,28 @@ export default function AppLayout({ children }: AppLayoutProps) {
   const { status, session, role, notice, error, epoch } = useSession();
   const hydrate = useHydrate();
   const pathname = usePathname();
+  // FB-A1: the phone menu (under 1024 px the desktop sidebar is hidden, so the ☰ opens the same Sidebar as a drawer). It is open for the page and the session it was opened on: a
+  // change of page (a link, the Back button) or of session (a sign-out) closes it, so the next screen or the next person never meets it open.
+  const [menuOpenOn, setMenuOpenOn] = useState<string | null>(null);
+  const viewKey = `${pathname}|${status}`;
+  if (menuOpenOn !== null && menuOpenOn !== viewKey) setMenuOpenOn(null);
+  const mobileMenuOpen = menuOpenOn === viewKey;
+  const closeMenu = useCallback(() => setMenuOpenOn(null), []);
+
+  // while it is open: Escape closes it and the page behind it does not scroll
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu();
+    };
+    document.addEventListener('keydown', onKey);
+    const before = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = before;
+    };
+  }, [mobileMenuOpen, closeMenu]);
 
   // asked again by every page that mounts, answered once: a load of the same role and epoch is not started twice
   useEffect(() => {
@@ -102,7 +124,11 @@ export default function AppLayout({ children }: AppLayoutProps) {
           <ConnectionBanner />
         </div>
         <div className="app-chrome contents">
-          <Topbar onMenuClick={() => setSidebarCollapsed((p) => !p)} session={session} />
+          <Topbar
+            onMenuClick={() => setMenuOpenOn(viewKey)}
+            menuOpen={mobileMenuOpen}
+            session={session}
+          />
         </div>
         <main className="app-scroll flex-1 overflow-y-auto scrollbar-thin">
           <div
@@ -130,6 +156,33 @@ export default function AppLayout({ children }: AppLayoutProps) {
       <div className="app-chrome contents">
         <MobileNav session={session} />
       </div>
+
+      {/* FB-A1: the phone menu, the same Sidebar as a slide-in drawer; closes on a link, the backdrop and Escape */}
+      {mobileMenuOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Menu"
+          className="app-chrome fixed inset-0 z-[60] lg:hidden"
+        >
+          <button
+            type="button"
+            aria-label="Close menu"
+            tabIndex={-1}
+            onClick={closeMenu}
+            className="absolute inset-0 bg-black/40"
+          />
+          <div className="relative w-72 max-w-[85vw] h-full overflow-y-auto bg-card shadow-xl">
+            <Sidebar
+              variant="drawer"
+              collapsed={false}
+              onToggle={closeMenu}
+              onNavigate={closeMenu}
+              session={session}
+            />
+          </div>
+        </div>
+      )}
 
       {PREVIEW_MODE && (
         <div
