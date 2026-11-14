@@ -281,3 +281,78 @@ test.describe('WEB01 contract: the API client against the lane API, in a real br
     ok(await call(page, 'logout'));
   });
 });
+
+// ------------------------------------------------------------------------------------------------ FB-D5: a tab that comes back asks `me` again
+
+// After a deploy that changes pricing.ts, a tab that was open before it keeps its old "pricing matches" answer. The real app, signed in on the billing screen: the lane's `me` is routed to answer
+// another `pricing_sha256` from some moment on, the tab is hidden and shown again (visibilitychange), and Save on bills goes off with the notice the app already has for a mismatch at start.
+test.describe('FB-D5: a tab that comes back re-checks the pricing hash', () => {
+  test.describe.configure({ timeout: 120_000 });
+
+  /** Hides the tab and shows it again, as a browser does when a person switches away and back. */
+  async function switchAwayAndBack(page: Page) {
+    await page.evaluate(() => {
+      const setState = (value: 'hidden' | 'visible') => {
+        Object.defineProperty(document, 'visibilityState', {
+          configurable: true,
+          get: () => value,
+        });
+        document.dispatchEvent(new Event('visibilitychange'));
+      };
+      setState('hidden');
+      setState('visible');
+    });
+  }
+
+  test('sign in (the hash matches), then the API answers another hash and the tab comes back: Save on bills is off with the mismatch notice', async ({
+    page,
+  }) => {
+    const { apiUrl } = e2eLane();
+    const owner = e2eLogin('owner');
+    let answer: string | null = null; // null: the API's own hash
+    const asked: string[] = [];
+    await page.route(`${apiUrl}/v1/auth/me`, async (route) => {
+      asked.push(new Date().toISOString());
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({
+        response,
+        json: answer === null ? body : { ...body, pricing_sha256: answer },
+      });
+    });
+    await page.goto('/billing-pos');
+    await expect(page.getByLabel('Email')).toBeVisible();
+    await page.getByLabel('Email').fill(owner.email);
+    await page.getByLabel('Password').fill(owner.password);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(page.getByRole('heading', { name: 'New Estimate' })).toBeVisible({
+      timeout: 60_000,
+    });
+    // at start the pricing matches: no notice, and Save is not off for that reason
+    await expect(page.getByTestId('pricing-banner')).toHaveCount(0);
+    await expect(page.getByTestId('save-bill')).not.toHaveAttribute(
+      'title',
+      /do not work out bills the same way/
+    );
+    const askedAtStart = asked.length;
+
+    // the deploy happens: the API's pricing.ts is another one. The tab comes back.
+    answer = 'f'.repeat(64);
+    await switchAwayAndBack(page);
+    await expect(page.getByTestId('pricing-banner')).toContainText(
+      'do not work out bills the same way',
+      { timeout: 30_000 }
+    );
+    await expect(page.getByTestId('save-bill')).toBeDisabled();
+    await expect(page.getByTestId('save-bill')).toHaveAttribute(
+      'title',
+      /do not work out bills the same way/
+    );
+    expect(asked.length, 'one more `me`').toBe(askedAtStart + 1);
+
+    // coming back again at once asks nothing more (at most once a minute) and a hidden tab asks nothing
+    await switchAwayAndBack(page);
+    await page.waitForTimeout(500);
+    expect(asked.length).toBe(askedAtStart + 1);
+  });
+});

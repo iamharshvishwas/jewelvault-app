@@ -36,10 +36,12 @@ const SCREENS: Array<[string, AuthRole[]]> = [
   ['/inventory-management', ALL],
   ['/design-detail', ALL],
   ['/print-tags', ALL],
+  ['/stock-catalogue', ALL], // FB-D2
   ['/add-design', ['owner', 'staff']],
   ['/edit-stock', ['owner', 'staff']],
   ['/reports', ['owner']],
   ['/settings', ['owner']],
+  ['/activity-log', ['owner']], // FB-D4
   // "hidden in M1" for every role (section 1.3, C15)
   ['/order-book', []],
   ['/catalogue', []],

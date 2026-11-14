@@ -108,6 +108,8 @@ export const IDLE_LIMIT_MS = 12 * 60 * 60 * 1000;
 const IDLE_CHECK_MS = 30 * 1000;
 /** U4: the activity call goes out on a click or key press, at most once a minute. */
 const ACTIVITY_MIN_GAP_MS = 60 * 1000;
+/** FB-D5: a tab that comes back asks `me` again, but at most once in this long (the check is no polling loop: nothing runs while the tab is hidden). */
+const PRICING_RECHECK_MIN_GAP_MS = 60 * 1000;
 /** How long a login waits for a logout that is still on its way: its `Set-Cookie` must not clear the cookie of the new session. */
 const LOGOUT_WAIT_MS = 3000;
 
@@ -256,6 +258,7 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
   let watchHost: SessionHost | null = null;
   let lastActivity = 0;
   let lastActivitySent = 0;
+  let lastPricingRecheck = 0;
   let idleTimer: ReturnType<typeof setInterval> | undefined;
 
   const watching = (s: SessionState) =>
@@ -546,8 +549,24 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
     if (watching(state) && isIdle(Date.now(), lastActivity)) void signOut(IDLE_NOTICE);
   }
 
-  function checkIdleWhenVisible(): void {
-    if (watchHost?.visibility.visibilityState === 'visible') checkIdle();
+  /**
+   * FB-D5: a tab that was open before a deploy keeps its old "pricing matches" answer until it is reloaded, and could save a bill priced by the old rule. When the tab comes back it asks `me` again:
+   * the client compares the API's pricing hash with the build's on every `me` (C12), so a mismatch switches Save on bills off exactly as at start-up. Only for a person who is in the app, and at most
+   * once a minute. A request that fails (offline) changes nothing; a 401 reaches the gate through the client's hook, as for any call.
+   */
+  function recheckPricingWhenSignedIn(): void {
+    if (state.status !== 'signedIn') return;
+    const now = Date.now();
+    if (now - lastPricingRecheck < PRICING_RECHECK_MIN_GAP_MS) return;
+    lastPricingRecheck = now;
+    api.me().catch(() => undefined);
+  }
+
+  /** The tab comes back (the one `visibilitychange` listener of the store): the idle check of C16 first, then the pricing check of FB-D5 for whoever is still signed in. */
+  function checkWhenVisible(): void {
+    if (watchHost?.visibility.visibilityState !== 'visible') return;
+    checkIdle();
+    recheckPricingWhenSignedIn();
   }
 
   function startIdleWatch(): void {
@@ -557,10 +576,11 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
     stopIdleWatch();
     watchHost = host;
     lastActivity = lastActivitySent = Date.now();
+    lastPricingRecheck = 0;
     // Capture, so a screen that stops the event on its way down still counts. A tap on a phone is a click.
     host.input.addEventListener('click', onInput, true);
     host.input.addEventListener('keydown', onInput, true);
-    host.visibility.addEventListener('visibilitychange', checkIdleWhenVisible);
+    host.visibility.addEventListener('visibilitychange', checkWhenVisible);
     // Compared with the clock, not counted: a laptop that slept for the night is logged out at the first check on waking.
     idleTimer = setInterval(checkIdle, IDLE_CHECK_MS);
   }
@@ -569,7 +589,7 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
     if (watchHost) {
       watchHost.input.removeEventListener('click', onInput, true);
       watchHost.input.removeEventListener('keydown', onInput, true);
-      watchHost.visibility.removeEventListener('visibilitychange', checkIdleWhenVisible);
+      watchHost.visibility.removeEventListener('visibilitychange', checkWhenVisible);
       watchHost = null;
     }
     if (idleTimer !== undefined) clearInterval(idleTimer);
