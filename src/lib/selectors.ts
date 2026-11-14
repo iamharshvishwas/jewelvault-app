@@ -506,6 +506,142 @@ export function pendingBills(bills: readonly BillSummaryRow[], today: string): P
 }
 
 // ---------------------------------------------------------------------------------------------------------
+// FB-D3 (Siddhi #7): the outstanding list and the payment-pending alert
+// ---------------------------------------------------------------------------------------------------------
+
+/** What the lists need of a customer besides the figures: the name and the mobile to ring, and whether this is the walk-in (never listed: nobody to ask for the money). */
+export interface CustomerContact {
+  id: string;
+  name: string;
+  mobile: string | null;
+  isWalkIn: boolean;
+}
+
+/** How old a pending bill must be, in days, to be raised on the dashboard (Siddhi: 60). */
+export const OVERDUE_DAYS = 60;
+
+export interface OverdueCustomer {
+  customerId: string;
+  name: string;
+  mobile: string;
+  /** The money pending on the customer's bills that are more than `days` old, in whole paise (V1). */
+  pendingPaise: bigint;
+  /** The bill date of the oldest of those bills. */
+  oldestPendingBillDate: string;
+  /** Whole business days from that date to today. */
+  daysPending: number;
+}
+
+export interface OutstandingRow {
+  customerId: string;
+  name: string;
+  mobile: string;
+  /** V2 `outstanding`: what the customer owes in money, whole paise. */
+  outstandingPaise: bigint;
+  /** V2 `fineOutstanding`: the silver the customer owes, whole milligrams. */
+  fineDueMg: bigint;
+  /** The bill date of the oldest active bill with money or silver pending, or null when none is in memory. */
+  oldestPendingBillDate: string | null;
+  daysPending: number | null;
+}
+
+/**
+ * The customers with a payment pending for more than `days` days (default 60): a customer is listed when one of their ACTIVE bills has money pending (V1) and its bill date is more than `days`
+ * business days before `today` (so a bill 60 days old is not listed, 61 is). Opening-balance bills count (dues brought forward are old dues); a cancelled bill is not pending; a bill with only
+ * silver pending is not (the rule is money, as `pendingBills`); the walk-in is never listed. The amount is the money pending on those old bills, added in BigInt; the date and the days are of the
+ * oldest. The oldest first, then by name.
+ */
+export function overdueCustomers(
+  bills: readonly BillSummaryRow[],
+  customers: readonly CustomerContact[],
+  today: string,
+  days: number = OVERDUE_DAYS
+): OverdueCustomer[] {
+  if (!Number.isInteger(days) || days < 0) {
+    throw new PricingError('days', 'must be a whole number of days');
+  }
+  const todayNumber = dayNumber(today, 'today');
+  const people = new Map(customers.map((person) => [person.id, person]));
+  const found = new Map<string, { pending: bigint; oldest: string }>();
+  for (const row of bills) {
+    if (row.status !== 'active') continue;
+    const pending = BigInt(paiseOf(row.pending, 'pending'));
+    if (pending <= ZERO) continue;
+    if (todayNumber - dayNumber(row.billDate, 'billDate') <= days) continue;
+    if (people.get(row.customerId)?.isWalkIn === true) continue;
+    const before = found.get(row.customerId);
+    found.set(row.customerId, {
+      pending: (before?.pending ?? ZERO) + pending,
+      oldest: before === undefined || row.billDate < before.oldest ? row.billDate : before.oldest,
+    });
+  }
+  return [...found.entries()]
+    .map(([customerId, one]) => ({
+      customerId,
+      name: people.get(customerId)?.name ?? '',
+      mobile: people.get(customerId)?.mobile ?? '',
+      pendingPaise: one.pending,
+      oldestPendingBillDate: one.oldest,
+      daysPending: todayNumber - dayNumber(one.oldest, 'billDate'),
+    }))
+    .sort(
+      (a, b) =>
+        b.daysPending - a.daysPending ||
+        byText(a.name, b.name) ||
+        byText(a.customerId, b.customerId)
+    );
+}
+
+/**
+ * The outstanding list as of `asOf`: every customer who owes money or silver (V2, the figures of the customer card), with the age of the oldest active bill that still has money or silver pending
+ * (V1). Not the walk-in. The oldest bill first (a customer with no pending bill in memory last), then the larger amount, then by name.
+ */
+export function outstandingRows(
+  balances: readonly CustomerBalanceRow[],
+  bills: readonly BillSummaryRow[],
+  customers: readonly CustomerContact[],
+  asOf: string
+): OutstandingRow[] {
+  const asOfNumber = dayNumber(asOf, 'asOf');
+  const people = new Map(customers.map((person) => [person.id, person]));
+  const oldest = new Map<string, string>();
+  for (const row of bills) {
+    if (row.status !== 'active') continue;
+    if (paiseOf(row.pending, 'pending') <= 0 && mgOf(row.finePending, 'finePending') <= 0) continue;
+    const before = oldest.get(row.customerId);
+    if (before === undefined || row.billDate < before) oldest.set(row.customerId, row.billDate);
+  }
+  const rows: OutstandingRow[] = [];
+  for (const balance of balances) {
+    if (people.get(balance.id)?.isWalkIn === true) continue;
+    const outstandingPaise = BigInt(paiseOf(balance.outstanding, 'outstanding'));
+    const fineDueMg = BigInt(mgOf(balance.fineOutstanding, 'fineOutstanding'));
+    if (outstandingPaise <= ZERO && fineDueMg <= ZERO) continue;
+    const date = oldest.get(balance.id) ?? null;
+    rows.push({
+      customerId: balance.id,
+      name: people.get(balance.id)?.name ?? '',
+      mobile: people.get(balance.id)?.mobile ?? '',
+      outstandingPaise,
+      fineDueMg,
+      oldestPendingBillDate: date,
+      daysPending: date === null ? null : Math.max(0, asOfNumber - dayNumber(date, 'billDate')),
+    });
+  }
+  return rows.sort(
+    (a, b) =>
+      (b.daysPending ?? -1) - (a.daysPending ?? -1) ||
+      (a.outstandingPaise === b.outstandingPaise
+        ? 0
+        : a.outstandingPaise < b.outstandingPaise
+          ? 1
+          : -1) ||
+      byText(a.name, b.name) ||
+      byText(a.customerId, b.customerId)
+  );
+}
+
+// ---------------------------------------------------------------------------------------------------------
 // V4: payments by mode, the cash book of a day, the evening check
 // ---------------------------------------------------------------------------------------------------------
 

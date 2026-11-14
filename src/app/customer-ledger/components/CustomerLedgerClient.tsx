@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   getCustomers,
   addCustomer,
@@ -51,6 +52,11 @@ export default function CustomerLedgerClient() {
   });
   const [errors, setErrors] = useState<Partial<AddCustomerForm>>({});
 
+  // FB-D3: a link with ?customer=<id> (the dashboard's payment alert) opens that customer's card, once; a customer chosen by hand afterwards is not taken away (the effect below applies it)
+  // (no search parameters at all outside a Next router, as in a server render made by a unit test: then there is no link)
+  const linkedId = useSearchParams()?.get('customer') ?? null;
+  const linkApplied = useRef<string | null>(null);
+
   // C17: after any write that touches money the client polls at once, and that poll brings the customer's bill-summary rows and customer-balances row (V1, V2). The card is drawn
   // again as soon as memory holds them, not at the next tick of the clock below; the tick stays for the ledger's own state and for the preview build, whose store has no events.
   const books = useRowCacheVersion('customers', 'customer-balances', 'bills', 'bill-summary');
@@ -60,6 +66,13 @@ export default function CustomerLedgerClient() {
     const refresh = () => {
       const list = getCustomers();
       setCustomers(list);
+      if (linkedId && linkApplied.current !== linkedId) {
+        const linked = list.find((c) => c.id === linkedId);
+        if (linked) {
+          linkApplied.current = linkedId;
+          setSelectedCustomer(linked);
+        }
+      }
       // Keep selected customer in sync
       if (selectedId) {
         const updated = list.find((c) => c.id === selectedId);
@@ -79,7 +92,7 @@ export default function CustomerLedgerClient() {
     refresh();
     const interval = setInterval(refresh, 1000);
     return () => clearInterval(interval);
-  }, [selectedId, books]);
+  }, [selectedId, books, linkedId]);
 
   // C3: the ledger of the customer is read from the server when the card opens, and again whenever that customer's updated_at changes
   useEffect(() => {

@@ -26,6 +26,10 @@ import { roomInTheMinute } from './pacing';
 // by the owner's session, so every row is one the API made. Everything the tests made is taken out again: the volume case of hydrate.spec.ts refuses a lane that holds a bill, a receipt or a
 // counter that moved with no bill behind it. Rows are made early in the day or relative to the clock, never at a fixed hour (the earlier lesson: a test that seeds 12:30 fails before 12:30).
 //
+// FB-D3 (Siddhi #7), at the end of the file: the card "Payment pending over 60 days" on the dashboard (owner and biller, not the staff) lists the customers whose pending bill is more than 60 days old
+// and each name opens that customer's ledger; Reports > Payments downloads the outstanding list as a CSV with the header `Customer,Mobile,Outstanding (Rs),Fine due (g),Oldest pending bill,Days`,
+// a `+91` mobile written as text (the formula guard).
+//
 // Run: E2E=1 LANE=b JV_API_DIR=<checkout of jewelvault-api> npx playwright test tests/e2e/dashboard.spec.ts
 
 const execFileAsync = promisify(execFile);
@@ -171,11 +175,11 @@ function fixtureSql(): string {
 /** Everything these tests made, gone again. The delete order follows the foreign keys. */
 async function cleanLane() {
   await laneSql(
-    `DELETE FROM receipt_allocations WHERE customer_id IN (SELECT id FROM customers WHERE name LIKE 'W12 %') OR bill_id IN (SELECT id FROM bills WHERE bill_no LIKE 'W12-%'); ` +
-      `DELETE FROM receipts WHERE customer_id IN (SELECT id FROM customers WHERE name LIKE 'W12 %'); ` +
-      `DELETE FROM bill_items WHERE bill_id IN (SELECT id FROM bills WHERE bill_no LIKE 'W12-%' OR customer_id IN (SELECT id FROM customers WHERE name LIKE 'W12 %')); ` +
-      `DELETE FROM bills WHERE bill_no LIKE 'W12-%' OR customer_id IN (SELECT id FROM customers WHERE name LIKE 'W12 %'); ` +
-      `DELETE FROM customers WHERE name LIKE 'W12 %'; ` +
+    `DELETE FROM receipt_allocations WHERE customer_id IN (SELECT id FROM customers WHERE (name LIKE 'W12 %' OR name LIKE 'W17 %')) OR bill_id IN (SELECT id FROM bills WHERE (bill_no LIKE 'W12-%' OR bill_no LIKE 'W17-%')); ` +
+      `DELETE FROM receipts WHERE customer_id IN (SELECT id FROM customers WHERE (name LIKE 'W12 %' OR name LIKE 'W17 %')); ` +
+      `DELETE FROM bill_items WHERE bill_id IN (SELECT id FROM bills WHERE (bill_no LIKE 'W12-%' OR bill_no LIKE 'W17-%') OR customer_id IN (SELECT id FROM customers WHERE (name LIKE 'W12 %' OR name LIKE 'W17 %'))); ` +
+      `DELETE FROM bills WHERE (bill_no LIKE 'W12-%' OR bill_no LIKE 'W17-%') OR customer_id IN (SELECT id FROM customers WHERE (name LIKE 'W12 %' OR name LIKE 'W17 %')); ` +
+      `DELETE FROM customers WHERE (name LIKE 'W12 %' OR name LIKE 'W17 %'); ` +
       `DELETE FROM skus WHERE sku_no LIKE 'W12-%'; DELETE FROM designs WHERE design_no LIKE 'W12-%'; ` +
       // the rows of the dashboard line: the nightly checks, the backup log and the two reminders of the settings
       `DELETE FROM check_runs; DELETE FROM backup_runs; DELETE FROM settings WHERE setting_key IN ('last_download', 'last_pulled');`
@@ -303,6 +307,13 @@ const db = {
         `SELECT COALESCE(SUM(outstanding), 0), COALESCE(SUM(outstanding > 0), 0) FROM (${derivedQuery('V2_customer_balances')}) v`
       )
     )[0],
+  /** V2 `outstanding` of one customer, by name (FB-D3). */
+  outstandingOf: async (name: string) =>
+    (
+      await laneSql(
+        `SELECT outstanding FROM (${derivedQuery('V2_customer_balances')}) v WHERE id = (SELECT id FROM customers WHERE name = '${name}')`
+      )
+    )[0][0],
   /** The net of a mode over a date range: V4. */
   net: async (mode: string, from: string, to: string) =>
     (
@@ -353,8 +364,8 @@ test.afterAll(async () => {
   // the lane is as it was found: none of this file's customers, bills or receipts, no opening counter that moved with no opening bill behind it (hydrate.spec's volume case refuses one),
   // and none of the rows of the dashboard line
   const [left] = await laneSql(
-    `SELECT (SELECT COUNT(*) FROM customers WHERE name LIKE 'W12 %'), ` +
-      `(SELECT COUNT(*) FROM bills WHERE bill_no LIKE 'W12-%' OR doc_type = 'opening_balance'), ` +
+    `SELECT (SELECT COUNT(*) FROM customers WHERE name LIKE 'W12 %' OR name LIKE 'W17 %'), ` +
+      `(SELECT COUNT(*) FROM bills WHERE bill_no LIKE 'W12-%' OR bill_no LIKE 'W17-%' OR doc_type = 'opening_balance'), ` +
       `(SELECT COUNT(*) FROM receipts), (SELECT COUNT(*) FROM skus WHERE sku_no LIKE 'W12-%'), ` +
       `(SELECT COUNT(*) FROM sys_counters WHERE series = 'opening'), ` +
       `(SELECT COUNT(*) FROM check_runs), (SELECT COUNT(*) FROM backup_runs), ` +
@@ -872,5 +883,164 @@ test.describe("T-B18 / T-R03 / T-R05 E2E: the owner's dashboard line turns red a
     await page.getByTestId('health-retry').click();
     await expect(line(page).root).toHaveAttribute('data-level', 'green', { timeout: 30_000 });
     await expect(page.getByTestId('health-error')).toHaveCount(0);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ FB-D3: the 60-day alert and the outstanding list
+
+/**
+ * Five customers, each with one bill (whole rupees):
+ *   W17 Old Pending   W17-0001  2,500.00  75 days old, nothing paid            -> overdue, 2,500
+ *   W17 Opening Dues  W17-0005  5,000.00  70 days old, dues brought forward    -> overdue (opening dues count), 5,000
+ *   W17 Part Paid     W17-0002  1,000.00  61 days old, 400.00 paid             -> overdue, 600 pending
+ *   W17 Edge Sixty    W17-0003  3,000.00  60 days old, nothing paid            -> owes, but not MORE than 60 days: not on the card
+ *   W17 Settled Old   W17-0004    800.00  90 days old, paid in full            -> owes nothing: on neither
+ */
+const OVERDUE = {
+  oldPending: { id: randomUUID(), name: 'W17 Old Pending', mobile: '+919000170001' },
+  opening: { id: randomUUID(), name: 'W17 Opening Dues', mobile: '9000170005' },
+  partPaid: { id: randomUUID(), name: 'W17 Part Paid', mobile: '9000170002' },
+  edge: { id: randomUUID(), name: 'W17 Edge Sixty', mobile: '9000170003' },
+  settled: { id: randomUUID(), name: 'W17 Settled Old', mobile: '9000170004' },
+};
+
+function overdueFixtureSql(): string {
+  const customer = (c: { id: string; name: string; mobile: string }) =>
+    `INSERT INTO customers (id, name, mobile, customer_type) VALUES ('${c.id}', '${c.name}', '${c.mobile}', 'Retail');`;
+  const bill = (
+    id: string,
+    number: string,
+    customerId: string,
+    daysAgo: number,
+    money: string,
+    docType = 'estimate'
+  ) =>
+    `INSERT INTO bills (id, bill_no, customer_id, bill_date, doc_type, sale_type, subtotal, grand_total, created_at) VALUES ` +
+    `('${id}', '${number}', '${customerId}', '${kolkataDate(daysAgo)}', '${docType}', 'Retail', ${money}, ${money}, TIMESTAMP('${kolkataDate(daysAgo)}', '12:00:00'));`;
+  const payment = (billId: string, customerId: string, daysAgo: number, money: string) => {
+    const receipt = randomUUID();
+    return (
+      `INSERT INTO receipts (id, customer_id, kind, mode, amount, paid_on, created_at) VALUES ('${receipt}', '${customerId}', 'money', 'Cash', ${money}, '${kolkataDate(daysAgo)}', TIMESTAMP('${kolkataDate(daysAgo)}', '13:00:00')); ` +
+      `INSERT INTO receipt_allocations (id, receipt_id, bill_id, customer_id, amount, fine_grams) VALUES ('${randomUUID()}', '${receipt}', '${billId}', '${customerId}', ${money}, 0.000);`
+    );
+  };
+  const [b1, b2, b3, b4, b5] = [
+    randomUUID(),
+    randomUUID(),
+    randomUUID(),
+    randomUUID(),
+    randomUUID(),
+  ];
+  return [
+    ...Object.values(OVERDUE).map(customer),
+    bill(b1, 'W17-0001', OVERDUE.oldPending.id, 75, '2500.00'),
+    bill(b5, 'W17-0005', OVERDUE.opening.id, 70, '5000.00', 'opening_balance'),
+    bill(b2, 'W17-0002', OVERDUE.partPaid.id, 61, '1000.00'),
+    payment(b2, OVERDUE.partPaid.id, 61, '400.00'),
+    bill(b3, 'W17-0003', OVERDUE.edge.id, 60, '3000.00'),
+    bill(b4, 'W17-0004', OVERDUE.settled.id, 90, '800.00'),
+    payment(b4, OVERDUE.settled.id, 90, '800.00'),
+    `UPDATE customers SET updated_at = CURRENT_TIMESTAMP(6) WHERE name LIKE 'W17 %';`,
+  ].join(' ');
+}
+
+test.describe('FB-D3: the payment-pending alert and the outstanding list', () => {
+  test.describe.configure({ timeout: 240_000 });
+
+  test('the dashboard card lists the customers pending for more than 60 days, oldest first, and a name opens that ledger', async ({
+    page,
+  }) => {
+    await laneSql(overdueFixtureSql());
+    await open(page, e2eLogin('owner'));
+    const card = page.getByTestId('overdue-panel');
+    await expect(card).toContainText('Payment pending over 60 days');
+    // the card is drawn once the bills have arrived: wait for the first row
+    await expect(card.getByTestId('overdue-row').first()).toBeVisible({ timeout: 60_000 });
+    const rows = await card
+      .getByTestId('overdue-row')
+      .evaluateAll((trs) =>
+        trs.map((tr) =>
+          [...tr.querySelectorAll('td')].map((td) =>
+            (td.textContent ?? '').replace(/\s+/g, ' ').trim()
+          )
+        )
+      );
+    const mine = rows.filter((cells) => cells[0].startsWith('W17 '));
+    expect(mine).toEqual([
+      ['W17 Old Pending', '+919000170001', '₹2,500', dayShown(kolkataDate(75)), '75 days'],
+      ['W17 Opening Dues', '9000170005', '₹5,000', dayShown(kolkataDate(70)), '70 days'],
+      ['W17 Part Paid', '9000170002', '₹600', dayShown(kolkataDate(61)), '61 days'],
+    ]);
+    // 60 days is not more than 60, and paid in full is not pending
+    await expect(card).not.toContainText('W17 Edge Sixty');
+    await expect(card).not.toContainText('W17 Settled Old');
+    // the card is in the order of the days
+    const days = rows.map((cells) => Number(cells[4].replace(' days', '')));
+    expect(days).toEqual([...days].sort((a, b) => b - a));
+
+    // the name opens the customer's ledger
+    await card.getByTestId('overdue-customer').filter({ hasText: 'W17 Part Paid' }).click();
+    await expect(page).toHaveURL(new RegExp(`/customer-ledger\\?customer=${OVERDUE.partPaid.id}`));
+    await expect(page.getByRole('heading', { name: 'W17 Part Paid', level: 2 })).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByTestId('cs-outstanding')).toHaveText('₹600');
+  });
+
+  test('the biller sees the card too; the staff does not', async ({ page }) => {
+    await laneSql(overdueFixtureSql());
+    await open(page, e2eLogin('biller'));
+    await expect(page.getByTestId('overdue-panel').getByTestId('overdue-row').first()).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByTestId('overdue-panel')).toContainText('W17 Old Pending');
+    await page.context().clearCookies();
+    await open(page, e2eLogin('staff'));
+    await expect(page.getByRole('heading', { name: 'Recently Added Designs' }).first()).toBeVisible(
+      {
+        timeout: 60_000,
+      }
+    );
+    await expect(page.getByTestId('overdue-panel')).toHaveCount(0);
+  });
+
+  test('Reports > Payments downloads the outstanding list as a CSV: the header of the brief, the rows oldest first, a +91 mobile written as text', async ({
+    page,
+  }) => {
+    await laneSql(overdueFixtureSql());
+    await open(page, e2eLogin('owner'), '/reports');
+    await page.getByRole('button', { name: 'Payments', exact: true }).click();
+    const button = page.getByRole('button', { name: 'Download outstanding list (CSV)' });
+    await expect(button).toBeEnabled({ timeout: 60_000 });
+    // wait until the books have arrived: the customer who owes 2,500 is in memory
+    await expect(page.getByTestId('rp-out-row').filter({ hasText: 'W17 Old Pending' })).toBeVisible(
+      {
+        timeout: 60_000,
+      }
+    );
+    const [download] = await Promise.all([page.waitForEvent('download'), button.click()]);
+    expect(download.suggestedFilename()).toBe(`outstanding-list-${kolkataDate()}.csv`);
+    const text = readFileSync((await download.path())!, 'utf8').replace(/^\ufeff/, '');
+    const lines = text.split('\r\n');
+    expect(lines[0]).toBe('Customer,Mobile,Outstanding (Rs),Fine due (g),Oldest pending bill,Days');
+    const mine = lines.slice(1).filter((line) => line.startsWith('W17 '));
+    expect(mine).toEqual([
+      // the mobile starts with +: it is text, not a formula
+      `W17 Old Pending,'+919000170001,2500.00,0.000,${kolkataDate(75)},75`,
+      `W17 Opening Dues,9000170005,5000.00,0.000,${kolkataDate(70)},70`,
+      `W17 Part Paid,9000170002,600.00,0.000,${kolkataDate(61)},61`,
+      `W17 Edge Sixty,9000170003,3000.00,0.000,${kolkataDate(60)},60`,
+    ]);
+    // the customer who paid in full is not on the list
+    expect(text).not.toContain('W17 Settled Old');
+    // the same figures as the database's V2 for these customers
+    for (const [name, outstanding] of [
+      ['W17 Old Pending', '2500.00'],
+      ['W17 Opening Dues', '5000.00'],
+      ['W17 Part Paid', '600.00'],
+      ['W17 Edge Sixty', '3000.00'],
+    ]) {
+      expect(await db.outstandingOf(name), name).toBe(outstanding);
+    }
   });
 });

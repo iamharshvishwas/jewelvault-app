@@ -10,6 +10,7 @@ import DashboardRateCard from './components/DashboardRateCard';
 import DashboardHealthLine from './components/DashboardHealthLine';
 import DashboardDownloadCard from './components/DashboardDownloadCard';
 import DashboardEveningCheck from './components/DashboardEveningCheck';
+import DashboardOverduePanel from './components/DashboardOverduePanel';
 import { BUSINESS_LOCATION, BUSINESS_NAME } from '@/lib/businessConfig';
 import { useSession } from '@/lib/authStore';
 
@@ -59,6 +60,9 @@ export default function HomePage() {
 
         {/* KPI Grid */}
         <DashboardKpiGrid role={role} />
+
+        {/* FB-D3: the customers with a payment pending for more than 60 days (V1), for the owner and the biller */}
+        {(role === 'owner' || role === 'biller') && <DashboardOverduePanel />}
 
         {/* The owner's evening check: today's Cash net, today's UPI net, the total outstanding (V4, V2) */}
         {role === 'owner' && <DashboardEveningCheck />}

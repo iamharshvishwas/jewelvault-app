@@ -3,13 +3,17 @@ import React, { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import {
   computePaymentsReport,
+  getOutstandingRows,
   paymentsPeriod,
   reloadDailyTotals,
   watchDailyTotals,
 } from '@/lib/appStore';
+import { downloadCsv } from '@/lib/exportUtils';
 import { paiseShown } from '@/lib/ledgerView';
+import { outstandingCsvRows } from '@/lib/outstandingExport';
 import { dayLabel } from '@/lib/rateGuard';
-import { CreditCard, AlertTriangle, CheckCircle, TrendingDown } from 'lucide-react';
+import { businessDateOf } from '@/lib/selectors';
+import { CreditCard, AlertTriangle, CheckCircle, Download, TrendingDown } from 'lucide-react';
 
 const PaymentModePie = dynamic(() => import('./charts/PaymentModePie'), { ssr: false });
 
@@ -42,6 +46,13 @@ export default function ReportPayments() {
 
   // the cash book of the period is read when this report is on the screen, and again when a receipt arrives
   useEffect(() => watchDailyTotals(period.from, period.to), [period.from, period.to]);
+
+  // FB-D3: the outstanding list as a CSV, as of now (the customers who owe money or silver, V2, with the age of their oldest pending bill, V1); the file is named for today's date
+  const owing = getOutstandingRows();
+  const downloadOutstanding = () => {
+    if (owing.length === 0) return;
+    downloadCsv(`Outstanding list ${businessDateOf(Date.now())}`, outstandingCsvRows(owing));
+  };
 
   const money = (paise: number) => (report.shown ? paiseShown(paise) : '—');
   const upiShare = report.shown ? report.shares['UPI'] : null;
@@ -196,7 +207,19 @@ export default function ReportPayments() {
       </div>
       {/* Outstanding List */}
       <div>
-        <h3 className="text-sm font-semibold text-foreground mb-3">Outstanding Payments</h3>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-foreground">Outstanding Payments</h3>
+          <button
+            type="button"
+            data-testid="rp-download-outstanding"
+            onClick={downloadOutstanding}
+            disabled={owing.length === 0}
+            className="btn-secondary py-1.5 text-xs"
+          >
+            <Download size={13} />
+            Download outstanding list (CSV)
+          </button>
+        </div>
         {report.pending.length === 0 ? (
           <div className="text-center py-6 text-sm text-muted-foreground">
             No outstanding payments — all clear!

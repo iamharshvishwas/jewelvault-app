@@ -62,6 +62,8 @@ import {
   lineTotalsByCategory,
   lineTotalsByMetal,
   lineTotalsByMonth,
+  outstandingRows,
+  overdueCustomers,
   paymentModeTotals,
   pendingBills,
   salesForDate,
@@ -72,10 +74,13 @@ import {
   type BillSummaryRow as SelectorBillRow,
   type CustomerBalanceRow as SelectorBalanceRow,
   type CustomerCard,
+  type CustomerContact,
   type DailyTotalRow,
   type LineTotal,
   type ModeTotal,
   type MonthLines,
+  type OutstandingRow,
+  type OverdueCustomer,
   type SalesFigure,
   type SoldLine,
 } from './selectors';
@@ -1532,6 +1537,37 @@ const pendingMemo = memoOf<PendingPayment[]>(['bill-summary', 'customers'], (tod
 /** The bills with money pending, oldest first (V1 through `pendingBills`). */
 export function computePendingPayments(): PendingPayment[] {
   return pendingMemo();
+}
+
+/** The customers' names and mobiles for the lists (the walk-in is marked, never listed). */
+function customerContacts(): CustomerContact[] {
+  return PREVIEW_MODE
+    ? _customers.map((c) => ({ id: c.id, name: c.name, mobile: c.mobile, isWalkIn: false }))
+    : rowCache.rows('customers').map((c) => ({
+        id: c.id,
+        name: c.name,
+        mobile: c.mobile,
+        isWalkIn: c.is_walkin === true,
+      }));
+}
+
+const overdueMemo = memoOf<OverdueCustomer[]>(['bill-summary', 'customers'], (today) =>
+  overdueCustomers(billRows(), customerContacts(), today)
+);
+
+/** FB-D3: the customers with a payment pending for more than 60 days (V1), the oldest first, as of today in India. The dashboard's alert. */
+export function getOverdueCustomers(): OverdueCustomer[] {
+  return overdueMemo();
+}
+
+const outstandingListMemo = memoOf<OutstandingRow[]>(
+  ['customer-balances', 'bill-summary', 'customers'],
+  (today) => outstandingRows(balanceRows(), billRows(), customerContacts(), today)
+);
+
+/** FB-D3: every customer who owes money or silver now (V2), with the age of their oldest pending bill (V1). The Payments report's CSV. */
+export function getOutstandingRows(): OutstandingRow[] {
+  return outstandingListMemo();
 }
 
 interface SalesBoard {
