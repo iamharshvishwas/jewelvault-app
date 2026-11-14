@@ -4,9 +4,16 @@ import { CheckCircle, Loader2, X } from 'lucide-react';
 import SaveButton from '@/components/ui/SaveButton';
 import { forgetOwnerTries } from '@/lib/appStore';
 import { getPollState, usePollState } from '@/lib/cache/poll';
-import { buildReasonBody, REASON_MAX, REASON_MIN, type ActionFailure } from '@/lib/ownerActions';
+import {
+  buildReasonBody,
+  REASON_MAX,
+  REASON_MIN,
+  type ActionFailure,
+  type ReasonBody,
+} from '@/lib/ownerActions';
 
-// The dialog of an action that needs a reason: cancelling a bill (X5) and voiding a receipt (X4) (spec C5 (b), C6, C7, C13, C17; task WEB11). It asks for the reason (3 to 500 characters),
+// The dialog of an action that takes a reason: cancelling a bill (X5) and voiding a receipt (X4) (spec C5 (b), C6, C7, C13, C17; task WEB11). It asks for the reason, which is optional
+// (FB-D1: left empty, the API stores "No reason given"; typed, it is 3 to 500 characters),
 // sends the action once (a second click while it is on its way is ignored, C6), shows the result only from the API's answer, and says in plain words why a refusal happened and whether
 // anything was changed. When the outcome cannot be confirmed it says so and the client reads the customer's books at once (the poll that follows every write, C17); pressing the button
 // again sends the same Idempotency-Key, so the action is never done twice (L5). Closing the dialog ends the user action.
@@ -20,8 +27,8 @@ interface ReasonDialogProps {
   savingLabel: string;
   /** The label above the reason field. */
   reasonLabel?: string;
-  /** Sends the action with the cleaned reason and resolves with what to show once the API has answered. */
-  run: (reason: string) => Promise<React.ReactNode>;
+  /** Sends the action with the body built from the reason box (no `reason` when it is empty) and resolves with what to show once the API has answered. */
+  run: (body: ReasonBody) => Promise<React.ReactNode>;
   /** The plain sentence for whatever `run` threw. */
   failureOf: (error: unknown) => ActionFailure;
   onClose: () => void;
@@ -71,7 +78,7 @@ export default function ReasonDialog({
     setSaving(true);
     setFailure(null);
     try {
-      const view = await run(built.body.reason);
+      const view = await run(built.body);
       setDone({ view, polledAt: getPollState().polls });
     } catch (error) {
       setFailure(failureOf(error));
@@ -123,12 +130,12 @@ export default function ReasonDialog({
             <div className="text-sm text-foreground space-y-2">{intro}</div>
             <fieldset disabled={saving} className="min-w-0">
               <label className="text-xs font-semibold text-foreground block">
-                {reasonLabel}
+                {reasonLabel} <span className="font-normal text-muted-foreground">(optional)</span>
                 <textarea
                   data-testid={`${testId}-reason`}
                   value={reason}
                   onChange={(event) => setReason(event.target.value)}
-                  placeholder={`${REASON_MIN} to ${REASON_MAX} characters`}
+                  placeholder={`Optional: ${REASON_MIN} to ${REASON_MAX} characters`}
                   rows={3}
                   maxLength={REASON_MAX + 200}
                   className="input-field resize-none text-sm mt-1.5 font-normal"

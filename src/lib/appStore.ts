@@ -637,7 +637,7 @@ export function forgetPaymentTries(): void {
 // ── The owner's actions (WEB11) ───────────────────────────────────────────────
 
 /**
- * Cancels a bill: X5 `POST /v1/bills/{id}/cancel` with a reason of 3 to 500 characters. The rules of `savePayment` hold: a key for each action, a double click is one request, pressing the
+ * Cancels a bill: X5 `POST /v1/bills/{id}/cancel` with an optional reason (FB-D1; typed, 3 to 500 characters). The rules of `savePayment` hold: a key for each action, a double click is one request, pressing the
  * button again after a call that did not end well sends the same key, nothing is put in memory before the server has answered, and then the bill, the pieces back in stock and the allocation
  * rows of the cancel and of the rebalance are. A preview build has no server.
  */

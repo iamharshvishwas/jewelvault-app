@@ -103,8 +103,8 @@ export default function VoidReceiptAction({
           reasonLabel="Why is it void?"
           confirmLabel="Void it"
           savingLabel="Voiding…"
-          run={async (reason) => {
-            const answer = await saveVoid(facts.customerId, facts.id, { reason });
+          run={async (body) => {
+            const answer = await saveVoid(facts.customerId, facts.id, body);
             return <VoidDone saved={savedVoidFrom(answer)} />;
           }}
           failureOf={(error) => ownerActionFailure(error, { action: 'void' })}

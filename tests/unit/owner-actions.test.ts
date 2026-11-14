@@ -1,6 +1,6 @@
 // WEB11 (PT-W11, unit half; spec C13, X4, X5, X10, X11, X12, K3, K6, Y8, Y10): the owner's actions without the screens, in src/lib/ownerActions.ts.
 //
-//   - the bodies: a reason of 3 to 500 characters once trimmed (X4, X5, X10), a refund (amount above 0, one of the five modes, no date: it is today), an opening balance (at least one
+//   - the bodies: a reason that is optional and, when typed, 3 to 500 characters once trimmed (X4, X5, X10; FB-D1), a refund (amount above 0, one of the five modes, no date: it is today), an opening balance (at least one
 //     figure above 0, a date up to today, an advance never for the walk-in) and the re-issue body (the corrected bill without its customer, with the reason);
 //   - the money goes out as text, never a number (S3), and the same screen typed two ways makes the same body (so the same Idempotency-Key);
 //   - the answers: what the dialog shows once the API has answered, worked out from the rows of the answer (the money a cancel released and how much of it went to other bills, the
@@ -21,6 +21,7 @@ import type {
 } from '@/lib/api/types';
 import type { BillBody } from '@/lib/billing';
 import {
+  type ReissueBody,
   REASON_MAX,
   REASON_MIN,
   buildOpeningBody,
@@ -36,17 +37,22 @@ import {
 import { allocationRow, billRow, id, receiptRow, summaryRow } from './support/money-rows';
 import { skuRow } from './support/rows';
 
-describe('PT-W11 the reason of a cancel, a void and a re-issue (X4, X5, X10: 3 to 500 characters once trimmed)', () => {
+describe('PT-W11 the reason of a cancel, a void and a re-issue (X4, X5, X10: optional (FB-D1); a typed one is 3 to 500 characters once trimmed)', () => {
   it('trims the text and sends it as the reason', () => {
     expect(buildReasonBody('  wrong rate on line 2  ')).toEqual({
       body: { reason: 'wrong rate on line 2' },
     });
   });
 
-  it('refuses fewer than 3 characters (after trimming) and more than 500, before any call, in words', () => {
+  it('FB-C2: an empty or blank reason makes a body WITHOUT reason (the API stores "No reason given", FB-D1)', () => {
+    for (const text of ['', '  ', '\n\t '])
+      expect(buildReasonBody(text), JSON.stringify(text)).toEqual({ body: {} });
+  });
+
+  it('refuses a typed reason of fewer than 3 characters (after trimming) and more than 500, before any call, in words', () => {
     expect(REASON_MIN).toBe(3);
     expect(REASON_MAX).toBe(500);
-    for (const text of ['', '  ', 'ab', '  ab  ']) {
+    for (const text of ['a', 'ab', '  ab  ']) {
       const built = buildReasonBody(text);
       expect(built, text).toHaveProperty('error');
       expect((built as { error: string }).error).toMatch(/at least 3 characters/);
@@ -153,7 +159,7 @@ describe('PT-W11 the re-issue body (X10): the corrected bill without its custome
   it("has no customer_id (the customer cannot change; the API refuses even the old bill's own), and has the trimmed reason", () => {
     const built = buildReissueBody(bill, '  wrong weight  ');
     expect(built).toHaveProperty('body');
-    const body = (built as { body: Record<string, unknown> }).body;
+    const body = (built as { body: ReissueBody }).body;
     expect(body).not.toHaveProperty('customer_id');
     expect(body.reason).toBe('wrong weight');
     expect(body.items).toEqual(bill.items);
@@ -166,6 +172,17 @@ describe('PT-W11 the re-issue body (X10): the corrected bill without its custome
     expect((buildReissueBody(bill, 'ab') as { error: string }).error).toMatch(
       /at least 3 characters/
     );
+  });
+
+  it('FB-C2: with the reason box empty the body has no reason (the API stores "No reason given", FB-D1)', () => {
+    for (const text of ['', '   ']) {
+      const built = buildReissueBody(bill, text);
+      expect(built).toHaveProperty('body');
+      const body = (built as { body: ReissueBody }).body;
+      expect(body).not.toHaveProperty('reason');
+      expect(body).not.toHaveProperty('customer_id');
+      expect(body.items).toEqual(bill.items);
+    }
   });
 });
 
