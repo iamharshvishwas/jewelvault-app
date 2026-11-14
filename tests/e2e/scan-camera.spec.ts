@@ -325,3 +325,150 @@ test.describe('FB-B2: the camera is refused or there is none: a plain message, a
     });
   });
 });
+
+// ------------------------------------------------------------------------------------------------ FB-B fix 1: a hand-over that fails still says "type the code"
+
+test.describe('FB-B fix: the browser reader never answers and @zxing/browser cannot be loaded (offline): the message, not a dead picture', () => {
+  test.describe.configure({ timeout: 180_000 });
+  test.skip(!FFMPEG, 'ffmpeg is not installed here, so the fake-camera video cannot be made');
+  test.use({ permissions: ['camera'] });
+
+  test.beforeEach(async ({ page }) => {
+    // a BarcodeDetector that is there, reads the formats, and never answers a look
+    await page.addInitScript(() => {
+      (window as unknown as { BarcodeDetector: unknown }).BarcodeDetector = class {
+        static getSupportedFormats() {
+          return Promise.resolve(['code_128', 'qr_code']);
+        }
+        detect() {
+          return new Promise(() => undefined);
+        }
+      };
+    });
+  });
+
+  /** From here on no script of the site can be fetched: the code of @zxing/browser, loaded when it is first needed, does not arrive. */
+  const goOffline = (page: Page) =>
+    page.route(
+      (url) => url.pathname.startsWith('/_next/static/'),
+      (route) => route.abort('failed')
+    );
+
+  test('/billing-pos: after the first look gets no answer the message appears, the camera is let go, and the typed box works', async ({
+    page,
+  }) => {
+    await openBilling(page);
+    await goOffline(page);
+    await page.getByRole('button', { name: /Scan with camera/ }).click();
+    await expect(page.getByTestId('camera-scanner')).toBeVisible();
+    await expect(page.getByTestId('camera-unavailable')).toHaveText(new RegExp(DENIED), {
+      timeout: 30_000,
+    });
+    await expect(page.getByTestId('camera-scanner')).toHaveCount(0);
+    await page.getByPlaceholder(BILL_BOX).fill(BARCODE);
+    await page.keyboard.press('Enter');
+    await expect(row(page)).toBeVisible();
+  });
+
+  test('/scan-detail: the same message, and a typed code shows the piece', async ({ page }) => {
+    await openScan(page);
+    await goOffline(page);
+    await page.getByRole('button', { name: /Scan with camera/ }).click();
+    await expect(page.getByTestId('camera-unavailable')).toHaveText(new RegExp(DENIED), {
+      timeout: 30_000,
+    });
+    await page.getByPlaceholder(SCAN_BOX).fill(BARCODE);
+    await page.getByRole('main').getByRole('button', { name: 'Search' }).click();
+    await expect(page.getByRole('main')).toContainText(DESIGN_NO);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ FB-B fix 3: a phone, 375 x 812
+
+test.describe('FB-B fix: the camera on a phone (375 x 812)', () => {
+  test.describe.configure({ timeout: 180_000 });
+  test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, permissions: ['camera'] });
+
+  /** Nothing of the page is wider than the phone, and the element lies inside it. */
+  async function fitsThePhone(page: Page, testId: string) {
+    const box = await page.getByTestId(testId).boundingBox();
+    expect(box, `${testId} is drawn`).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(375);
+    const wide = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+    expect(wide, 'no sideways scroll').toBeLessThanOrEqual(1);
+  }
+
+  test.describe('the camera works', () => {
+    test.skip(!FFMPEG, 'ffmpeg is not installed here, so the fake-camera video cannot be made');
+
+    test('/billing-pos: the button is tappable, the picture fits the phone, the line is added, Stop closes it', async ({
+      page,
+    }) => {
+      await openBilling(page);
+      const button = page.getByRole('button', { name: /Scan with camera/ });
+      await button.scrollIntoViewIfNeeded();
+      const size = await button.boundingBox();
+      expect(size!.height, 'a finger can hit it').toBeGreaterThanOrEqual(28);
+      await button.tap();
+      await expect(page.getByTestId('camera-scanner')).toBeVisible();
+      await fitsThePhone(page, 'camera-scanner');
+      await expect(row(page)).toBeVisible({ timeout: 60_000 });
+      await expect(page.getByTestId('scan-added')).toContainText(BARCODE);
+      await page.getByRole('button', { name: 'Stop' }).tap();
+      await expect(page.getByTestId('camera-scanner')).toHaveCount(0);
+    });
+
+    test('/scan-detail: the button, the picture and the piece fit the phone', async ({ page }) => {
+      await openScan(page);
+      await page.getByRole('button', { name: /Scan with camera/ }).tap();
+      await expect(page.getByTestId('camera-scanner')).toBeVisible();
+      await fitsThePhone(page, 'camera-scanner');
+      await expect(page.getByRole('main')).toContainText(DESIGN_NO, { timeout: 60_000 });
+      const wide = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+      );
+      expect(wide, 'no sideways scroll').toBeLessThanOrEqual(1);
+    });
+  });
+
+  test.describe('the camera is refused', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.addInitScript(() => {
+        navigator.mediaDevices.getUserMedia = () =>
+          Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
+      });
+    });
+
+    test('/billing-pos: the message fits the phone and the typed box still adds the line', async ({
+      page,
+    }) => {
+      await openBilling(page);
+      await page.getByRole('button', { name: /Scan with camera/ }).tap();
+      await expect(page.getByTestId('camera-unavailable')).toHaveText(new RegExp(DENIED), {
+        timeout: 30_000,
+      });
+      await fitsThePhone(page, 'camera-unavailable');
+      await page.getByPlaceholder(BILL_BOX).fill(BARCODE);
+      await page.keyboard.press('Enter');
+      await expect(row(page)).toBeVisible();
+    });
+
+    test('/scan-detail: the message fits the phone and the typed box still shows the piece', async ({
+      page,
+    }) => {
+      await openScan(page);
+      await page.getByRole('button', { name: /Scan with camera/ }).tap();
+      await expect(page.getByTestId('camera-unavailable')).toHaveText(new RegExp(DENIED), {
+        timeout: 30_000,
+      });
+      await fitsThePhone(page, 'camera-unavailable');
+      // the phone's keyboard sends Enter ("Go"); the Search button shows only its icon at this width
+      await page.getByPlaceholder(SCAN_BOX).fill(BARCODE);
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('main')).toContainText(DESIGN_NO);
+    });
+  });
+});

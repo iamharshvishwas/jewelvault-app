@@ -36,7 +36,10 @@ export default function CameraScanner({ onCode, onStop }: CameraScannerProps) {
     });
     // started a moment later: a screen that is left at once (or React's test remount in development) never opens the camera at all
     const timer = setTimeout(() => {
-      startScan(video, report)
+      // the third argument: a hand-over from the browser's reader to @zxing/browser that fails after the camera was opened
+      startScan(video, report, () => {
+        if (!cancelled) setUnavailable(true);
+      })
         .then((stopScan) => {
           if (cancelled) stopScan();
           else stop = stopScan;

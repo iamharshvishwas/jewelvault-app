@@ -23,11 +23,15 @@ const zxing = vi.hoisted(() => ({
   started: [] as Array<{ how: 'constraints' | 'stream'; source: unknown }>,
   emit: null as null | ((text: string) => void),
   stopped: 0,
+  /** What each way of starting does instead of starting (a refused camera, a stream that cannot be attached). */
+  failWith: { constraints: null as Error | null, stream: null as Error | null },
 }));
 vi.mock('@zxing/browser', () => {
   const start = (how: 'constraints' | 'stream') =>
     vi.fn(async (source: unknown, _video: unknown, callback: (result?: unknown) => void) => {
       zxing.started.push({ how, source });
+      const failure = zxing.failWith[how];
+      if (failure) throw failure;
       zxing.emit = (text) => callback({ getText: () => text });
       return {
         stop: () => {
@@ -47,6 +51,8 @@ afterEach(() => {
   zxing.started.length = 0;
   zxing.emit = null;
   zxing.stopped = 0;
+  zxing.failWith.constraints = null;
+  zxing.failWith.stream = null;
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
@@ -190,6 +196,70 @@ describe('FB-B2 startScan', () => {
     stop();
     expect(zxing.stopped).toBe(1);
     expect(raw.srcObject).toBe(stream); // the picture is zxing's to clear
+  });
+
+  // FB-B fix 1: a hand-over that fails must reach the screen, which has already been given its stop function
+  it('zxing path, camera refused (no BarcodeDetector, the iPhone case): rejects with the plain message and opens nothing', async () => {
+    const { video } = fakeCamera();
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn() } });
+    zxing.failWith.constraints = Object.assign(new Error('Permission denied'), {
+      name: 'NotAllowedError',
+    });
+    const onUnavailable = vi.fn();
+    const failure = await startScan(video, () => undefined, onUnavailable).catch(
+      (error: unknown) => error
+    );
+    expect(failure).toBeInstanceOf(CameraUnavailableError);
+    expect((failure as Error).message).toBe(CAMERA_UNAVAILABLE);
+    // a rejection is the answer of startScan itself: the screen is not told twice
+    expect(onUnavailable).not.toHaveBeenCalled();
+    expect(zxing.stopped).toBe(0);
+  });
+
+  it('a hand-over that fails (the detector never answers, then @zxing/browser cannot take the stream) lets the camera go and tells the screen', async () => {
+    vi.useFakeTimers();
+    const { track, stream, video, raw } = fakeCamera();
+    stubCamera(stream);
+    class Silent {
+      static getSupportedFormats = async () => ['code_128', 'qr_code'];
+      detect = vi.fn(() => new Promise<never>(() => undefined));
+    }
+    vi.stubGlobal('BarcodeDetector', Silent);
+    zxing.failWith.stream = new Error('the reader could not be loaded');
+
+    const onUnavailable = vi.fn();
+    const codes: string[] = [];
+    const stop = await startScan(video, (text) => codes.push(text), onUnavailable);
+    expect(onUnavailable).not.toHaveBeenCalled(); // the native reader is still being waited for
+    await vi.advanceTimersByTimeAsync(5000);
+    await vi.waitFor(() => expect(onUnavailable).toHaveBeenCalledTimes(1));
+
+    expect(zxing.started).toEqual([{ how: 'stream', source: stream }]);
+    expect(track.stopped).toBe(true); // no black frame left holding the camera
+    expect(raw.srcObject).toBeNull();
+    expect(codes).toEqual([]);
+    // the screen's Stop after the message is harmless, and the screen is not told again
+    expect(() => stop()).not.toThrow();
+    expect(zxing.stopped).toBe(0);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(onUnavailable).toHaveBeenCalledTimes(1);
+  });
+
+  it('a hand-over that fails after the person pressed Stop says nothing', async () => {
+    vi.useFakeTimers();
+    const { stream, video } = fakeCamera();
+    stubCamera(stream);
+    class Silent {
+      static getSupportedFormats = async () => ['code_128', 'qr_code'];
+      detect = vi.fn(() => new Promise<never>(() => undefined));
+    }
+    vi.stubGlobal('BarcodeDetector', Silent);
+    zxing.failWith.stream = new Error('the reader could not be loaded');
+    const onUnavailable = vi.fn();
+    const stop = await startScan(video, () => undefined, onUnavailable);
+    stop();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(onUnavailable).not.toHaveBeenCalled();
   });
 
   it('a BarcodeDetector that fails before it has ever answered hands over too; one that failed on a single frame later does not', async () => {

@@ -97,7 +97,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 async function startNative(
   video: HTMLVideoElement,
-  onCode: (text: string) => void
+  onCode: (text: string) => void,
+  onUnavailable?: () => void
 ): Promise<() => void> {
   const Detector = nativeDetectorClass();
   if (!Detector) throw new CameraUnavailableError();
@@ -126,11 +127,17 @@ async function startNative(
     if (video.srcObject === stream) video.srcObject = null;
   };
 
-  // the detector is there but does not work in this browser: @zxing/browser reads the same camera instead
+  // the detector is there but does not work in this browser: @zxing/browser reads the same camera instead. If it cannot (its code did not load, the stream cannot be attached), the screen has
+  // already been given its stop function, so it is told here that there is nothing to look at: the camera is let go and the screen says to type the code.
   const handOver = () => {
     startZxing(video, onCode, stream).then(
       (stopZxing) => (stopped ? stopZxing() : (handedOver = stopZxing)),
-      () => releaseCamera()
+      () => {
+        const wasStopped = stopped;
+        stopped = true;
+        releaseCamera();
+        if (!wasStopped) onUnavailable?.();
+      }
     );
   };
 
@@ -194,13 +201,17 @@ async function startZxing(
 
 /**
  * Opens the back camera in `video` and calls `onCode` with the text of each Code 128 or QR it reads (the same code again and again while it stays in view: `onlyNewCodes` is for that).
- * Resolves with the function that stops it and lets the camera go. Rejects with `CameraUnavailableError` when there is no camera or the person refused it.
+ * Resolves with the function that stops it and lets the camera go. Rejects with `CameraUnavailableError` when there is no camera or the person refused it. `onUnavailable` is called, once,
+ * when the camera was opened and the scan then cannot go on (the native detector never answers and `@zxing/browser` cannot take over): it is too late to reject, so the screen is told here.
  */
 export async function startScan(
   video: HTMLVideoElement,
-  onCode: (text: string) => void
+  onCode: (text: string) => void,
+  onUnavailable?: () => void
 ): Promise<() => void> {
   const decoder = chooseDecoder(await browserEnv());
   if (decoder === 'manual') throw new CameraUnavailableError();
-  return decoder === 'native' ? startNative(video, onCode) : startZxing(video, onCode);
+  return decoder === 'native'
+    ? startNative(video, onCode, onUnavailable)
+    : startZxing(video, onCode);
 }
