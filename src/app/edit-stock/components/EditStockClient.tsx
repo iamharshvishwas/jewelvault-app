@@ -13,6 +13,7 @@ import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { getDesigns, removeSku, setSkuStatus, upsertDesign } from '@/lib/designStore';
 import { getLocations } from '@/lib/settingsStore';
 import type { Design, Material, Purity, SellingMethod, Sku, SkuStatus } from '@/lib/mockData';
+import ChooseDesign from './ChooseDesign';
 
 // Edit Existing Stock (spec C5 (a), A5; task WEB05). The screen shows the design as it is in memory. The first change makes the person's working copy, and the design as
 // it was at that moment is kept beside it: Save sends one write for each row that changed, with only the fields that changed and the stamp of THAT design, so a row that
@@ -21,6 +22,8 @@ import type { Design, Material, Purity, SellingMethod, Sku, SkuStatus } from '@/
 // WEB06: the status of a piece has its own step (X9 set_sku_status): choosing a status, or pressing Archive, is ONE call for that piece, and the piece shows the new status once
 // the API has answered (a Sold piece cannot be changed, and any status can be refused). While there are unsaved changes the status cannot be changed, so that the stamp of
 // the piece the changes were started from is still the one the API holds when Save sends them.
+// FB-A3: the design to edit is the one the address names, and only that one. No id shows the list to choose from, an id that is not a design says so; the form is never drawn for the first
+// design of the list because nobody chose one.
 
 const STATUSES: SkuStatus[] = [
   'In Stock',
@@ -58,16 +61,51 @@ interface WorkingCopy {
   draft: Design;
 }
 
+/** FB-A3: which design the address asks for. Pure, so that "no id" and "an id that is nobody's" can be tested without a screen. */
+export function designForEdit(
+  designs: Design[],
+  wantedId: string | null
+): { kind: 'chosen'; design: Design } | { kind: 'choose' } | { kind: 'not-found'; id: string } {
+  if (wantedId === null || wantedId === '') return { kind: 'choose' };
+  const design = designs.find((item) => item.id === wantedId);
+  return design ? { kind: 'chosen', design } : { kind: 'not-found', id: wantedId };
+}
+
 export default function EditStockClient() {
-  const router = useRouter();
-  const { role } = useSession();
-  const isOwner = role === 'owner';
-  const savingAllowed = useSavingAllowed();
   // drawn again when a poll or an edit changes what is in memory
   useRowCacheVersion('designs', 'skus', 'sku-private', 'categories', 'subcategories', 'settings');
   const wantedId = useSyncExternalStore(noSubscription, readIdFromUrl, () => null);
   const designs = getDesigns();
-  const stored = designs.find((item) => item.id === wantedId) || designs[0] || null;
+  const pick = designForEdit(designs, wantedId);
+
+  if (pick.kind === 'choose') return <ChooseDesign designs={designs} />;
+  if (pick.kind === 'not-found') {
+    return (
+      <div className="jewel-card p-8 text-center">
+        <h1 className="text-xl font-bold">Design not found</h1>
+        <p className="text-sm text-muted-foreground mt-2">
+          There is no design with that address. Choose one from the list.
+        </p>
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          <Link href="/edit-stock" className="btn-primary inline-flex">
+            Choose a design
+          </Link>
+          <Link href="/inventory-management" className="btn-secondary inline-flex">
+            Back to Inventory
+          </Link>
+        </div>
+      </div>
+    );
+  }
+  // keyed on the design: a half-made edit of one design never follows the person to another
+  return <EditStockForm key={pick.design.id} stored={pick.design} />;
+}
+
+function EditStockForm({ stored }: { stored: Design }) {
+  const router = useRouter();
+  const { role } = useSession();
+  const isOwner = role === 'owner';
+  const savingAllowed = useSavingAllowed();
 
   const [work, setWork] = useState<WorkingCopy | null>(null);
   const [saving, setSaving] = useState(false);
@@ -78,24 +116,12 @@ export default function EditStockClient() {
   const [statusBusy, setStatusBusy] = useState<string | null>(null);
   const design = work?.draft ?? stored;
 
-  if (!design) {
-    return (
-      <div className="jewel-card p-8 text-center">
-        <h1 className="text-xl font-bold">No Stock Found</h1>
-        <Link href="/inventory-management" className="btn-primary mt-4 inline-flex">
-          Back to Inventory
-        </Link>
-      </div>
-    );
-  }
-
   /** Changes the person's working copy; the first change takes the design as it is now as its starting point. */
   const edit = (change: (draft: Design) => Design) => {
     setSaved('');
     setNotice('');
     setWork((current) => {
       const from = current?.base ?? stored;
-      if (!from) return current;
       return { base: from, draft: change(current?.draft ?? structuredClone(from)) };
     });
   };

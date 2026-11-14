@@ -19,6 +19,7 @@ import {
   Info,
   Tag,
   Package,
+  Copy,
 } from 'lucide-react';
 import SaveButton from '@/components/ui/SaveButton';
 import { PREVIEW_MODE, useSession } from '@/lib/authStore';
@@ -91,7 +92,7 @@ interface DesignFormData {
 }
 
 /** One row of the stock table: a group of identical pieces. */
-interface GroupRow {
+export interface GroupRow {
   id: string;
   pieces: string;
   grossWeight: string;
@@ -133,6 +134,9 @@ const nextGroupId = () => {
   groupCounter += 1;
   return `group-${groupCounter}`;
 };
+
+/** FB-A4: the next group made from the one before it: every field is copied (the pieces too, which the person changes) and the group gets an id of its own. Called from handlers only. */
+export const copyGroup = (previous: GroupRow): GroupRow => ({ ...previous, id: nextGroupId() });
 
 const emptyGroup = (id: string): GroupRow => ({
   id,
@@ -784,6 +788,12 @@ function BulkSkuStep({
     setShowQtyPrompt(false);
   };
 
+  // FB-A4: a new group that starts as a copy of the last one
+  const copyPrevious = () => {
+    const previous = skus[skus.length - 1];
+    if (previous) onSkusChange([...skus, copyGroup(previous)]);
+  };
+
   const removeSku = (id: string) => {
     if (skus.length <= 1) return;
     onSkusChange(skus.filter((s) => s.id !== id));
@@ -821,6 +831,9 @@ function BulkSkuStep({
           {isPerPiece
             ? 'Add each piece-rate group, then enter how many physical pieces exist for that group. Every piece gets a unique SKU.'
             : 'Add each weight/detail group, then enter how many physical pieces exist for that group. Every piece gets a unique SKU.'}
+        </p>
+        <p data-testid="pieces-help" className="text-sm text-muted-foreground mt-1">
+          Pieces makes that many identical items of the group, each with its own SKU number.
         </p>
       </div>
 
@@ -1021,15 +1034,25 @@ function BulkSkuStep({
         ))}
       </div>
 
-      {/* Add SKU Button */}
-      <button
-        type="button"
-        onClick={addSku}
-        className="w-full py-3 border-2 border-dashed border-border rounded-xl text-sm font-medium text-muted-foreground hover:border-primary/50 hover:text-primary hover:bg-primary/5 transition-all duration-200 flex items-center justify-center gap-2"
-      >
-        <Plus size={16} />
-        Add Another Weight Group
-      </button>
+      {/* Add SKU Button, and FB-A4: Copy previous group */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <button
+          type="button"
+          onClick={addSku}
+          className="flex-1 py-3 border-2 border-dashed border-border rounded-xl text-sm font-medium text-muted-foreground hover:border-primary/50 hover:text-primary hover:bg-primary/5 transition-all duration-200 flex items-center justify-center gap-2"
+        >
+          <Plus size={16} />
+          Add Another Weight Group
+        </button>
+        <button
+          type="button"
+          onClick={copyPrevious}
+          className="flex-1 py-3 border-2 border-dashed border-border rounded-xl text-sm font-medium text-muted-foreground hover:border-primary/50 hover:text-primary hover:bg-primary/5 transition-all duration-200 flex items-center justify-center gap-2"
+        >
+          <Copy size={16} />
+          Copy previous group
+        </button>
+      </div>
 
       {/* Quantity Prompt Modal */}
       {showQtyPrompt && (

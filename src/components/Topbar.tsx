@@ -8,17 +8,25 @@ import { canAccessPath, initialsOf, signOut, type AuthSession } from '@/lib/auth
 
 interface TopbarProps {
   onMenuClick: () => void;
+  /** FB-A1: the phone menu is open (the ☰ says so to a screen reader). */
+  menuOpen: boolean;
   session: AuthSession;
 }
 
-export default function Topbar({ onMenuClick, session }: TopbarProps) {
+export default function Topbar({ onMenuClick, menuOpen, session }: TopbarProps) {
   const [searchQuery, setSearchQuery] = useState('');
 
   return (
     <header className="h-14 bg-card border-b border-border flex items-center gap-3 px-4 lg:px-6 flex-shrink-0">
       {/* Mobile logo */}
       <div className="flex items-center gap-2 lg:hidden">
-        <button onClick={onMenuClick} className="btn-ghost p-1.5">
+        <button
+          type="button"
+          onClick={onMenuClick}
+          className="btn-ghost p-1.5"
+          aria-label="Open menu"
+          aria-expanded={menuOpen}
+        >
           <Menu size={20} />
         </button>
         <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">

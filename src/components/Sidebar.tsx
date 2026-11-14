@@ -211,8 +211,13 @@ const NAV_ITEMS: NavItem[] = [
 
 interface SidebarProps {
   collapsed: boolean;
+  /** On the desktop it collapses and expands the sidebar; in the drawer it closes the menu. */
   onToggle: () => void;
   session: AuthSession;
+  /** FB-A1: called on every link tap; the phone drawer closes itself with it. */
+  onNavigate?: () => void;
+  /** FB-A1: 'drawer' is the phone menu (never collapsed, every group open, a Close menu button); 'desktop' is as it always was. */
+  variant?: 'desktop' | 'drawer';
 }
 
 // U5: the role decides which menu items exist. An item is offered when its route is open to the role (the same table as
@@ -226,12 +231,25 @@ function navForRole(session: AuthSession): NavItem[] {
   });
 }
 
-export default function Sidebar({ collapsed, onToggle, session }: SidebarProps) {
+export default function Sidebar({
+  collapsed: collapsedProp,
+  onToggle,
+  session,
+  onNavigate,
+  variant = 'desktop',
+}: SidebarProps) {
   const pathname = usePathname();
   const visibleNav = navForRole(session);
+  const drawer = variant === 'drawer';
+  // a phone has no narrow strip to collapse to
+  const collapsed = collapsedProp && !drawer;
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
     new Set(
-      session.role === 'staff' ? ['nav-inventory', 'nav-stock'] : ['nav-inventory', 'nav-sales']
+      drawer
+        ? visibleNav.filter((item) => item.children).map((item) => item.id)
+        : session.role === 'staff'
+          ? ['nav-inventory', 'nav-stock']
+          : ['nav-inventory', 'nav-sales']
     )
   );
 
@@ -254,7 +272,7 @@ export default function Sidebar({ collapsed, onToggle, session }: SidebarProps) 
     <aside
       className={`
         flex flex-col h-full bg-card border-r border-border transition-all duration-300 ease-in-out
-        ${collapsed ? 'w-16' : 'w-60'}
+        ${drawer ? 'w-full' : collapsed ? 'w-16' : 'w-60'}
       `}
     >
       {/* Logo */}
@@ -263,6 +281,7 @@ export default function Sidebar({ collapsed, onToggle, session }: SidebarProps) 
       >
         <Link
           href="/"
+          onClick={onNavigate}
           className={`flex items-center gap-2 min-w-0 hover:opacity-80 transition-opacity ${collapsed ? 'justify-center' : ''}`}
         >
           <AppLogo size={32} />
@@ -275,7 +294,7 @@ export default function Sidebar({ collapsed, onToggle, session }: SidebarProps) 
         <button
           onClick={onToggle}
           className="ml-auto btn-ghost p-1.5 rounded-sm"
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-label={drawer ? 'Close menu' : collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
           {collapsed ? <Menu size={16} /> : <X size={16} />}
         </button>
@@ -294,6 +313,7 @@ export default function Sidebar({ collapsed, onToggle, session }: SidebarProps) 
                 {item.href ? (
                   <Link
                     href={item.href}
+                    onClick={onNavigate}
                     className={`
                       flex items-center justify-center w-full p-2.5 rounded-sm nav-item-hover
                       ${active ? 'bg-secondary text-primary' : 'text-muted-foreground'}
@@ -345,8 +365,10 @@ export default function Sidebar({ collapsed, onToggle, session }: SidebarProps) 
                           <Link
                             key={child.id}
                             href={child.href || '/'}
+                            onClick={onNavigate}
                             className={`
-                              flex items-center gap-2 px-2 py-1.5 rounded-sm text-xs nav-item-hover
+                              flex items-center gap-2 px-2 rounded-sm nav-item-hover
+                              ${drawer ? 'py-2.5 text-sm' : 'py-1.5 text-xs'}
                               ${childActive ? 'nav-active font-semibold' : 'text-muted-foreground font-medium'}
                             `}
                           >
@@ -366,6 +388,7 @@ export default function Sidebar({ collapsed, onToggle, session }: SidebarProps) 
               ) : (
                 <Link
                   href={item.href || '/'}
+                  onClick={onNavigate}
                   className={`
                     flex items-center gap-2.5 px-3 py-2 rounded-sm nav-item-hover text-sm
                     ${active ? 'nav-active font-semibold' : 'text-muted-foreground font-medium'}
