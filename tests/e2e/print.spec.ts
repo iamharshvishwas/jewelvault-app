@@ -710,4 +710,152 @@ test.describe('PT-W13: the tag printout has no app bars and runs over as many pa
     await openTags(page, e2eLogin('staff'));
     checkTags(await printed(page));
   });
+
+  // FB-B1 (Siddhi #9): the tag carries a real Code 128 of the piece barcode (drawn by JsBarcode), next to the QR; the old bars drawn from the letters' bits are gone.
+  test('FB-B1: every tag has exactly one real Code 128 svg, a QR beside it, and none of the old fake bars', async ({
+    page,
+  }) => {
+    await openTags(page, e2eLogin('owner'));
+    const codes = page.locator('.print-tag-wrap svg[data-testid="tag-code128"]');
+    await expect(codes).toHaveCount(42);
+    for (const wrap of await page.locator('.print-tag-wrap').all()) {
+      await expect(wrap.locator('svg[data-testid="tag-code128"]')).toHaveCount(1);
+      await expect(wrap.locator('.tag-qr')).toHaveCount(1);
+    }
+    // drawn: the first tag's svg holds bars, and its width in modules is that of a Code 128 symbol of 'W13TB001' (11 per symbol, 13 for the stop)
+    const first = codes.first();
+    await expect(first.locator('rect').first()).toBeAttached();
+    const modules = await first.evaluate((svg) =>
+      Number(svg.getAttribute('viewBox')?.split(' ')[2])
+    );
+    expect(modules, 'start + 8 characters (digits may pair) + check + stop').toBeGreaterThanOrEqual(
+      11 + 5 * 11 + 11 + 13
+    );
+    expect(modules).toBeLessThanOrEqual(11 + 8 * 11 + 11 + 13);
+    expect((modules - 13) % 11, 'a whole number of 11-module symbols and a stop').toBe(0);
+    // the old fake bars
+    await expect(page.locator('.tag-barcode-bars, .tag-barcode-bars span')).toHaveCount(0);
+    // and the business name is the Settings', no longer the fixed "JGP"
+    await expect(page.locator('.tag-business', { hasText: /^JGP$/i })).toHaveCount(0);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ FB-B fix: every tag size
+
+// The Settings let the shop set the tag's height (from 13 mm) and the barcode's height to anything. The barcode end of the tag stacks its text, Code 128, QR and number: it must stay inside the
+// tag at every size, always with a Code 128 a scanner can read (4 mm or more), keeping the QR and the second piece number only where they fit. The default tag is as FB-B1 made it.
+test.describe('FB-B fix: the barcode end of the tag fits every tag size the Settings allow', () => {
+  test.describe.configure({ timeout: 300_000 });
+
+  /** The tag template of the lane, as text, to write back. */
+  const readTemplate = async () =>
+    (await laneSql(`SELECT value FROM settings WHERE setting_key = 'tag_template'`))[0][0];
+  const writeTemplate = (heightMm: number, barcodeHeightMm: number) =>
+    laneSql(
+      `UPDATE settings SET value = JSON_SET(value, '$.heightMm', ${heightMm}, '$.barcodeHeightMm', ${barcodeHeightMm}) WHERE setting_key = 'tag_template'`
+    );
+
+  /** What the browser laid out for every tag on the page. */
+  const layoutOfTags = (page: Page) =>
+    page.evaluate(() => {
+      const mm = (px: number) => (px * 25.4) / 96;
+      return Array.from(document.querySelectorAll('.print-tag-wrap')).map((wrap) => {
+        const end = wrap.querySelector('.print-tag-barcode') as HTMLElement;
+        const svg = end.querySelector('svg[data-testid="tag-code128"]') as SVGElement;
+        const outer = wrap.getBoundingClientRect();
+        const inner = end.getBoundingClientRect();
+        const children = Array.from(end.children).map((child) => child.getBoundingClientRect());
+        return {
+          tagMm: mm(outer.height),
+          overflowPx: end.scrollHeight - end.clientHeight,
+          lowestChildOverTagPx: Math.max(...children.map((c) => c.bottom)) - outer.bottom,
+          highestChildUnderTagPx: outer.top - Math.min(...children.map((c) => c.top)),
+          childrenOutsideEndPx: Math.max(
+            ...children.map((c) => Math.max(c.bottom - inner.bottom, inner.top - c.top))
+          ),
+          codeMm: mm(svg.getBoundingClientRect().height),
+          codeWidthMm: mm(svg.getBoundingClientRect().width),
+          bars: svg.querySelectorAll('rect').length,
+          qr: end.querySelectorAll('.tag-qr').length,
+          number: end.querySelectorAll('.tag-barcode-number').length,
+          codes: end.querySelectorAll('svg[data-testid="tag-code128"]').length,
+        };
+      });
+    });
+
+  test('13 to 40 mm high and a tall barcode: nothing leaves the tag, a Code 128 (4 mm or more) on every tag, the QR only where it fits, the 28 mm tag as before', async ({
+    page,
+  }) => {
+    const original = await readTemplate();
+    try {
+      const sizes: Array<{ height: number; barcode: number; qr: boolean | null }> = [
+        { height: 13, barcode: 8, qr: false },
+        { height: 16, barcode: 8, qr: false },
+        { height: 20, barcode: 8, qr: false },
+        { height: 24, barcode: 8, qr: null }, // either: the layout decides
+        { height: 28, barcode: 8, qr: true }, // the default, as FB-B1 made it
+        { height: 28, barcode: 30, qr: true }, // a barcode taller than the room is cut to it
+        { height: 40, barcode: 8, qr: true },
+      ];
+      let first = true;
+      for (const size of sizes) {
+        await writeTemplate(size.height, size.barcode);
+        if (first) {
+          await openTags(page, e2eLogin('owner'));
+          first = false;
+        } else {
+          await page.reload();
+          await expect(page.getByRole('heading', { name: 'Print Tags' })).toBeVisible({
+            timeout: 60_000,
+          });
+          await page.getByPlaceholder(/Search SKU, design/).fill('W13-T');
+          await expect(page.getByRole('button', { name: /Print 42 Tags/ })).toBeVisible();
+          await expect(page.locator('.tag-qr-empty')).toHaveCount(0);
+        }
+        const tags = await layoutOfTags(page);
+        const where = `tag ${size.height} mm, barcode ${size.barcode} mm`;
+        expect(tags, where).toHaveLength(42);
+        for (const tag of tags) {
+          expect(tag.tagMm, `${where}: the tag is the size asked for`).toBeCloseTo(
+            Math.max(size.height, 13),
+            0
+          );
+          expect(tag.codes, `${where}: one Code 128`).toBe(1);
+          expect(tag.bars, `${where}: the Code 128 is drawn`).toBeGreaterThan(10);
+          expect(tag.codeMm, `${where}: a Code 128 a scanner can read`).toBeGreaterThanOrEqual(3.9);
+          expect(tag.codeWidthMm, `${where}: and wide enough`).toBeGreaterThanOrEqual(18);
+          expect(tag.overflowPx, `${where}: the barcode end does not overflow`).toBeLessThanOrEqual(
+            1
+          );
+          expect(tag.lowestChildOverTagPx, `${where}: nothing below the tag`).toBeLessThanOrEqual(
+            0.5
+          );
+          expect(tag.highestChildUnderTagPx, `${where}: nothing above the tag`).toBeLessThanOrEqual(
+            0.5
+          );
+          expect(
+            tag.childrenOutsideEndPx,
+            `${where}: nothing outside the barcode end`
+          ).toBeLessThanOrEqual(0.5);
+          if (size.qr !== null) expect(tag.qr > 0, `${where}: the QR`).toBe(size.qr);
+        }
+      }
+
+      // the smallest tag on paper: every tag is there with its Code 128 and its barcode in words, none cut off
+      await writeTemplate(13, 8);
+      await page.reload();
+      await page.getByPlaceholder(/Search SKU, design/).fill('W13-T');
+      await expect(page.getByRole('button', { name: /Print 42 Tags/ })).toBeVisible();
+      const pages = await printed(page);
+      for (let i = 1; i <= 42; i += 1) {
+        const words = `W13TB${pad(i, 3)}`;
+        const times = pages.reduce((sum, p) => sum + countIn(p, words), 0);
+        expect(times, `${words} is on the paper once`).toBe(1);
+      }
+    } finally {
+      await laneSql(
+        `UPDATE settings SET value = ${sqlText(original)} WHERE setting_key = 'tag_template'`
+      );
+    }
+  });
 });

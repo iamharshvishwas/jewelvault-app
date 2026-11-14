@@ -1,18 +1,47 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import JsBarcode from 'jsbarcode';
 import QRCode from 'qrcode';
 import { Printer, Search } from 'lucide-react';
 import { getDesigns } from '@/lib/designStore';
 import { getSettings } from '@/lib/settingsStore';
+import {
+  TAG_BARCODE_OPTIONS,
+  TAG_MIN_HEIGHT_MM,
+  tagBarcodeLayout,
+  tagBarcodeValue,
+  tagShortName,
+} from '@/lib/tagBarcode';
 import type { Sku } from '@/lib/mockData';
 
-function barcodeBits(value: string) {
-  const bits = value
-    .split('')
-    .flatMap((char) => [1, 2, 4, 8, 16, 32, 64].map((mask) => (char.charCodeAt(0) & mask ? 1 : 0)))
-    .slice(0, 58);
-  return [1, 0, 1, ...bits, 1, 0, 1];
+// FB-B1: a real Code 128 of the piece barcode, drawn by JsBarcode into an svg that fills the width of the tag's barcode end (a scanner needs its bars as wide as the tag allows).
+function Code128({ value, heightMm }: { value: string; heightMm: number }) {
+  const ref = useRef<SVGSVGElement>(null);
+
+  useEffect(() => {
+    const svg = ref.current;
+    if (!svg) return;
+    try {
+      JsBarcode(svg, value, TAG_BARCODE_OPTIONS);
+    } catch {
+      // a text Code 128 cannot carry (not ASCII): the svg stays empty, the QR and the printed text still name the piece
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+    }
+  }, [value]);
+
+  return (
+    <svg
+      ref={ref}
+      data-testid="tag-code128"
+      role="img"
+      aria-label={`Barcode ${value}`}
+      className="tag-code128"
+      preserveAspectRatio="none"
+      shapeRendering="crispEdges"
+      style={{ height: `${heightMm}mm` }}
+    />
+  );
 }
 
 function SmallQrCode({ value }: { value: string }) {
@@ -54,7 +83,9 @@ function Tag({ sku }: { sku: Sku }) {
     tag.showPiroi && sku.piroi > 0 ? `Piroi ${sku.piroi.toFixed(2)}` : '',
   ].filter(Boolean);
   const tagWidth = Math.max(tag.widthMm, 58);
-  const tagHeight = Math.max(tag.heightMm, 13);
+  const tagHeight = Math.max(tag.heightMm, TAG_MIN_HEIGHT_MM);
+  // FB-B fix: the barcode end is laid out for the height of this tag (a small tag has no room for the QR)
+  const barcodeEnd = tagBarcodeLayout(tagHeight, tag.barcodeHeightMm);
   const endWidth = (tagWidth - 10) / 2;
 
   return (
@@ -63,7 +94,9 @@ function Tag({ sku }: { sku: Sku }) {
       style={{ width: `${tagWidth}mm`, height: `${tagHeight}mm`, fontSize: `${tag.fontSize}px` }}
     >
       <div className="print-tag-end print-tag-detail" style={{ width: `${endWidth}mm` }}>
-        {tag.showBusinessName && <div className="tag-business">JGP</div>}
+        {tag.showBusinessName && (
+          <div className="tag-business">{tagShortName(settings.business)}</div>
+        )}
         {tag.showDesignNumber && <div className="tag-design">{sku.designNumber}</div>}
         <div className="tag-sku">{sku.skuNumber}</div>
         <div className="tag-detail-list">
@@ -79,22 +112,13 @@ function Tag({ sku }: { sku: Sku }) {
 
       <div className="print-tag-end print-tag-barcode" style={{ width: `${endWidth}mm` }}>
         <div className="tag-code-text">{sku.barcode}</div>
-        <div className="tag-scan-row">
-          <div
-            className="tag-barcode-bars"
-            style={{ height: `${Math.max(tag.barcodeHeightMm, 8)}mm` }}
-            aria-label={`Barcode ${sku.barcode}`}
-          >
-            {barcodeBits(sku.barcode).map((bit, index) => (
-              <span
-                key={`${sku.id}-bar-${index}`}
-                style={{ width: bit ? 2 : 1, opacity: bit ? 1 : 0.22 }}
-              />
-            ))}
+        <Code128 value={tagBarcodeValue(sku)} heightMm={barcodeEnd.barcodeMm} />
+        {barcodeEnd.showQr && (
+          <div className="tag-scan-row">
+            <SmallQrCode value={tagBarcodeValue(sku)} />
           </div>
-          <SmallQrCode value={sku.barcode || sku.skuNumber} />
-        </div>
-        <div className="tag-barcode-number">{sku.skuNumber}</div>
+        )}
+        {barcodeEnd.showNumber && <div className="tag-barcode-number">{sku.skuNumber}</div>}
       </div>
     </div>
   );

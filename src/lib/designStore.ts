@@ -774,6 +774,40 @@ export function findSkuByCode(code: string) {
   return null;
 }
 
+/**
+ * FB-B3 (Siddhi #8): the pieces a person can pick for a bill without a barcode. A case-insensitive substring of the design number, the design name, the piece number or the barcode;
+ * only pieces the bill can take (In Stock, and Reserved or On Approval, which the bill asks about); In Stock first, then by design number and piece number; at most `limit`. A query
+ * of fewer than two characters finds nothing. It reads the same view as `findSkuByCode`.
+ */
+export function searchPieces(query: string, limit = 20): Array<{ design: Design; sku: Sku }> {
+  const needle = query.trim().toLowerCase();
+  if (needle.length < 2 || limit <= 0) return [];
+  const found: Array<{ design: Design; sku: Sku }> = [];
+  for (const design of getDesigns()) {
+    const designHit =
+      design.designNumber.toLowerCase().includes(needle) ||
+      design.designName.toLowerCase().includes(needle);
+    for (const sku of design.skus) {
+      if (sku.status !== 'In Stock' && sku.status !== 'Reserved' && sku.status !== 'On Approval')
+        continue;
+      if (
+        designHit ||
+        sku.skuNumber.toLowerCase().includes(needle) ||
+        sku.barcode.toLowerCase().includes(needle)
+      )
+        found.push({ design, sku });
+    }
+  }
+  const rank = (sku: Sku) => (sku.status === 'In Stock' ? 0 : 1);
+  found.sort(
+    (a, b) =>
+      rank(a.sku) - rank(b.sku) ||
+      a.design.designNumber.localeCompare(b.design.designNumber) ||
+      a.sku.skuNumber.localeCompare(b.sku.skuNumber)
+  );
+  return found.slice(0, limit);
+}
+
 export function updateSkuStatus(skuId: string, status: SkuStatus): void {
   assertWritable('A change of status');
   let changed = false;

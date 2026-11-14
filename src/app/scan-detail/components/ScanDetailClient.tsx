@@ -1,9 +1,10 @@
 'use client';
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef } from 'react';
 import Link from 'next/link';
 import { type Sku, type Design } from '@/lib/mockData';
 import { findSkuByCode, getDesigns } from '@/lib/designStore';
 import { PREVIEW_MODE } from '@/lib/previewMode';
+import CameraScanner from '@/components/CameraScanner';
 import StatusBadge from '@/components/ui/StatusBadge';
 import MaterialBadge from '@/components/ui/MaterialBadge';
 import AppImage from '@/components/ui/AppImage';
@@ -11,7 +12,6 @@ import {
   ScanLine,
   Search,
   Camera,
-  X,
   CheckCircle2,
   AlertTriangle,
   AlertCircle,
@@ -54,49 +54,13 @@ export default function ScanDetailClient() {
   const [scanState, setScanState] = useState<ScanState>('idle');
   const [manualInput, setManualInput] = useState('');
   const [result, setResult] = useState<SkuRecord | null>(null);
-  const [cameraActive, setCameraActive] = useState(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
   const [scanHistory, setScanHistory] = useState<SkuRecord[]>([]);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const quickScans = PREVIEW_MODE ? quickScansOf(getDesigns()) : [];
-
-  const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    setCameraActive(false);
-  }, []);
-
-  useEffect(() => {
-    return () => stopCamera();
-  }, [stopCamera]);
-
-  const startCamera = async () => {
-    setCameraError(null);
-    setScanState('camera');
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-      }
-      setCameraActive(true);
-    } catch {
-      setCameraError('Camera access denied or not available. Use manual input below.');
-      setScanState('idle');
-    }
-  };
 
   const handleManualSearch = (value?: string) => {
     const query = (value ?? manualInput).trim().toLowerCase();
     if (!query) return;
-    stopCamera();
     const found = findSkuByCode(query);
     if (!found) {
       setScanState('not-found');
@@ -128,7 +92,6 @@ export default function ScanDetailClient() {
     setScanState('idle');
     setResult(null);
     setManualInput('');
-    stopCamera();
     setTimeout(() => inputRef.current?.focus(), 100);
   };
 
@@ -158,62 +121,28 @@ export default function ScanDetailClient() {
       {/* ── SCAN INPUT PANEL ─────────────────────────────────────────── */}
       {(scanState === 'idle' || scanState === 'camera' || scanState === 'not-found') && (
         <div className="jewel-card p-5 space-y-4">
-          {/* Camera Viewfinder */}
+          {/* FB-B2: the camera reads the tag's Code 128 or QR; a code it reads is searched like a typed one, and the typed box below works with or without it */}
           {scanState === 'camera' && (
-            <div className="relative rounded-xl overflow-hidden bg-black aspect-video">
-              <video
-                ref={videoRef}
-                className="w-full h-full object-cover"
-                playsInline
-                muted
-                autoPlay
-              />
-              {/* Scan overlay */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="relative w-56 h-36">
-                  {/* Corner brackets */}
-                  <span className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-primary rounded-tl-sm" />
-                  <span className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-primary rounded-tr-sm" />
-                  <span className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-primary rounded-bl-sm" />
-                  <span className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-primary rounded-br-sm" />
-                  {/* Scan line animation */}
-                  <span className="absolute left-1 right-1 h-0.5 bg-primary/70 animate-scan-line" />
-                </div>
-              </div>
-              {/* Close camera */}
-              <button
-                onClick={() => {
-                  stopCamera();
-                  setScanState('idle');
-                }}
-                className="absolute top-3 right-3 bg-black/60 text-white rounded-full p-1.5 hover:bg-black/80 transition-colors"
-              >
-                <X size={16} />
-              </button>
-              <p className="absolute bottom-3 left-0 right-0 text-center text-xs text-white/80">
-                Align barcode within the frame
-              </p>
-            </div>
-          )}
-
-          {cameraError && (
-            <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
-              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-              {cameraError}
-            </div>
+            <CameraScanner
+              onCode={(text) => {
+                setManualInput(text);
+                handleManualSearch(text);
+              }}
+              onStop={() => setScanState('idle')}
+            />
           )}
 
           {/* Camera Button */}
           {scanState !== 'camera' && (
             <button
-              onClick={startCamera}
+              onClick={() => setScanState('camera')}
               className="w-full flex items-center justify-center gap-3 py-5 rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 hover:bg-primary/10 hover:border-primary/60 transition-all group"
             >
               <span className="w-12 h-12 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center transition-colors">
                 <Camera size={22} className="text-primary" />
               </span>
               <div className="text-left">
-                <p className="font-semibold text-foreground text-sm">Open Camera</p>
+                <p className="font-semibold text-foreground text-sm">Scan with camera</p>
                 <p className="text-xs text-muted-foreground">Scan barcode or QR code</p>
               </div>
             </button>
