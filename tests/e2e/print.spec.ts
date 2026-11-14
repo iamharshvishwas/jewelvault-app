@@ -710,4 +710,32 @@ test.describe('PT-W13: the tag printout has no app bars and runs over as many pa
     await openTags(page, e2eLogin('staff'));
     checkTags(await printed(page));
   });
+
+  // FB-B1 (Siddhi #9): the tag carries a real Code 128 of the piece barcode (drawn by JsBarcode), next to the QR; the old bars drawn from the letters' bits are gone.
+  test('FB-B1: every tag has exactly one real Code 128 svg, a QR beside it, and none of the old fake bars', async ({
+    page,
+  }) => {
+    await openTags(page, e2eLogin('owner'));
+    const codes = page.locator('.print-tag-wrap svg[data-testid="tag-code128"]');
+    await expect(codes).toHaveCount(42);
+    for (const wrap of await page.locator('.print-tag-wrap').all()) {
+      await expect(wrap.locator('svg[data-testid="tag-code128"]')).toHaveCount(1);
+      await expect(wrap.locator('.tag-qr')).toHaveCount(1);
+    }
+    // drawn: the first tag's svg holds bars, and its width in modules is that of a Code 128 symbol of 'W13TB001' (11 per symbol, 13 for the stop)
+    const first = codes.first();
+    await expect(first.locator('rect').first()).toBeAttached();
+    const modules = await first.evaluate((svg) =>
+      Number(svg.getAttribute('viewBox')?.split(' ')[2])
+    );
+    expect(modules, 'start + 8 characters (digits may pair) + check + stop').toBeGreaterThanOrEqual(
+      11 + 5 * 11 + 11 + 13
+    );
+    expect(modules).toBeLessThanOrEqual(11 + 8 * 11 + 11 + 13);
+    expect((modules - 13) % 11, 'a whole number of 11-module symbols and a stop').toBe(0);
+    // the old fake bars
+    await expect(page.locator('.tag-barcode-bars, .tag-barcode-bars span')).toHaveCount(0);
+    // and the business name is the Settings', no longer the fixed "JGP"
+    await expect(page.locator('.tag-business', { hasText: /^JGP$/i })).toHaveCount(0);
+  });
 });
