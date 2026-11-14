@@ -2,7 +2,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Package, ScanLine, ShoppingCart } from 'lucide-react';
+import { LayoutDashboard, Package, ReceiptText, ScanLine, ShoppingCart } from 'lucide-react';
 import { canAccessPath, type AuthSession } from '@/lib/authStore';
 
 const MOBILE_NAV = [
@@ -21,6 +21,8 @@ const MOBILE_NAV = [
     isCenter: true,
   },
   { id: 'mnav-sale', label: 'Sale', href: '/billing-pos', icon: <ShoppingCart size={20} /> },
+  // FB-A2: the saved estimates were not reachable from a phone (the owner and the biller; staff may not open the screen)
+  { id: 'mnav-estimates', label: 'Estimates', href: '/estimate', icon: <ReceiptText size={20} /> },
 ];
 
 export default function MobileNav({ session }: { session: AuthSession }) {

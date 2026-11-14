@@ -265,12 +265,13 @@ export default function EstimateViewClient() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-4">
-      <div className="flex items-center justify-between print:hidden">
+      {/* FB-A2: the bar wraps on a phone, so that Cancel, Re-issue and Print stay inside the screen */}
+      <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
         <Link href="/estimate" className="btn-secondary py-2">
           <ArrowLeft size={15} />
           Saved Estimates
         </Link>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <OwnerBillActions billId={invoice.id} />
           <button onClick={() => window.print()} className="btn-primary py-2">
             <Printer size={15} />

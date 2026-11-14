@@ -6,6 +6,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import MobileNav from '@/components/MobileNav';
 import Sidebar from '@/components/Sidebar';
 import type { AuthRole, AuthSession } from '@/lib/authStore';
 
@@ -73,5 +74,32 @@ describe('PT-FBA1 drawer markup', () => {
     // the desktop sidebar keeps its starting state: Inventory and Sales open, Settings closed
     expect(html).toContain('Saved Estimates');
     expect(html).not.toContain('Business Settings');
+  });
+});
+
+// FB-A2: the bottom bar of a phone has an Estimates button for the roles that may open /estimate (the same table as the route gate), and Scan stays the owner's.
+const bottomBar = (role: AuthRole) =>
+  renderToStaticMarkup(createElement(MobileNav, { session: who(role) }));
+
+describe('PT-FBA2 bottom bar', () => {
+  it('the owner has Home, Inventory, Scan, Sale and Estimates, the last one linking to /estimate', () => {
+    const html = bottomBar('owner');
+    for (const label of ['Home', 'Inventory', 'Scan', 'Sale', 'Estimates']) {
+      expect(html).toContain(`>${label}<`);
+    }
+    expect(html).toContain('href="/estimate"');
+  });
+
+  it('the biller has Estimates and no Scan', () => {
+    const html = bottomBar('biller');
+    expect(html).toContain('>Estimates<');
+    expect(html).toContain('href="/estimate"');
+    expect(html).not.toContain('>Scan<');
+  });
+
+  it('staff have no Estimates (they may not open the screen)', () => {
+    const html = bottomBar('staff');
+    expect(html).not.toContain('>Estimates<');
+    expect(html).not.toContain('href="/estimate"');
   });
 });
