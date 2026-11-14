@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   getCustomers,
   addCustomer,
@@ -51,6 +52,11 @@ export default function CustomerLedgerClient() {
   });
   const [errors, setErrors] = useState<Partial<AddCustomerForm>>({});
 
+  // FB-D3: a link with ?customer=<id> (the dashboard's payment alert) opens that customer's card, once; a customer chosen by hand afterwards is not taken away (the effect below applies it)
+  // (no search parameters at all outside a Next router, as in a server render made by a unit test: then there is no link)
+  const linkedId = useSearchParams()?.get('customer') ?? null;
+  const linkApplied = useRef<string | null>(null);
+
   // C17: after any write that touches money the client polls at once, and that poll brings the customer's bill-summary rows and customer-balances row (V1, V2). The card is drawn
   // again as soon as memory holds them, not at the next tick of the clock below; the tick stays for the ledger's own state and for the preview build, whose store has no events.
   const books = useRowCacheVersion('customers', 'customer-balances', 'bills', 'bill-summary');
@@ -60,6 +66,13 @@ export default function CustomerLedgerClient() {
     const refresh = () => {
       const list = getCustomers();
       setCustomers(list);
+      if (linkedId && linkApplied.current !== linkedId) {
+        const linked = list.find((c) => c.id === linkedId);
+        if (linked) {
+          linkApplied.current = linkedId;
+          setSelectedCustomer(linked);
+        }
+      }
       // Keep selected customer in sync
       if (selectedId) {
         const updated = list.find((c) => c.id === selectedId);
@@ -79,7 +92,7 @@ export default function CustomerLedgerClient() {
     refresh();
     const interval = setInterval(refresh, 1000);
     return () => clearInterval(interval);
-  }, [selectedId, books]);
+  }, [selectedId, books, linkedId]);
 
   // C3: the ledger of the customer is read from the server when the card opens, and again whenever that customer's updated_at changes
   useEffect(() => {
@@ -140,7 +153,8 @@ export default function CustomerLedgerClient() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      {/* FB-D1: on paper only the open customer's ledger is printed (CustomerDetail), not the page around it */}
+      <div className="flex items-center justify-between print:hidden">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Customer Ledger</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
@@ -292,8 +306,8 @@ export default function CustomerLedgerClient() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-4 gap-4">
-        <div className="lg:col-span-1">
+      <div className="grid grid-cols-1 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-4 gap-4 print:block">
+        <div className="lg:col-span-1 print:hidden">
           <CustomerList
             customers={customers}
             selectedId={selectedCustomer?.id ?? null}
@@ -305,7 +319,7 @@ export default function CustomerLedgerClient() {
             <div
               role="alert"
               data-testid="ledger-error"
-              className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+              className="mb-3 flex print:hidden items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
             >
               <span>{ledger.message ?? 'The ledger could not be loaded.'}</span>
               <button
@@ -318,7 +332,10 @@ export default function CustomerLedgerClient() {
             </div>
           )}
           {selectedCustomer && ledger.state === 'loading' && ledger.empty && (
-            <p data-testid="ledger-loading" className="mb-3 text-xs text-muted-foreground">
+            <p
+              data-testid="ledger-loading"
+              className="mb-3 text-xs text-muted-foreground print:hidden"
+            >
               Loading the ledger…
             </p>
           )}

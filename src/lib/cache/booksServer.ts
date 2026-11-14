@@ -15,6 +15,7 @@
 // Nothing is worked out here. A logout (U8) forgets all of it, and a read that was on its way is thrown away when it arrives.
 import { api as siteApi, isApiError, type ApiClient } from '@/lib/api/client';
 import type {
+  AuditPageResponse,
   CheckRunWire,
   DailyTotalWire,
   DailyTotalsResponse,
@@ -59,6 +60,8 @@ export interface BooksServerDeps {
 }
 
 export interface BooksServer {
+  /** FB-D4: one page of the audit log, newest first (`GET /v1/audit-log?limit=200[&before_id=]`): the first page with no id, the next with the id the server sent. Not kept here: the screen holds its pages. */
+  readAuditPage(beforeId?: number): Promise<AuditPageResponse>;
   /** The cash book of the range as last read; empty and idle before the first read. */
   dailyTotals(from: string, to: string): DailyTotalsView;
   /** A screen shows this range: read it, and keep it current. Returns the way to stop (twice is once). */
@@ -79,6 +82,9 @@ export interface BooksServer {
   idle(): Promise<void>;
   dispose(): void;
 }
+
+/** The audit log is read this many rows to a page (the most the API gives, A4). */
+export const AUDIT_PAGE_ROWS = 200;
 
 /** The dashboard line is read again this often while it is on a screen. */
 export const HEALTH_REFRESH_MS = 5 * 60 * 1000;
@@ -306,6 +312,10 @@ export function createBooksServer(deps: BooksServerDeps): BooksServer {
   const offLogout = deps.registerLogoutHook(reset);
 
   return {
+    readAuditPage: (beforeId) =>
+      api.get<AuditPageResponse>('/v1/audit-log', {
+        query: { limit: AUDIT_PAGE_ROWS, before_id: beforeId }, // an id left out is left out of the address
+      }),
     dailyTotals: (from, to) => totals.get(keyOf(from, to))?.view ?? EMPTY_TOTALS,
     watchDailyTotals: watchTotals,
     reloadDailyTotals: reloadTotals,
@@ -336,3 +346,7 @@ export const booksServer: BooksServer = createBooksServer({
   cache: rowCache,
   registerLogoutHook: siteRegisterLogoutHook,
 });
+
+/** FB-D4: one page of the audit log over the site's client (the owner's activity log). */
+export const readAuditPage = (beforeId?: number): Promise<AuditPageResponse> =>
+  booksServer.readAuditPage(beforeId);

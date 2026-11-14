@@ -14,6 +14,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { at, uuid } from './support/rows';
 import { billRow, customerRow, fill, itemRow, shop, summaryRow } from './support/money-rows';
+import { FakeMoneyApi, ledgerRow, type LedgerWireRow } from './support/money-server';
 
 const address = vi.hoisted(() => ({ search: '' }));
 vi.mock('next/navigation', () => ({
@@ -339,5 +340,287 @@ describe('PT-W13 the shell and the pages carry the names the print rules use', (
     ])
       expect(estimate, name).toContain(name);
     expect(text('app/print-tags/components/PrintTagsClient.tsx')).toContain('print-tags-grid');
+  });
+});
+
+// ================================================================================================ FB-D1: the ledger on paper
+
+// FB-D1 (Siddhi #4): one customer's ledger prints, or is saved as a PDF, from the customer card. The sheet is the shop's header (the Settings' `business`), the customer, the day it was printed
+// (Asia/Kolkata), the rows of V3 as the server sent them, and four totals; the application around it is not printed. Where Chromium cuts the pages is checked by tests/e2e/print.spec.ts.
+
+const LEDGER_CUSTOMER = uuid(5401);
+const LEDGER_DAY = '2026-11-14';
+
+/** Meera's ledger: a bill of 9,000.00 with 6.000 g of silver due, a part payment of 2,500.00 and 2.500 g of silver. The running balances are the server's (hand-worked here). */
+function ledgerRows(): LedgerWireRow[] {
+  const row = (n: number, over: Partial<LedgerWireRow>) =>
+    ledgerRow(n, LEDGER_CUSTOMER, { entry_at: at(400 + n), ...over });
+  return [
+    row(1, {
+      kind: 'Invoice',
+      entry_date: '2026-10-15',
+      description: 'Invoice JV-0021',
+      debit: '9000.00',
+      fine_debit: '6.000',
+      balance: '9000.00',
+      fine_balance: '6.000',
+    }),
+    row(2, {
+      kind: 'Payment',
+      kind_rank: 3,
+      entry_date: '2026-10-16',
+      description: 'Payment (Cash)',
+      debit: '0.00',
+      credit: '2500.00',
+      balance: '6500.00',
+      fine_balance: '6.000',
+    }),
+    row(3, {
+      kind: 'Fine',
+      kind_rank: 3,
+      entry_date: '2026-10-17',
+      description: 'Silver received 2.500 g',
+      debit: '0.00',
+      fine_credit: '2.500',
+      balance: '6500.00',
+      fine_balance: '3.500',
+    }),
+  ];
+}
+
+async function ledgerWorld(
+  entries: LedgerWireRow[],
+  business: Record<string, unknown> | null,
+  { today = LEDGER_DAY }: { today?: string } = {}
+) {
+  vi.resetModules();
+  vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
+  vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.test');
+  vi.doMock('@/lib/businessClock', () => ({ useBusinessToday: () => today }));
+  const server = new FakeMoneyApi();
+  vi.stubGlobal('fetch', server.fetch);
+  server.ledgers.set(LEDGER_CUSTOMER, entries);
+  const [react, dom, cache, app, detail] = await Promise.all([
+    import('react'),
+    import('react-dom/server'),
+    import('@/lib/cache/cache'),
+    import('@/lib/appStore'),
+    import('@/app/customer-ledger/components/CustomerDetail'),
+  ]);
+  const book = {
+    ...shop(),
+    customers: [customerRow(LEDGER_CUSTOMER, { name: 'Meera Jain', mobile: '9000100001' })],
+    balances: [],
+    bills: [],
+    summaries: [],
+    items: [],
+    receipts: [],
+    allocations: [],
+  };
+  fill(cache.rowCache, book as never);
+  if (business)
+    (cache.rowCache.merge as (r: never, rows: never) => number)(
+      'settings' as never,
+      [businessRow(business)] as never
+    );
+  await app.loadLedgerForCustomer(LEDGER_CUSTOMER);
+  const customer = app.getCustomers().find((c) => c.id === LEDGER_CUSTOMER)!;
+  return { html: dom.renderToStaticMarkup(react.createElement(detail.default, { customer })) };
+}
+
+/** The cells of every `<tr data-testid=...>` as plain text. */
+const rowsOf = (html: string, testId: string): string[][] =>
+  [...html.matchAll(new RegExp(`<tr[^>]*data-testid="${testId}"[^>]*>([\\s\\S]*?)</tr>`, 'g'))].map(
+    (row) => [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => plain(cell[1]))
+  );
+
+describe('FB-D1 the ledger sheet on the customer card', () => {
+  it('has a Print / Save PDF button that asks the browser to print', async () => {
+    const w = await ledgerWorld(ledgerRows(), null);
+    expect(w.html).toMatch(
+      /<button[^>]*>(?:<svg[\s\S]*?<\/svg>)?\s*Print \/ Save PDF\s*<\/button>/
+    );
+    const source = readFileSync(
+      path.join(SRC, 'app/customer-ledger/components/CustomerDetail.tsx'),
+      'utf8'
+    );
+    expect(source).toContain('window.print()');
+  });
+
+  it("the shop's name, address and phone on the sheet are the Settings' (a blank one prints nothing)", async () => {
+    const w = await ledgerWorld(ledgerRows(), {
+      legalName: 'Test Jewellers Pvt Ltd',
+      address: '12 Sarafa Bazaar\nUjjain 456006',
+      phone: '+91 99999 13013',
+    });
+    expect(textOf(w.html, 'ledger-print-shop-name')).toBe('Test Jewellers Pvt Ltd');
+    expect(textOf(w.html, 'ledger-print-shop-address')).toBe('12 Sarafa Bazaar Ujjain 456006');
+    expect(w.html).toMatch(
+      /data-testid="ledger-print-shop-address"[^>]*class="[^"]*whitespace-pre-line/
+    );
+    expect(textOf(w.html, 'ledger-print-shop-phone')).toContain('+91 99999 13013');
+    const blank = await ledgerWorld(ledgerRows(), {
+      legalName: ' ',
+      address: '',
+      phone: '  ',
+    });
+    expect(textOf(blank.html, 'ledger-print-shop-name')).toBe('Jaishri Gold Palace Pvt Ltd');
+    expect(blank.html).not.toContain('ledger-print-shop-address');
+    expect(blank.html).not.toContain('ledger-print-shop-phone');
+  });
+
+  it('names the customer, their mobile and the day it was printed (Asia/Kolkata), as text', async () => {
+    const w = await ledgerWorld(ledgerRows(), null);
+    expect(textOf(w.html, 'ledger-print-customer')).toBe('Meera Jain');
+    expect(textOf(w.html, 'ledger-print-mobile')).toBe('9000100001');
+    expect(textOf(w.html, 'ledger-print-asof')).toBe('As of 14/11/2026');
+  });
+
+  it("prints every row of V3 as the server sent it, in its order, with the server's running balances", async () => {
+    const w = await ledgerWorld(ledgerRows(), null);
+    const rows = rowsOf(w.html, 'ledger-print-row');
+    expect(rows).toHaveLength(3);
+    // Date, Type, Description, Reference, Debit, Credit, Balance, Fine In, Fine Out, Fine Balance
+    expect(rows[0]).toEqual([
+      '15/10/2026',
+      'Invoice',
+      'Invoice JV-0021',
+      '',
+      '₹9,000',
+      '—',
+      '₹9,000',
+      '6.000 g',
+      '-',
+      '6.000 g',
+    ]);
+    expect(rows[1].slice(0, 3)).toEqual(['16/10/2026', 'Payment', 'Payment (Cash)']);
+    expect(rows[1].slice(4)).toEqual(['—', '₹2,500', '₹6,500', '-', '-', '6.000 g']);
+    expect(rows[2].slice(4)).toEqual(['—', '—', '₹6,500', '-', '2.500 g', '3.500 g']);
+  });
+
+  it('a long description is printed whole, never cut with an ellipsis', async () => {
+    const long = 'Invoice JV-0021 with a very long note that must not be cut short on the paper';
+    const entries = ledgerRows();
+    entries[0] = { ...entries[0], description: long };
+    const w = await ledgerWorld(entries, null);
+    expect(rowsOf(w.html, 'ledger-print-row')[0][2]).toBe(long);
+    expect(w.html).not.toMatch(/data-testid="ledger-print-row"[\s\S]*?truncate/);
+  });
+
+  it('has the four totals: debit, credit, the balance and the silver balance (the last row of V3)', async () => {
+    const w = await ledgerWorld(ledgerRows(), null);
+    expect(textOf(w.html, 'ledger-print-total-debit')).toBe('₹9,000');
+    expect(textOf(w.html, 'ledger-print-total-credit')).toBe('₹2,500');
+    expect(textOf(w.html, 'ledger-print-total-balance')).toBe('₹6,500');
+    expect(textOf(w.html, 'ledger-print-total-fine-balance')).toBe('3.500 g');
+    // the labels are the words the paper shows
+    const totals = plain(/data-testid="ledger-print-totals"[\s\S]*$/.exec(w.html)?.[0] ?? '');
+    expect(totals).toContain('Total Debit');
+    expect(totals).toContain('Total Credit');
+    expect(totals).toMatch(/Balance\s+₹6,500/);
+    expect(totals).toContain('Silver Fine Balance');
+  });
+
+  it('a customer who holds an advance prints it in words, not as a minus', async () => {
+    const entries: LedgerWireRow[] = [
+      ledgerRow(9, LEDGER_CUSTOMER, {
+        kind: 'Opening advance',
+        kind_rank: 3,
+        description: 'Opening advance (Other)',
+        debit: '0.00',
+        credit: '5000.00',
+        balance: '-5000.00',
+      }),
+    ];
+    const w = await ledgerWorld(entries, null);
+    expect(textOf(w.html, 'ledger-print-total-balance')).toBe('₹5,000 advance');
+  });
+
+  it('a customer with no entries prints the header and a line saying so, with no totals', async () => {
+    const w = await ledgerWorld([], null);
+    expect(textOf(w.html, 'ledger-print-customer')).toBe('Meera Jain');
+    expect(w.html).toContain('data-testid="ledger-print-empty"');
+    expect(w.html).not.toContain('ledger-print-totals');
+  });
+
+  it('a value of the Settings is text on the paper, never markup', async () => {
+    const w = await ledgerWorld(ledgerRows(), { legalName: '<img src=x onerror=alert(1)>' });
+    expect(w.html).not.toContain('<img src=x');
+  });
+});
+
+describe('FB-D1 the print rules of the ledger sheet', () => {
+  it('the sheet flows: no fixed height, no clipping, no position of its own', () => {
+    const rule = printRule('.print-ledger-sheet');
+    expect(declared(rule, 'max-height')).toBe('none');
+    expect(declared(rule, 'min-height')).toBe('0');
+    expect(declared(rule, 'height')).toBe('auto');
+    expect(declared(rule, 'overflow')).toBe('visible');
+    expect(declared(rule, 'position')).toBe('static');
+  });
+
+  it('a row is never cut, the header row comes back on every page, the totals are kept whole and not alone', () => {
+    for (const property of ['break-inside', 'page-break-inside']) {
+      expect(declared(printRule('.print-ledger-sheet tr'), property)).toBe('avoid');
+      expect(declared(printRule('.print-ledger-totals'), property)).toBe('avoid');
+    }
+    expect(declared(printRule('.print-ledger-totals'), 'break-before')).toBe('avoid');
+    expect(declared(printRule('.print-ledger-sheet thead'), 'display')).toBe('table-header-group');
+    // the table itself may be cut between its rows
+    expect(declared(printRule('.print-ledger-sheet table'), 'break-inside')).not.toBe('avoid');
+  });
+
+  it('on paper the card shows its sheet and nothing else; the page around the card is not printed', () => {
+    const rule = printRule('.ledger-card-root > :not(.print-ledger-sheet)');
+    expect(declared(rule, 'display')).toBe('none');
+    const source = readFileSync(
+      path.join(SRC, 'app/customer-ledger/components/CustomerLedgerClient.tsx'),
+      'utf8'
+    );
+    expect(source.match(/print:hidden/g)!.length).toBeGreaterThanOrEqual(2);
+    const detail = readFileSync(
+      path.join(SRC, 'app/customer-ledger/components/CustomerDetail.tsx'),
+      'utf8'
+    );
+    expect(detail).toContain('ledger-card-root');
+  });
+});
+
+// ================================================================================================ FB-D2: the catalogue on paper
+
+describe('FB-D2 the print rules of the stock catalogue sheet', () => {
+  it('the sheet flows like the estimate: no fixed height, no clipping, no position of its own', () => {
+    const rule = printRule('.print-catalogue-sheet');
+    expect(declared(rule, 'max-height')).toBe('none');
+    expect(declared(rule, 'min-height')).toBe('0');
+    expect(declared(rule, 'height')).toBe('auto');
+    expect(declared(rule, 'overflow')).toBe('visible');
+    expect(declared(rule, 'position')).toBe('static');
+  });
+
+  it('a card is never cut, a category name is never left alone at the foot of a page, three cards go across the A4 paper', () => {
+    for (const property of ['break-inside', 'page-break-inside']) {
+      expect(declared(printRule('.print-catalogue-card'), property)).toBe('avoid');
+    }
+    expect(declared(printRule('.print-catalogue-category h3'), 'break-after')).toBe('avoid');
+    expect(declared(printRule('.print-catalogue-grid'), 'grid-template-columns')).toBe(
+      'repeat(3, minmax(0, 1fr))'
+    );
+  });
+
+  it('the screen carries the names the print rules use', () => {
+    const screen = readFileSync(
+      path.join(SRC, 'app/stock-catalogue/components/StockCatalogueClient.tsx'),
+      'utf8'
+    );
+    for (const name of [
+      'print-catalogue-sheet',
+      'print-catalogue-grid',
+      'print-catalogue-card',
+      'print-catalogue-category',
+    ])
+      expect(screen, name).toContain(name);
+    // the controls are not printed
+    expect(screen.match(/print:hidden/g)!.length).toBeGreaterThanOrEqual(2);
   });
 });
