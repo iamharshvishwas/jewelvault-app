@@ -13,6 +13,8 @@ import { e2eLane, e2eLogin, type E2eLogin } from './global-setup';
 //   T-C01  (clause) the browser sends the design's id and its photos' ids and no number, barcode, status or location of its own making
 //   T-D03  (clause) a staff body holds no original weight, and no weight row is made for staff; the owner's weight is kept
 //   X9     a status change and an Archive from the stock screen are one call each, shown after the API has answered; a Sold piece cannot be changed
+//   FB-A4  (Siddhi #11) "Copy previous group" in step 3: the next group is made from the last one, with the same values; the pieces saved are the sum of the groups, each with its own
+//          number; the line above the groups says that Pieces makes that many identical items
 //
 // The four photos are Siddhi's product photos from Client/design/ (960 x 1280). Where that folder is not there, pictures are drawn in the browser.
 // Everything these tests make is taken out of the lane's database again (as root, in the lane's own container).
@@ -759,5 +761,89 @@ test.describe('X9 a status change and an Archive from the stock screen', () => {
       'Sold'
     );
     await expect(piece).toBeVisible();
+  });
+});
+
+// ================================================================================================ FB-A4
+
+test.describe('FB-A4 Copy previous group (Siddhi #11)', () => {
+  test('the button makes group 2 from group 1 with the same values; with group 1 at 10 pieces the design saves 10 + 3 pieces with numbers of their own', async ({
+    page,
+  }) => {
+    test.setTimeout(240_000);
+    const owner = e2eLogin('owner');
+    await open(page, owner, '/add-design');
+    const files = await fourPhotos(page);
+    await page.getByTestId('photo-input').setInputFiles(files.slice(0, 1));
+    await expect(page.getByTestId('photo-tile')).toHaveCount(1, { timeout: 60_000 });
+    await fillDesign(page, {
+      name: `${NAME} copy group`,
+      owner: true,
+      groups: [{ gross: '12.5', net: '11.25', original: '10.125', retail: '353', pieces: '3' }],
+    });
+
+    // the rest of group 1, so that the copy has more than the few fields fillDesign fills
+    const boxes = page.getByTestId('piece-group');
+    const first = boxes.first();
+    await first.getByLabel('Stones (#)').fill('2');
+    await first.getByLabel('Stone Weight (g)').fill('0.3');
+    await first.getByLabel('Piroi (₹)').fill('50');
+    await first.getByLabel(/^Semi-Wholesale Labour/).fill('320');
+    await first.getByLabel(/^Wholesale Labour/).fill('290');
+    await first.getByLabel('Remarks').fill('copied group');
+
+    // one line above the groups says what Pieces does
+    const help = page.getByTestId('pieces-help');
+    await expect(help).toBeVisible();
+    await expect(help).toContainText('Pieces');
+    await expect(help).toContainText('that many identical items');
+
+    await expect(page.getByRole('button', { name: 'Copy previous group' })).toBeVisible();
+    await page.getByRole('button', { name: 'Copy previous group' }).click();
+    await expect(boxes).toHaveCount(2);
+    const second = boxes.nth(1);
+    const same: Array<[string | RegExp, string]> = [
+      ['Pieces with this weight', '3'],
+      ['Gross Weight (g)', '12.5'],
+      [/Original Net Wt/, '10.125'],
+      ['Customer Net Wt (g)', '11.25'],
+      ['Stones (#)', '2'],
+      ['Stone Weight (g)', '0.3'],
+      ['Piroi (₹)', '50'],
+      [/^Retail Labour/, '353'],
+      [/^Semi-Wholesale Labour/, '320'],
+      [/^Wholesale Labour/, '290'],
+      ['Remarks', 'copied group'],
+    ];
+    for (const [label, value] of same) {
+      await expect(second.getByLabel(label)).toHaveValue(value);
+    }
+    // a copy is a group of its own: changing group 2 leaves group 1 as it was
+    await second.getByLabel('Gross Weight (g)').fill('13');
+    await expect(first.getByLabel('Gross Weight (g)')).toHaveValue('12.5');
+    await second.getByLabel('Gross Weight (g)').fill('12.5');
+
+    // group 1 makes 10 pieces, group 2 keeps the 3 it was copied with: 13 pieces
+    await first.getByLabel('Pieces with this weight').fill('10');
+    await expect(page.getByTestId('sku-count-preview')).toContainText('13 pieces will be made');
+    await saveDesign(page).click();
+    await expect(page.getByTestId('created-design-number')).toBeVisible({ timeout: 60_000 });
+
+    const created = page.getByTestId('created-piece');
+    await expect(created).toHaveCount(13);
+    const numbers = await page
+      .locator('[data-testid="created-piece"] > span:first-child')
+      .allTextContents();
+    expect(numbers).toHaveLength(13);
+    expect(new Set(numbers).size).toBe(13);
+
+    // and the server holds 13 pieces with 13 numbers and the copied values (a kind of piece with 3 and one with 10)
+    const [[count, distinct, withValues]] = rows(
+      await laneSql(
+        `SELECT COUNT(*), COUNT(DISTINCT s.sku_no), SUM(s.gross_weight = 12.500 AND s.stones = 2 AND s.piroi = 50.00 AND s.labour_semi = 320.00 AND s.labour_wholesale = 290.00 AND s.notes = 'copied group') ` +
+          `FROM skus s JOIN designs d ON d.id = s.design_id WHERE d.name = '${NAME} copy group'`
+      )
+    );
+    expect([count, distinct, withValues]).toEqual(['13', '13', '13']);
   });
 });
