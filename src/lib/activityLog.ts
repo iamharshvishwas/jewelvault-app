@@ -2,11 +2,13 @@
 // words the owner reads and holds the pages the screen has drawn.
 //
 //   - `describeAudit`: when (India, `14 Nov 2026, 7:05 pm`), who (the user's name, `System` for an actor that is not a known user) and what, in plain words. A login, a logout and a change of
-//     password are `event` rows of the table `users`; a new bill is "New estimate <bill_no>", a receipt is "Payment <amount>", an update of a piece or a design is "Stock edited <number>"; anything
-//     else is "<Action> <table>". The amount is the receipt's own text, written as the rest of the app writes rupees.
+//     password are `event` rows of the table `users`; a new bill is "New estimate <bill_no>" (dues brought forward, `doc_type` opening_balance: "Opening balance <bill_no>"), a receipt is worded by
+//     its `kind` ("Payment <amount>", "Money handed back <amount>", "Silver paid in cash <amount>", "Silver received <grams> g": a refund is never read as a payment), an update of a piece or a
+//     design is "Stock edited <number>"; anything else is "<Action> <table>". The amount is the receipt's own text, written as the rest of the app writes rupees, the grams the receipt's
+//     own text through `formatGrams`.
 //   - `createAuditFeed`: the pages. It reads ONE page when the screen opens and one more for each press of "Load more", never ahead of the person (a shop that has logged 10,000 rows draws 200 until
 //     it is asked for more). A page that fails keeps the rows already drawn and can be asked again.
-import { PricingError, parseRupees } from './pricing';
+import { PricingError, formatGrams, parseGrams, parseRupees } from './pricing';
 import { paiseShown } from './ledgerView';
 import type { AuditPageResponse, AuditRow } from './api/types';
 
@@ -61,6 +63,32 @@ function amountOf(newRow: Record<string, unknown> | null): string {
   }
 }
 
+/** The silver of a settlement row in grams as the app writes them (`2.500 g`), or nothing when the row has none. Whole milligrams, no float maths. */
+function gramsOf(newRow: Record<string, unknown> | null): string {
+  const grams = newRow?.fine_grams;
+  if (typeof grams !== 'string' && typeof grams !== 'number') return '';
+  try {
+    return `${formatGrams(parseGrams(grams))} g`;
+  } catch (error) {
+    if (error instanceof PricingError) return '';
+    throw error;
+  }
+}
+
+/** What a new receipt says, by its kind: money in is a payment, money out is a refund, and a silver settlement is silver (a row with no kind, or one this screen does not know, is a payment). */
+function receiptWords(facts: Record<string, unknown> | null): string {
+  switch (textOf(facts?.kind)) {
+    case 'refund':
+      return joined('Money handed back', amountOf(facts));
+    case 'fine_cash':
+      return joined('Silver paid in cash', amountOf(facts));
+    case 'fine_silver':
+      return joined('Silver received', gramsOf(facts));
+    default:
+      return joined('Payment', amountOf(facts));
+  }
+}
+
 function whatShown(row: AuditRow): string {
   const facts = row.new_row;
   if (row.action === 'event' && row.table_name === 'users') {
@@ -68,10 +96,13 @@ function whatShown(row: AuditRow): string {
     if (named !== undefined) return named;
   }
   if (row.action === 'insert' && row.table_name === 'bills') {
-    return joined('New estimate', textOf(facts?.bill_no));
+    return joined(
+      textOf(facts?.doc_type) === 'opening_balance' ? 'Opening balance' : 'New estimate',
+      textOf(facts?.bill_no)
+    );
   }
   if (row.action === 'insert' && row.table_name === 'receipts') {
-    return joined('Payment', amountOf(facts));
+    return receiptWords(facts);
   }
   if (row.action === 'update' && row.table_name === 'skus') {
     return joined('Stock edited', textOf(facts?.sku_no));

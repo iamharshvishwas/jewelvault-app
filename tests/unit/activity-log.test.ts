@@ -106,6 +106,148 @@ describe('FB-D4 describeAudit: the time in India, the person, the change in plai
     ).toBe('Payment');
   });
 
+  // Wave 2 fix 2 (I1): the words follow the row's kind, so a refund is never read as money coming in
+  it('a refund is "Money handed back", not "Payment": money going out is read as money going out', () => {
+    expect(
+      describeAudit(
+        row({
+          action: 'insert',
+          table_name: 'receipts',
+          new_row: { kind: 'refund', amount: '5000.00', fine_grams: '0.000' },
+        }),
+        users
+      ).what
+    ).toBe('Money handed back ₹5,000');
+    expect(
+      describeAudit(
+        row({
+          action: 'insert',
+          table_name: 'receipts',
+          new_row: { kind: 'refund', amount: '1000.50' },
+        }),
+        users
+      ).what
+    ).toBe('Money handed back ₹1,000.50');
+    // no amount leaves no stray space
+    expect(
+      describeAudit(
+        row({ action: 'insert', table_name: 'receipts', new_row: { kind: 'refund' } }),
+        users
+      ).what
+    ).toBe('Money handed back');
+  });
+
+  it('silver paid in cash is "Silver paid in cash" with the rupees; silver received is "Silver received" with the grams from fine_grams', () => {
+    expect(
+      describeAudit(
+        row({
+          action: 'insert',
+          table_name: 'receipts',
+          new_row: { kind: 'fine_cash', amount: '2500.00', fine_grams: '10.000' },
+        }),
+        users
+      ).what
+    ).toBe('Silver paid in cash ₹2,500');
+    expect(
+      describeAudit(
+        row({
+          action: 'insert',
+          table_name: 'receipts',
+          new_row: { kind: 'fine_silver', amount: '0.00', fine_grams: '2.500' },
+        }),
+        users
+      ).what
+    ).toBe('Silver received 2.500 g');
+    // whole milligrams, no float maths: a long weight keeps every digit, and the smallest one is not lost
+    expect(
+      describeAudit(
+        row({
+          action: 'insert',
+          table_name: 'receipts',
+          new_row: { kind: 'fine_silver', amount: '0.00', fine_grams: '123456.789' },
+        }),
+        users
+      ).what
+    ).toBe('Silver received 123456.789 g');
+    expect(
+      describeAudit(
+        row({
+          action: 'insert',
+          table_name: 'receipts',
+          new_row: { kind: 'fine_silver', amount: '0.00', fine_grams: '0.001' },
+        }),
+        users
+      ).what
+    ).toBe('Silver received 0.001 g');
+    // a silver row with no grams (or ones that cannot be read) is not "Payment ₹0"
+    expect(
+      describeAudit(
+        row({
+          action: 'insert',
+          table_name: 'receipts',
+          new_row: { kind: 'fine_silver', amount: '0.00' },
+        }),
+        users
+      ).what
+    ).toBe('Silver received');
+    expect(
+      describeAudit(
+        row({
+          action: 'insert',
+          table_name: 'receipts',
+          new_row: { kind: 'fine_silver', fine_grams: 'lots' },
+        }),
+        users
+      ).what
+    ).toBe('Silver received');
+  });
+
+  it('a receipt of kind money (or with no kind) is still "Payment" with the amount', () => {
+    expect(
+      describeAudit(
+        row({
+          action: 'insert',
+          table_name: 'receipts',
+          new_row: { kind: 'money', amount: '2500.00' },
+        }),
+        users
+      ).what
+    ).toBe('Payment ₹2,500');
+  });
+
+  it('dues brought forward (doc_type opening_balance) are "Opening balance" with the number; an estimate is still "New estimate"', () => {
+    expect(
+      describeAudit(
+        row({
+          action: 'insert',
+          table_name: 'bills',
+          new_row: { bill_no: 'OB-0001', doc_type: 'opening_balance', grand_total: '7000.00' },
+        }),
+        users
+      ).what
+    ).toBe('Opening balance OB-0001');
+    expect(
+      describeAudit(
+        row({
+          action: 'insert',
+          table_name: 'bills',
+          new_row: { bill_no: 'JV-0022', doc_type: 'estimate' },
+        }),
+        users
+      ).what
+    ).toBe('New estimate JV-0022');
+    expect(
+      describeAudit(
+        row({
+          action: 'insert',
+          table_name: 'bills',
+          new_row: { doc_type: 'opening_balance' },
+        }),
+        users
+      ).what
+    ).toBe('Opening balance');
+  });
+
   it('a change to a piece or a design is "Stock edited" with the piece number or the design number', () => {
     expect(
       describeAudit(
