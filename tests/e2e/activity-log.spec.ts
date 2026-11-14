@@ -3,15 +3,16 @@ import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import { clearLoginCounters } from './clear-counters';
 import { e2eLogin, type E2eLogin } from './global-setup';
+import { PHONE, expectNoSidewaysScroll, expectTappable, shoot } from './phone';
 import { roomInTheMinute } from './pacing';
 
 // FB-D4 (Siddhi #12): the owner's activity log, `/activity-log`, over `GET /v1/audit-log`, in a real browser against the real API of a lane.
 //   the owner signs in and opens it: the first row is `Logged in` by the owner, within the last minute; the changes the database's audit triggers wrote are in plain words (a bill is `New estimate`,
-//   a receipt `Payment`, an update of a piece or a design `Stock edited`) and a person the log does not know is `System`; a log of more than 400 rows draws 200 rows, then 400 after one press of
-//   "Load more", and Load more goes on to the end (Review Focus 5); the biller and the staff get `Not available for your role` and have no menu link to it.
+//   a receipt `Payment`, an update of a piece or a design `Stock edited`) and a person the log does not know is `System`; a log of more than 600 rows draws 200 rows, then 400 after one press of
+//   "Load more", then 600, and the rows are the database's newest 600, none twice and none left out (Review Focus 5); the biller and the staff get `Not available for your role` and have no menu link to it.
 //
-// The audit log is append-only (a trigger stops every UPDATE and DELETE, even the database owner's), so what this file adds to it stays until the lane is torn down: 450 rows of a table of its own
-// (`w18_seed`, 1 to 450) and the few rows the audit triggers write for the fixture below. They are written BEFORE any person signs in, so that the login of the test is the newest row. The
+// The audit log is append-only (a trigger stops every UPDATE and DELETE, even the database owner's), so what this file adds to it stays until the lane is torn down: 650 rows of a table of its own
+// (`w18_seed`, 1 to 650) and the few rows the audit triggers write for the fixture below. They are written BEFORE any person signs in, so that the login of the test is the newest row. The
 // fixture's customer, bill, receipt, piece and design are taken out again (their audit rows stay).
 //
 // Run: E2E=1 LANE=b JV_API_DIR=<checkout of jewelvault-api> npx playwright test tests/e2e/activity-log.spec.ts
@@ -67,8 +68,8 @@ const ids = {
 /** What the audit triggers write for these statements: a bill, a receipt (inserts), a piece and a design (updates), all by "the database" (no actor). */
 function fixtureSql(): string {
   return [
-    // 450 rows of a table of their own, oldest id first: the newest row of the log after them is whatever comes next
-    `INSERT INTO audit_log (actor, actor_role, table_name, row_id, action, new_row) SELECT NULL, 'sql', 'w18_seed', CAST(seq AS CHAR), 'insert', JSON_OBJECT('n', seq) FROM seq_1_to_450;`,
+    // 650 rows of a table of their own, oldest id first: the newest row of the log after them is whatever comes next
+    `INSERT INTO audit_log (actor, actor_role, table_name, row_id, action, new_row) SELECT NULL, 'sql', 'w18_seed', CAST(seq AS CHAR), 'insert', JSON_OBJECT('n', seq) FROM seq_1_to_650;`,
     `INSERT INTO customers (id, name, mobile, customer_type) VALUES ('${ids.customer}', 'W18 Log Customer', '9000180001', 'Retail');`,
     `INSERT INTO designs (id, design_no, name, category_id, material, purity, selling_method) SELECT '${ids.design}', 'W18-D1', 'W18 ring', id, 'Gold', '22K', 'By Weight' FROM categories ORDER BY name LIMIT 1;`,
     `INSERT INTO skus (id, design_id, sku_no, barcode, gross_weight, customer_net_weight, status) VALUES ('${ids.piece}', '${ids.design}', 'W18-S1', 'W18BC1', 12.500, 12.000, 'In Stock');`,
@@ -152,7 +153,7 @@ test.describe("FB-D4: the owner's activity log", () => {
     await expect(page.getByRole('heading', { name: 'Activity Log', level: 1 })).toBeVisible({
       timeout: 60_000,
     });
-    // one page of 200 rows (the log holds more than 450)
+    // one page of 200 rows (the log holds more than 650)
     await expect(rows(page)).toHaveCount(200, { timeout: 60_000 });
     const first = (await cellsOf(page))[0];
     expect(first[1]).toBe(owner.fullName);
@@ -185,30 +186,32 @@ test.describe("FB-D4: the owner's activity log", () => {
     expect(find('Insert customers')?.[1]).toBe('System');
   });
 
-  test('Load more appends the next page: 200 rows, then 400, and on to the end of the log', async ({
+  test("Load more appends the next pages: 200 rows, then 400, then 600, the same rows as the database's newest 600 (none twice, none left out)", async ({
     page,
   }) => {
     await openLog(page, e2eLogin('owner'));
     await expect(rows(page)).toHaveCount(200, { timeout: 60_000 });
+    const idsDrawn = () =>
+      rows(page).evaluateAll((trs) => trs.map((tr) => Number(tr.getAttribute('data-audit-id'))));
+    // the newest row on the page: what is compared is the log as it was when the page was read, whatever other specs add to the append-only log afterwards
+    const newest = (await idsDrawn())[0];
     const more = page.getByTestId('activity-load-more');
     await more.click();
     await expect(rows(page)).toHaveCount(400);
     await expect(page.getByTestId('activity-count')).toHaveText('400 entries shown');
-    // on to the end: the button goes when the server has no more
-    for (let i = 0; i < 20 && (await more.isVisible()); i += 1) {
-      const before = await rows(page).count();
-      await more.click();
-      // a log whose size is a multiple of 200 ends with a page that has no rows: then the button goes and nothing is added
-      await expect
-        .poll(async () => (await rows(page).count()) > before || !(await more.isVisible()))
-        .toBe(true);
-    }
-    await expect(more).toHaveCount(0);
-    // every row of the log is drawn once: the count is the database's (the seed alone is 450 rows)
-    const [[total]] = await laneSql('SELECT COUNT(*) FROM audit_log');
-    const drawn = await rows(page).count();
-    expect(drawn).toBeGreaterThanOrEqual(450);
-    expect(drawn).toBe(Number(total));
+    await more.click();
+    await expect(rows(page)).toHaveCount(600);
+    await expect(page.getByTestId('activity-count')).toHaveText('600 entries shown');
+    // pages 1 to 3 are exactly the newest 600 audit ids of the database at that moment, in order: no row twice, none skipped. (The end of the log is not walked to: the log is append-only,
+    // other specs add to it and the seed-volume tool adds thousands of rows, so its length is not this test's to know; the last page and the end are proved in tests/unit/activity-log.test.ts.)
+    const wanted = (
+      await laneSql(`SELECT id FROM audit_log WHERE id <= ${newest} ORDER BY id DESC LIMIT 600`)
+    ).map(([id]) => Number(id));
+    expect(wanted).toHaveLength(600);
+    const drawn = await idsDrawn();
+    expect(drawn).toEqual(wanted);
+    expect(new Set(drawn).size).toBe(600);
+    await expect(more).toBeVisible(); // a full page: the server says there may be older rows
   });
 
   for (const role of ['biller', 'staff'] as const) {
@@ -236,5 +239,45 @@ test.describe("FB-D4: the owner's activity log", () => {
     await expect(page).toHaveURL(/\/activity-log$/);
     await expect(page.getByRole('heading', { name: 'Activity Log', level: 1 })).toBeVisible();
     await expect(rows(page).first()).toBeVisible({ timeout: 60_000 });
+  });
+});
+
+// FB-D fix: the phone width of the plan, 375 x 812. The log renders, a row is whole inside the screen (the three columns fit without a scroll of their own), Load more takes a real tap and adds the
+// next page, and the page does not scroll sideways.
+test.describe('FB-D fix: the activity log at 375 x 812', () => {
+  test.use({ viewport: PHONE });
+  test.describe.configure({ timeout: 240_000 });
+
+  test('renders 200 rows that fit the screen, Load more is tappable and adds 200, no sideways scroll', async ({
+    page,
+  }) => {
+    const owner = e2eLogin('owner');
+    await openLog(page, owner);
+    await expect(page.getByRole('heading', { name: 'Activity Log', level: 1 })).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(rows(page)).toHaveCount(200, { timeout: 60_000 });
+    const first = rows(page).first();
+    await expect(first).toContainText('Logged in');
+    await expect(first).toContainText(owner.fullName);
+    // the table is not wider than the card that holds it: nothing of a row is hidden behind a sideways scroll
+    const overflow = await page
+      .getByTestId('activity-table')
+      .evaluate(
+        (table) =>
+          (table.parentElement as HTMLElement).scrollWidth -
+          (table.parentElement as HTMLElement).clientWidth
+      );
+    expect(overflow, 'the table scrolls inside its card by this many pixels').toBeLessThanOrEqual(
+      0
+    );
+    const more = page.getByTestId('activity-load-more');
+    await expectTappable(more);
+    await more.click();
+    await expect(rows(page)).toHaveCount(400);
+    await expectNoSidewaysScroll(page);
+    await rows(page).first().scrollIntoViewIfNeeded();
+    await page.evaluate(() => document.querySelector('main')?.scrollTo(0, 0));
+    await shoot(page, 'activity-log');
   });
 });

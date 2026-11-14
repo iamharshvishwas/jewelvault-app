@@ -16,9 +16,10 @@ import { getSettings } from '@/lib/settingsStore';
 // screen reads ONE page of 200 rows from `GET /v1/audit-log` when it opens and one more for each press of "Load more": a shop whose log has 10,000 rows draws 200 until it is asked for more.
 // Nothing is changed or deleted here; the API gives the log to the owner alone.
 
-const Row = React.memo(function Row({ line }: { line: AuditLine }) {
+const Row = React.memo(function Row({ id, line }: { id: number; line: AuditLine }) {
   return (
-    <tr data-testid="activity-row" className="table-row-hover">
+    // the id of the audit row (the server's own) is on the row so that a test can tell that no row was drawn twice or left out
+    <tr data-testid="activity-row" data-audit-id={id} className="table-row-hover">
       <td className="px-3 py-2.5 whitespace-nowrap text-muted-foreground">{line.when}</td>
       <td className="px-3 py-2.5 font-semibold text-foreground whitespace-nowrap">{line.who}</td>
       <td className="px-3 py-2.5 text-foreground">{line.what}</td>
@@ -80,7 +81,7 @@ export function ActivityLogView({
               </thead>
               <tbody className="divide-y divide-border">
                 {lines.map((one) => (
-                  <Row key={one.id} line={one.line} />
+                  <Row key={one.id} id={one.id} line={one.line} />
                 ))}
               </tbody>
             </table>

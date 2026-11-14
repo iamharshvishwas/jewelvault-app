@@ -13,6 +13,9 @@ import { OVERDUE_DAYS } from '@/lib/selectors';
 // Asia/Kolkata calendar (src/lib/selectors.ts `overdueCustomers`: opening-balance dues count, a cancelled bill does not, the walk-in is never listed). Each name opens that customer's ledger. The
 // oldest first, the ten oldest shown; the screen is drawn again when the bills or customers change and when the day changes.
 
+/** On a phone (under 640 px) the card keeps the name, the amount and the days: the mobile and the date of the oldest bill have no room, and are on the customer's ledger one tap away. */
+const PHONE_HIDDEN: ReadonlySet<string> = new Set(['Mobile', 'Oldest pending bill']);
+
 /** How many customers the card lists; the owner has the whole list in Reports > Payments (Download outstanding list). */
 const SHOWN = 10;
 
@@ -49,7 +52,7 @@ export default function DashboardOverduePanel() {
                 {['Customer', 'Mobile', 'Pending', 'Oldest pending bill', 'Days'].map((heading) => (
                   <th
                     key={heading}
-                    className="px-3 py-2 text-left font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap"
+                    className={`px-3 py-2 text-left font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap ${PHONE_HIDDEN.has(heading) ? 'hidden sm:table-cell' : ''}`}
                   >
                     {heading}
                   </th>
@@ -68,13 +71,13 @@ export default function DashboardOverduePanel() {
                       {row.name || 'Unknown customer'}
                     </Link>
                   </td>
-                  <td className="px-3 py-2.5 font-mono text-muted-foreground">
+                  <td className="hidden px-3 py-2.5 font-mono text-muted-foreground sm:table-cell">
                     {row.mobile || '-'}
                   </td>
                   <td className="px-3 py-2.5 font-tabular font-bold text-amber-700 whitespace-nowrap">
                     {paiseShown(Number(row.pendingPaise))}
                   </td>
-                  <td className="px-3 py-2.5 whitespace-nowrap">
+                  <td className="hidden px-3 py-2.5 whitespace-nowrap sm:table-cell">
                     {dayLabel(row.oldestPendingBillDate)}
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">

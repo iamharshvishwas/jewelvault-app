@@ -5,6 +5,7 @@ import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { clearLoginCounters } from './clear-counters';
 import { e2eLane, e2eLogin, type E2eLogin } from './global-setup';
+import { PHONE, expectNoSidewaysScroll, expectTappable, shoot } from './phone';
 import { roomInTheMinute } from './pacing';
 import { countIn, readPdf } from './pdf-text';
 
@@ -296,4 +297,33 @@ test.describe('FB-D2: the ready-stock catalogue by category as a PDF', () => {
       ).toBeVisible();
     });
   }
+});
+
+// FB-D fix: the phone width of the plan, 375 x 812. The screen renders, the category chip and Print / Save PDF take a tap, the cards are whole inside the screen and the page does not scroll sideways.
+test.describe('FB-D fix: the catalogue at 375 x 812', () => {
+  test.use({ viewport: PHONE });
+  test.describe.configure({ timeout: 180_000 });
+
+  test('renders, the chips and Print / Save PDF are tappable, the photo is whole inside the screen, no sideways scroll', async ({
+    page,
+  }) => {
+    await openCatalogue(page, e2eLogin('owner'));
+    await expect(card(page, 'W16-R1')).toBeVisible();
+    const chip = page.getByTestId('catalogue-category').filter({ hasText: /^Ring$/ });
+    await expectTappable(chip);
+    await chip.click(); // a real tap, not only a trial
+    await expect(card(page, 'W16-C1')).toHaveCount(0);
+    const ring = card(page, 'W16-R1');
+    await ring.scrollIntoViewIfNeeded();
+    const box = (await ring.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(PHONE.width);
+    const image = ring.locator('img');
+    await expect
+      .poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0))
+      .toBe(true);
+    await expectTappable(page.getByRole('button', { name: 'Print / Save PDF' }));
+    await expectNoSidewaysScroll(page);
+    await shoot(page, 'stock-catalogue');
+  });
 });

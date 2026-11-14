@@ -217,7 +217,8 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
   return (
     <div className="ledger-card-root space-y-4 fade-in">
       <div className="jewel-card p-5">
-        <div className="flex items-start justify-between mb-4">
+        {/* on a phone the buttons go under the name, in rows that wrap (beside it they squeezed the name into three lines) */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-lg font-bold text-primary">
               {customer.name.charAt(0)}
@@ -247,7 +248,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
               )}
             </div>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             <button onClick={() => setShowPaymentPanel((p) => !p)} className="btn-primary py-2">
               <CreditCard size={14} />
               Receive Payment

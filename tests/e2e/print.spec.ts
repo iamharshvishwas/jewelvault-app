@@ -6,6 +6,7 @@ import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { clearLoginCounters } from './clear-counters';
 import { e2eLogin, type E2eLogin } from './global-setup';
+import { PHONE, expectNoSidewaysScroll, expectTappable, shoot } from './phone';
 import { roomInTheMinute } from './pacing';
 import { countIn, readPdf, squash, type PdfPage } from './pdf-text';
 
@@ -1121,3 +1122,36 @@ test.describe('FB-D1: a customer ledger prints (or is saved) as a PDF', () => {
 /** The header row of the ledger sheet: a line that starts with Date and Type. */
 const hasLedgerHeader = (one: PdfPage) =>
   one.lines.some((line) => squash(line).toUpperCase().startsWith('DATETYPE'));
+
+// FB-D fix: the phone width of the plan, 375 x 812. A customer's card opens, Print / Save PDF and the buttons beside it are whole inside the screen and take a tap (the tap calls the browser's
+// print), and the page does not scroll sideways.
+test.describe('FB-D fix: the customer ledger and its Print / Save PDF at 375 x 812', () => {
+  test.use({ viewport: PHONE });
+  test.describe.configure({ timeout: 240_000 });
+
+  test('the card and its buttons fit the phone, Print / Save PDF takes a tap, no sideways scroll', async ({
+    page,
+  }) => {
+    await openLedger(page, e2eLogin('owner'), LEDGERS[1]);
+    await page.evaluate(() => {
+      const mine = window as unknown as { __printCalls: number };
+      mine.__printCalls = 0;
+      window.print = () => {
+        mine.__printCalls += 1;
+      };
+    });
+    const print = page.getByRole('button', { name: 'Print / Save PDF' });
+    for (const name of ['Receive Payment', 'Hand Money Back', 'Opening Balance']) {
+      await expectTappable(page.getByRole('button', { name, exact: true }));
+    }
+    await expectTappable(print);
+    await expectNoSidewaysScroll(page);
+    await page.evaluate(() => document.querySelector('main')?.scrollTo(0, 0));
+    await page.getByRole('heading', { name: LEDGERS[1].name, level: 2 }).scrollIntoViewIfNeeded();
+    await shoot(page, 'ledger-card');
+    await print.click();
+    expect(
+      await page.evaluate(() => (window as unknown as { __printCalls: number }).__printCalls)
+    ).toBe(1);
+  });
+});

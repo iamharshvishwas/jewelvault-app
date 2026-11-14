@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { expect, test, type Page } from '@playwright/test';
 import { clearLoginCounters } from './clear-counters';
 import { e2eLane, e2eLogin, type E2eLogin } from './global-setup';
+import { PHONE, expectNoSidewaysScroll, expectTappable, shoot } from './phone';
 import { roomInTheMinute } from './pacing';
 
 // WEB12 (T-B15 E2E half; spec C14, V5, V4, I11, I12): the dashboard, the reports, the customer card and the three evening figures take their figures from the same selectors over the derived
@@ -1042,5 +1043,48 @@ test.describe('FB-D3: the payment-pending alert and the outstanding list', () =>
     ]) {
       expect(await db.outstandingOf(name), name).toBe(outstanding);
     }
+  });
+});
+
+// FB-D fix: the phone width of the plan, 375 x 812. The card "Payment pending over 60 days" renders on the dashboard, each row is whole inside the screen (the five columns fit without a scroll of
+// their own), a customer's name takes a real tap and opens that ledger, and the page does not scroll sideways.
+test.describe('FB-D fix: the 60-day card at 375 x 812', () => {
+  test.use({ viewport: PHONE });
+  test.describe.configure({ timeout: 240_000 });
+
+  test('renders, no scroll of its own, the name is tappable and opens the ledger', async ({
+    page,
+  }) => {
+    await laneSql(overdueFixtureSql());
+    await open(page, e2eLogin('owner'));
+    const card = page.getByTestId('overdue-panel');
+    await expect(card.getByTestId('overdue-row').first()).toBeVisible({ timeout: 60_000 });
+    await card.scrollIntoViewIfNeeded();
+    await expect(card).toContainText('Payment pending over 60 days');
+    const box = (await card.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(PHONE.width);
+    // the table is not wider than its card: the amount and the days are on the screen, not behind a sideways scroll
+    const overflow = await card
+      .locator('table')
+      .evaluate(
+        (table) =>
+          (table.parentElement as HTMLElement).scrollWidth -
+          (table.parentElement as HTMLElement).clientWidth
+      );
+    expect(overflow, 'the table scrolls inside its card by this many pixels').toBeLessThanOrEqual(
+      0
+    );
+    const row = card.getByTestId('overdue-row').filter({ hasText: 'W17 Part Paid' });
+    await expect(row).toContainText('₹600');
+    await expect(row).toContainText('61 days');
+    const link = row.getByTestId('overdue-customer');
+    await expectTappable(link);
+    await expectNoSidewaysScroll(page);
+    await shoot(page, 'overdue-card');
+    await link.click();
+    await expect(page.getByRole('heading', { name: 'W17 Part Paid', level: 2 })).toBeVisible({
+      timeout: 60_000,
+    });
   });
 });

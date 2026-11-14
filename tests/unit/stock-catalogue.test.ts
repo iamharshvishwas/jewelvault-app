@@ -170,10 +170,31 @@ describe('FB-D2 catalogueRows: which designs, in which order', () => {
     expect(chain).toMatchObject({ inStock: 1, grossMinMg: 20125, grossMaxMg: 20125 });
   });
 
-  it('weights are whole milligrams, never a float: 20.125 g is 20125 mg and 0.1 + 0.2 g is 300 mg', () => {
-    const rows = catalogueRows([design('RING-00010', 'Ring', [['In Stock', 0.1 + 0.2]])], ['Ring']);
-    expect(rows[0].grossMinMg).toBe(300);
-    expect(Number.isInteger(rows[0].grossMaxMg)).toBe(true);
+  it('weights are whole milligrams read exactly from the weight, never rounded from a float: 1.001, 1.005, 1.007 and 1.013 g are 1001, 1005, 1007 and 1013 mg', () => {
+    // in floating point 1.005 * 1000 is 1004.9999999999999 (and 1.001, 1.007, 1.013 fall just short of a whole number too): the range is of the digits, not of that product
+    for (const grams of [1.001, 1.005, 1.007, 1.013])
+      expect(grams * 1000).not.toBe(Math.round(grams * 1000));
+    const rows = catalogueRows(
+      [
+        design('RING-00010', 'Ring', [
+          ['In Stock', 1.007],
+          ['In Stock', 1.013],
+          ['In Stock', 1.001],
+          ['In Stock', 1.005],
+        ]),
+        design('RING-00011', 'Ring', [['In Stock', 1.005]]),
+      ],
+      ['Ring']
+    );
+    expect(rows[0]).toMatchObject({ inStock: 4, grossMinMg: 1001, grossMaxMg: 1013 });
+    expect(rows[1]).toMatchObject({ inStock: 1, grossMinMg: 1005, grossMaxMg: 1005 });
+    expect(rows.flatMap((r) => [r.grossMinMg, r.grossMaxMg]).every(Number.isInteger)).toBe(true);
+  });
+
+  it('a weight that is float noise (0.1 + 0.2) is refused, not rounded: a weight the database could have sent has at most 3 decimals', () => {
+    expect(() =>
+      catalogueRows([design('RING-00012', 'Ring', [['In Stock', 0.1 + 0.2]])], ['Ring'])
+    ).toThrow(/more than 3 decimals/);
   });
 
   it('the photo is the first photo of the design; the placeholder is no photo (null)', () => {
