@@ -9,7 +9,11 @@ import { e2eLogin, type E2eLogin } from './global-setup';
 //     Sold piece is in the Workshop is not "In Stock in the Workshop"); a design whose pieces are all Sold is under Sold and not under In Stock;
 //   - the search box finds a design by number, name, piece number and barcode, in any case; the weight range is the gross weight of a piece, both ends included;
 //   - nothing passing the filter says "No design matches these filters" (and not "No designs yet"), with a button that clears them;
-//   - a change of the filter takes the grid back to page 1; the table view shows the same designs as the grid.
+//   - a change of the filter takes the grid back to page 1; the table view shows the same designs as the grid;
+//   - the sort box orders the designs, in the grid and in the table, and the order does not move when a filter takes designs out of it (newest and oldest are the design's created_at,
+//     the weight is the gross weight of all its pieces added up);
+//   - the grid/table switch in the header and the one above the grid are one switch;
+//   - under 1024 px wide (375 and 768 tested) a "Filters" button opens the same panel, with the same ticks, and says how many are set; from 1024 px up the panel is always there.
 //
 // The designs and pieces are made directly in the lane's database as root (poll.spec.ts and stock-edit.spec.ts do the same) and taken out again after the tests. Their numbers all start
 // with INVF-, and the tests that count exactly type that into the search box first, so a lane that holds other stock does not change the answers.
@@ -31,7 +35,8 @@ async function openInventory(page: Page, who: E2eLogin) {
   await page.getByLabel('Password').fill(who.password);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(aside(page)).toContainText(who.fullName, { timeout: 60_000 });
-  await expect(page.getByLabel('Search designs and SKUs')).toBeVisible();
+  // the line under the title is on every screen size; the panel itself is hidden under 1024 px
+  await expect(headerLine(page)).toBeVisible();
 }
 
 /** "N designs · M SKUs · K in stock", the line under the title. */
@@ -188,7 +193,7 @@ test.describe.serial('the filter panel of the inventory', () => {
 
     await openInventory(page, owner);
     await expect(headerLine(page)).toHaveText(line(all.d, all.s, all.i));
-    await expect(toolbarCount(page)).toHaveText(`${all.d} design${all.d === 1 ? '' : 's'}`);
+    await expect(toolbarCount(page)).toHaveText(`${all.d} designs`);
     await expect(clearButton(page)).toHaveCount(0);
 
     await option(page, 'Gold').check();
@@ -199,7 +204,7 @@ test.describe.serial('the filter panel of the inventory', () => {
     await clearButton(page).click();
     await expect(option(page, 'Gold')).not.toBeChecked();
     await expect(headerLine(page)).toHaveText(line(all.d, all.s, all.i));
-    await expect(toolbarCount(page)).toHaveText(`${all.d} design${all.d === 1 ? '' : 's'}`);
+    await expect(toolbarCount(page)).toHaveText(`${all.d} designs`);
     await expect(clearButton(page)).toHaveCount(0);
   });
 
@@ -319,5 +324,259 @@ test.describe.serial('the filter panel of the inventory', () => {
     await expect
       .poll(async () => (await shownNumbers(page)).sort())
       .toEqual(['INVF-S01', 'INVF-S02']);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ the sort box, the two switches, small screens
+
+/** The same stock, with a created_at of its own for each design (a day each, not in the order of the numbers), and G05 moved to the second category. */
+const DAYS: Record<string, number> = {
+  'INVF-G01': 5,
+  'INVF-G02': 3,
+  'INVF-G03': 9,
+  'INVF-G04': 1,
+  'INVF-G05': 7,
+  'INVF-G06': 2,
+  'INVF-G07': 8,
+  'INVF-G08': 4,
+  'INVF-G09': 6,
+  'INVF-G10': 10,
+  'INVF-S01': 0,
+  'INVF-S02': 11,
+};
+const NEWEST = Object.keys(DAYS).sort((a, b) => DAYS[b] - DAYS[a]);
+const BY_NUMBER = Object.keys(DAYS).sort();
+// weights of all the pieces together: G01 to G09 are 11 to 19 g, G10 is 5 + 30, S01 is 20, S02 is 50
+const BY_WEIGHT = [
+  'INVF-S02',
+  'INVF-G10',
+  'INVF-S01',
+  'INVF-G09',
+  'INVF-G08',
+  'INVF-G07',
+  'INVF-G06',
+  'INVF-G05',
+  'INVF-G04',
+  'INVF-G03',
+  'INVF-G02',
+  'INVF-G01',
+];
+
+async function makeDatedStock() {
+  await makeStock();
+  const dates = Object.entries(DAYS)
+    .map(
+      ([no, day]) =>
+        `UPDATE designs SET created_at = TIMESTAMP('2026-09-01 10:00:00') + INTERVAL ${day} DAY WHERE design_no = '${no}';`
+    )
+    .join(' ');
+  await laneSql(
+    dates +
+      ` UPDATE designs SET category_id = (SELECT id FROM categories ORDER BY name LIMIT 1 OFFSET 1) WHERE design_no = 'INVF-G05';`
+  );
+}
+
+const sortBox = (page: Page) => page.getByRole('combobox').first();
+const headerGrid = (page: Page) => page.getByRole('button', { name: 'Grid view' });
+const headerTable = (page: Page) => page.getByRole('button', { name: 'Table view' });
+const toolbarGrid = (page: Page) => page.getByRole('button', { name: 'Show as grid' });
+const toolbarTable = (page: Page) => page.getByRole('button', { name: 'Show as table' });
+
+/** Every design number of the filtered list, page 1 then page 2, in the order shown. */
+async function allPages(page: Page): Promise<string[]> {
+  const first = await shownNumbers(page);
+  const next = page.getByRole('button', { name: '2', exact: true });
+  if ((await next.count()) === 0) return first;
+  await next.click();
+  await expect(page.getByText(/^Showing 9/)).toBeVisible();
+  const second = await shownNumbers(page);
+  await page.getByRole('button', { name: '1', exact: true }).click();
+  await expect(page.getByText(/^Showing 1–8/)).toBeVisible();
+  return [...first, ...second];
+}
+
+test.describe.serial('the sort box', () => {
+  test.beforeAll(makeDatedStock);
+  test.afterAll(cleanStock);
+
+  test('orders the designs in the grid and in the table, by created_at, number, category and total gross weight', async ({
+    page,
+  }) => {
+    await openInventory(page, owner);
+    await search(page).fill('INVF-');
+    await expect(headerLine(page)).toHaveText(line(12, 13, 11));
+
+    // the box opens on Newest First, and the grid shows it
+    await expect(sortBox(page)).toHaveValue('sort-newest');
+    await expect.poll(() => allPages(page)).toEqual(NEWEST);
+
+    await sortBox(page).selectOption('sort-oldest');
+    await expect.poll(() => allPages(page)).toEqual([...NEWEST].reverse());
+
+    await sortBox(page).selectOption('sort-design');
+    await expect.poll(() => allPages(page)).toEqual(BY_NUMBER);
+
+    // category: the first category (G01 to G10 but G05, by number), then the second (G05, S01, S02)
+    await sortBox(page).selectOption('sort-category');
+    await expect
+      .poll(() => allPages(page))
+      .toEqual([
+        ...BY_NUMBER.filter((n) => n !== 'INVF-G05' && n.startsWith('INVF-G')),
+        'INVF-G05',
+        'INVF-S01',
+        'INVF-S02',
+      ]);
+
+    await sortBox(page).selectOption('sort-weight');
+    await expect.poll(() => allPages(page)).toEqual(BY_WEIGHT);
+
+    // the table is the same order as the grid
+    await page.getByRole('button', { name: 'Show as table' }).click();
+    await expect.poll(() => allPages(page)).toEqual(BY_WEIGHT);
+    await sortBox(page).selectOption('sort-newest');
+    await expect.poll(() => allPages(page)).toEqual(NEWEST);
+  });
+
+  test('a change of the order goes back to page 1, and a filter takes designs out of the order without moving the others', async ({
+    page,
+  }) => {
+    await openInventory(page, owner);
+    await search(page).fill('INVF-');
+    await sortBox(page).selectOption('sort-weight');
+    await page.getByRole('button', { name: '2', exact: true }).click();
+    await expect(page.getByText('Showing 9–12 of 12')).toBeVisible();
+    await sortBox(page).selectOption('sort-oldest');
+    await expect(page.getByText('Showing 1–8 of 12')).toBeVisible();
+
+    // Silver takes out the gold designs: the two that are left keep their place in the order (oldest first: S01, S02)
+    await option(page, 'Silver').check();
+    await expect.poll(() => shownNumbers(page)).toEqual(['INVF-S01', 'INVF-S02']);
+    await sortBox(page).selectOption('sort-weight');
+    await expect.poll(() => shownNumbers(page)).toEqual(['INVF-S02', 'INVF-S01']);
+    await option(page, 'Silver').uncheck();
+    await expect.poll(() => allPages(page)).toEqual(BY_WEIGHT);
+  });
+});
+
+test.describe.serial('the grid/table switch', () => {
+  test.beforeAll(makeStock);
+  test.afterAll(cleanStock);
+
+  test('the switch in the header and the one above the grid are one switch, and the screen opens on the grid again after it is left', async ({
+    page,
+  }) => {
+    await openInventory(page, owner);
+    await search(page).fill('INVF-');
+    const pressed = async (grid: boolean) => {
+      for (const button of [headerGrid(page), toolbarGrid(page)])
+        await expect(button).toHaveAttribute('aria-pressed', String(grid));
+      for (const button of [headerTable(page), toolbarTable(page)])
+        await expect(button).toHaveAttribute('aria-pressed', String(!grid));
+    };
+    await pressed(true);
+    await expect(page.locator('tbody tr')).toHaveCount(0);
+
+    await headerTable(page).click(); // the header's own button
+    await pressed(false);
+    await expect(page.locator('tbody tr')).toHaveCount(8);
+
+    await toolbarGrid(page).click(); // the one above the grid
+    await pressed(true);
+    await expect(page.locator('tbody tr')).toHaveCount(0);
+    expect(await shownNumbers(page)).toHaveLength(8);
+
+    await toolbarTable(page).click();
+    await pressed(false);
+    await headerGrid(page).click();
+    await pressed(true);
+
+    // away and back, without a reload: the grid again
+    await headerTable(page).click();
+    await aside(page).getByRole('link', { name: 'Dashboard' }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(headerLine(page)).toHaveCount(0);
+    const designs = aside(page).getByRole('link', { name: 'Designs' });
+    if (!(await designs.isVisible()))
+      await aside(page).getByRole('button', { name: 'Inventory' }).click();
+    await designs.click();
+    await expect(headerLine(page)).toBeVisible();
+    await pressed(true);
+  });
+});
+
+test.describe.serial('small screens', () => {
+  test.beforeAll(makeStock);
+  test.afterAll(cleanStock);
+
+  for (const [name, width, height] of [
+    ['a phone, 375 px', 375, 812],
+    ['a tablet, 768 px', 768, 1024],
+  ] as const) {
+    test(`on ${name} a Filters button opens the same panel, with the same ticks and a count`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height });
+      await openInventory(page, owner);
+      const button = page.getByRole('button', { name: /^Filters/ });
+
+      // closed: the button, no panel
+      await expect(button).toBeVisible();
+      await expect(button).toHaveAttribute('aria-expanded', 'false');
+      await expect(button).toHaveText('Filters');
+      await expect(search(page)).toBeHidden();
+      await expect(option(page, 'Gold')).toBeHidden();
+
+      // open: the panel is on the screen, not wider than it
+      await button.click();
+      await expect(button).toHaveAttribute('aria-expanded', 'true');
+      await expect(search(page)).toBeVisible();
+      const box = await page
+        .getByRole('complementary')
+        .filter({ has: search(page) })
+        .boundingBox();
+      expect(box, 'the panel has a box').not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+
+      // the same state as the big panel: a tick changes the count, the search and the weight work
+      await search(page).fill('INVF-');
+      await expect(headerLine(page)).toHaveText(line(12, 13, 11));
+      await option(page, 'Gold').check();
+      await expect(headerLine(page)).toHaveText(line(10, 11, 10));
+      await expect(button).toHaveText('Filters (2)'); // the tick and the search
+      await page.getByLabel('Minimum gross weight in grams').fill('25');
+      await expect(headerLine(page)).toHaveText(line(1, 2, 1)); // G10 (its 30 g piece)
+      await expect(button).toHaveText('Filters (3)');
+
+      // closed again: the panel goes, the filter stays, and so does the count on the button
+      await button.click();
+      await expect(search(page)).toBeHidden();
+      await expect(button).toHaveText('Filters (3)');
+      await expect(headerLine(page)).toHaveText(line(1, 2, 1));
+      expect(await shownNumbers(page)).toEqual(['INVF-G10']);
+
+      // the page does not scroll sideways: every design card is inside the screen
+      const cards = page.locator('div.jewel-card p.font-mono');
+      const right = await cards.evaluateAll((els) =>
+        Math.max(...els.map((e) => e.getBoundingClientRect().right))
+      );
+      expect(right).toBeLessThanOrEqual(width);
+
+      // open and clear: everything is back
+      await button.click();
+      await clearButton(page).click();
+      await expect(button).toHaveText('Filters');
+      await expect(search(page)).toHaveValue('');
+    });
+  }
+
+  test('from 1024 px up there is no Filters button and the panel is always there', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await openInventory(page, owner);
+    await expect(page.getByRole('button', { name: /^Filters/ })).toBeHidden();
+    await expect(search(page)).toBeVisible();
+    await expect(option(page, 'Gold')).toBeVisible();
   });
 });

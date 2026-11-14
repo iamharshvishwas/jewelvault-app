@@ -5,6 +5,8 @@ import AppImage from '@/components/ui/AppImage';
 import { getDesigns, removeDesign, removeDesigns } from '@/lib/designStore';
 import { filterDesigns } from '@/lib/inventoryFilter';
 import { clearInventoryFilter, useInventoryFilter } from '@/lib/inventoryFilterStore';
+import { SORT_OPTIONS, sortDesigns, type SortId } from '@/lib/inventorySort';
+import { resetInventoryView, setInventoryView, useInventoryView } from '@/lib/inventoryViewStore';
 import StatusBadge from '@/components/ui/StatusBadge';
 import MaterialBadge from '@/components/ui/MaterialBadge';
 import InventoryTable from './InventoryTable';
@@ -25,14 +27,6 @@ import {
 } from 'lucide-react';
 import { useSession } from '@/lib/authStore';
 import type { SkuStatus, Design } from '@/lib/mockData';
-
-const SORT_OPTIONS = [
-  { id: 'sort-newest', label: 'Newest First' },
-  { id: 'sort-oldest', label: 'Oldest First' },
-  { id: 'sort-design', label: 'Design Number' },
-  { id: 'sort-category', label: 'Category' },
-  { id: 'sort-weight', label: 'Weight (High–Low)' },
-];
 
 // ─── Delete Confirmation Modal ────────────────────────────────────────────────
 
@@ -123,15 +117,18 @@ function DeleteConfirmModal({
 export default function InventoryGrid() {
   const filter = useInventoryFilter();
   const [designs, setDesigns] = useState<Design[]>([]);
-  const [view, setView] = useState<'grid' | 'table'>('grid');
+  const view = useInventoryView();
   const [chosenIds, setChosenIds] = useState<Set<string>>(new Set());
-  const [sort, setSort] = useState('sort-newest');
-  // the page belongs to the filter it was chosen under: a change of filter is a new object, and the page is 1 again
-  const [pageAt, setPageAt] = useState({ filter, page: 1 });
+  const [sort, setSort] = useState<SortId>('sort-newest');
+  // the page belongs to the filter and the order it was chosen under: a change of either is a new value, and the page is 1 again
+  const [pageAt, setPageAt] = useState({ filter, sort, page: 1 });
   const [deleteTarget, setDeleteTarget] = useState<Design | null>(null);
   const { role } = useSession();
   const perPage = 8;
   const isAdmin = role === 'owner';
+
+  // the screen opens on the grid each time (the switch is shared with the header, which is a sibling of this component)
+  useEffect(() => resetInventoryView, []);
 
   // Sync from store on mount and on window focus (so new designs from Add Design appear)
   useEffect(() => {
@@ -146,12 +143,18 @@ export default function InventoryGrid() {
     };
   }, []);
 
-  // the designs the panel lets through; the grid, the table, the count and the pages are all made from these
-  const shown = useMemo(() => filterDesigns(designs, filter), [designs, filter]);
+  // the designs the panel lets through, in the order of the sort box; the grid, the table, the count and the pages are all made from these
+  const shown = useMemo(
+    () => sortDesigns(filterDesigns(designs, filter), sort),
+    [designs, filter, sort]
+  );
   const total = shown.length;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
-  const page = Math.min(pageAt.filter === filter ? pageAt.page : 1, totalPages);
-  const setPage = (next: number) => setPageAt({ filter, page: next });
+  const page = Math.min(
+    pageAt.filter === filter && pageAt.sort === sort ? pageAt.page : 1,
+    totalPages
+  );
+  const setPage = (next: number) => setPageAt({ filter, sort, page: next });
   const paginated = shown.slice((page - 1) * perPage, page * perPage);
 
   // a design the filter hides is not selected for a bulk action (it stays chosen, and is selected again when the filter lets it back in)
@@ -236,7 +239,7 @@ export default function InventoryGrid() {
         <div className="flex items-center gap-2">
           <select
             value={sort}
-            onChange={(e) => setSort(e.target.value)}
+            onChange={(e) => setSort(e.target.value as SortId)}
             className="input-field text-xs py-1.5 w-44"
           >
             {SORT_OPTIONS.map((o) => (
@@ -245,22 +248,23 @@ export default function InventoryGrid() {
               </option>
             ))}
           </select>
-          <span className="text-xs text-muted-foreground whitespace-nowrap">
-            {total} design{total !== 1 ? 's' : ''}
-          </span>
+          {/* always "designs", also for one: tests/e2e/hidden-and-download.spec.ts looks for /\d+ designs/ here */}
+          <span className="text-xs text-muted-foreground whitespace-nowrap">{total} designs</span>
         </div>
 
         <div className="flex items-center bg-muted rounded-lg p-1">
           <button
-            onClick={() => setView('grid')}
+            onClick={() => setInventoryView('grid')}
             aria-label="Show as grid"
+            aria-pressed={view === 'grid'}
             className={`p-1.5 rounded-md transition-colors ${view === 'grid' ? 'bg-card shadow-sm text-primary' : 'text-muted-foreground'}`}
           >
             <Grid size={15} />
           </button>
           <button
-            onClick={() => setView('table')}
+            onClick={() => setInventoryView('table')}
             aria-label="Show as table"
+            aria-pressed={view === 'table'}
             className={`p-1.5 rounded-md transition-colors ${view === 'table' ? 'bg-card shadow-sm text-primary' : 'text-muted-foreground'}`}
           >
             <List size={15} />

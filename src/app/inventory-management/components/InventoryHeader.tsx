@@ -15,13 +15,15 @@ import {
 import { getDesigns } from '@/lib/designStore';
 import { filterDesigns, inventoryStats } from '@/lib/inventoryFilter';
 import { useInventoryFilter } from '@/lib/inventoryFilterStore';
+import { setInventoryView, useInventoryView } from '@/lib/inventoryViewStore';
 import type { Design } from '@/lib/mockData';
 import { downloadCsv, downloadExcel, printPdf, type ExportRow } from '@/lib/exportUtils';
 import { inventoryExportRows } from '@/lib/inventoryExport';
 import { useSession } from '@/lib/authStore';
 
 export default function InventoryHeader() {
-  const [view, setView] = useState<'grid' | 'table'>('grid');
+  // the same switch as the one above the grid
+  const view = useInventoryView();
   const filter = useInventoryFilter();
   const [allDesigns, setAllDesigns] = useState<Design[]>([]);
   const { role } = useSession();
@@ -64,16 +66,18 @@ export default function InventoryHeader() {
         {/* View Toggle */}
         <div className="flex items-center bg-muted rounded-lg p-1">
           <button
-            onClick={() => setView('grid')}
+            onClick={() => setInventoryView('grid')}
             className={`p-1.5 rounded-md transition-colors ${view === 'grid' ? 'bg-card shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'}`}
             aria-label="Grid view"
+            aria-pressed={view === 'grid'}
           >
             <Grid size={16} />
           </button>
           <button
-            onClick={() => setView('table')}
+            onClick={() => setInventoryView('table')}
             className={`p-1.5 rounded-md transition-colors ${view === 'table' ? 'bg-card shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'}`}
             aria-label="Table view"
+            aria-pressed={view === 'table'}
           >
             <List size={16} />
           </button>
