@@ -79,6 +79,12 @@ const NAV_ITEMS: NavItem[] = [
         href: '/print-tags',
         icon: <Printer size={15} />,
       },
+      {
+        id: 'nav-stock-catalogue',
+        label: 'Stock Catalogue (PDF)',
+        href: '/stock-catalogue',
+        icon: <FileText size={15} />,
+      },
     ],
   },
   {

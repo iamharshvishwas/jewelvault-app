@@ -632,6 +632,44 @@
     page-break-before: avoid;
   }
 
+  /* FB-D2 (Siddhi #6): the ready-stock catalogue. A grid of designs, three across on the A4 paper, that runs over as many pages as the designs need; a card is never cut and a category's name is
+     never left alone at the foot of a page. The picture is a square that keeps its shape (no fixed height). */
+  .print-catalogue-sheet {
+    position: static !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    color: #111111 !important;
+    background: #ffffff !important;
+  }
+  .print-catalogue-head {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .print-catalogue-category h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+  .print-catalogue-grid {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 4mm !important;
+  }
+  .print-catalogue-card {
+    box-shadow: none !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border-color: #cfcfcf !important;
+  }
+  .print-catalogue-card p {
+    color: #111111 !important;
+  }
+
   /* The tags: a grid that runs over as many pages as there are tags; a tag is never cut. */
   .print-tags-grid {
     display: flex !important;

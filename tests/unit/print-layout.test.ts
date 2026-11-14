@@ -585,3 +585,42 @@ describe('FB-D1 the print rules of the ledger sheet', () => {
     expect(detail).toContain('ledger-card-root');
   });
 });
+
+// ================================================================================================ FB-D2: the catalogue on paper
+
+describe('FB-D2 the print rules of the stock catalogue sheet', () => {
+  it('the sheet flows like the estimate: no fixed height, no clipping, no position of its own', () => {
+    const rule = printRule('.print-catalogue-sheet');
+    expect(declared(rule, 'max-height')).toBe('none');
+    expect(declared(rule, 'min-height')).toBe('0');
+    expect(declared(rule, 'height')).toBe('auto');
+    expect(declared(rule, 'overflow')).toBe('visible');
+    expect(declared(rule, 'position')).toBe('static');
+  });
+
+  it('a card is never cut, a category name is never left alone at the foot of a page, three cards go across the A4 paper', () => {
+    for (const property of ['break-inside', 'page-break-inside']) {
+      expect(declared(printRule('.print-catalogue-card'), property)).toBe('avoid');
+    }
+    expect(declared(printRule('.print-catalogue-category h3'), 'break-after')).toBe('avoid');
+    expect(declared(printRule('.print-catalogue-grid'), 'grid-template-columns')).toBe(
+      'repeat(3, minmax(0, 1fr))'
+    );
+  });
+
+  it('the screen carries the names the print rules use', () => {
+    const screen = readFileSync(
+      path.join(SRC, 'app/stock-catalogue/components/StockCatalogueClient.tsx'),
+      'utf8'
+    );
+    for (const name of [
+      'print-catalogue-sheet',
+      'print-catalogue-grid',
+      'print-catalogue-card',
+      'print-catalogue-category',
+    ])
+      expect(screen, name).toContain(name);
+    // the controls are not printed
+    expect(screen.match(/print:hidden/g)!.length).toBeGreaterThanOrEqual(2);
+  });
+});
