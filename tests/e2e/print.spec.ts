@@ -1032,8 +1032,79 @@ async function openLedger(page: Page, who: E2eLogin, ledger: (typeof LEDGERS)[nu
   });
 }
 
+/**
+ * Presses Print / Save PDF the way a person does. The print dialog is the browser's own, so `window.print` is a stub that counts the calls (page.pdf() below is what Chromium lays out in print
+ * media). The stub fires no `afterprint`, so the sheet that the press mounted stays in the page for the PDF.
+ */
+async function pressPrint(page: Page) {
+  await page.evaluate(() => {
+    const mine = window as unknown as { __printCalls: number };
+    mine.__printCalls = 0;
+    window.print = () => {
+      mine.__printCalls += 1;
+    };
+  });
+  await page.getByRole('button', { name: 'Print / Save PDF' }).click();
+  expect(
+    await page.evaluate(() => (window as unknown as { __printCalls: number }).__printCalls)
+  ).toBe(1);
+}
+
 test.describe('FB-D1: a customer ledger prints (or is saved) as a PDF', () => {
   test.describe.configure({ timeout: 240_000 });
+
+  // Wave 2 fix 1: the sheet is a second copy of every row, so it is in the page only while something is printing (a ledger of thousands of rows is not drawn twice for a sheet nobody prints).
+  test('the card open and nothing printing: the print sheet is not in the page', async ({
+    page,
+  }) => {
+    await openLedger(page, e2eLogin('owner'), LEDGERS[1]);
+    await expect(page.getByTestId('ledger-print-sheet')).toHaveCount(0);
+    await expect(page.getByTestId('ledger-print-row')).toHaveCount(0);
+    // the card's own table is the only table of rows on the screen
+    await expect(page.locator('tbody tr')).toHaveCount(LEDGERS[1].bills + LEDGERS[1].payments);
+  });
+
+  // A print that catches the card before its sheet is drawn is the card as it is on the screen, not a blank page: the card hides its parts for paper only when its sheet is in the page. (page.pdf()
+  // fires `beforeprint` itself, as the browser's print does, so the sheet is drawn for it; the state without the sheet is looked at here in print media, where `beforeprint` is not fired.)
+  test('a print with no sheet in the page shows the card, and with the sheet in the page shows only the sheet', async ({
+    page,
+  }) => {
+    const { name } = LEDGERS[1];
+    await openLedger(page, e2eLogin('owner'), LEDGERS[1]);
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.getByTestId('ledger-print-sheet')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name, level: 2 })).toBeVisible();
+    await expect(page.getByTestId('ledger-row').first()).toBeVisible();
+    // the sheet comes in, and then the card gives way to it
+    await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+    await expect(page.getByTestId('ledger-print-sheet')).toBeVisible();
+    await expect(page.getByTestId('ledger-print-row').first()).toBeVisible();
+    await expect(page.getByRole('heading', { name, level: 2 })).toBeHidden();
+    await expect(page.getByTestId('ledger-row').first()).toBeHidden();
+    // and it goes again with the print
+    await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+    await expect(page.getByTestId('ledger-print-sheet')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name, level: 2 })).toBeVisible();
+    await page.emulateMedia({ media: null });
+  });
+
+  test("the browser's own print (Ctrl/Cmd+P, the menu) brings the sheet in and takes it out again", async ({
+    page,
+  }) => {
+    const rows = LEDGERS[1].bills + LEDGERS[1].payments;
+    await openLedger(page, e2eLogin('owner'), LEDGERS[1]);
+    await expect(page.getByTestId('ledger-print-sheet')).toHaveCount(0);
+    await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+    await expect(page.getByTestId('ledger-print-sheet')).toHaveCount(1);
+    await expect(page.getByTestId('ledger-print-row')).toHaveCount(rows);
+    await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+    await expect(page.getByTestId('ledger-print-sheet')).toHaveCount(0);
+    // and the button's own print goes the same way: the sheet is there at the call, and gone at the `afterprint`
+    await pressPrint(page);
+    await expect(page.getByTestId('ledger-print-row')).toHaveCount(rows);
+    await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+    await expect(page.getByTestId('ledger-print-sheet')).toHaveCount(0);
+  });
 
   for (const ledger of LEDGERS) {
     const rows = ledger.bills + ledger.payments;
@@ -1041,19 +1112,10 @@ test.describe('FB-D1: a customer ledger prints (or is saved) as a PDF', () => {
       page,
     }) => {
       await openLedger(page, e2eLogin('owner'), ledger);
-      // the button asks the browser to print (the print dialog itself is the browser's; the PDF is what Chromium lays out in print media)
-      await page.evaluate(() => {
-        const mine = window as unknown as { __printCalls: number };
-        mine.__printCalls = 0;
-        window.print = () => {
-          mine.__printCalls += 1;
-        };
-      });
-      await page.getByRole('button', { name: 'Print / Save PDF' }).click();
-      expect(
-        await page.evaluate(() => (window as unknown as { __printCalls: number }).__printCalls)
-      ).toBe(1);
-      // on the screen the sheet is not there
+      // the button asks the browser to print, and the sheet is in the page for it (the print dialog itself is the browser's; the PDF is what Chromium lays out in print media)
+      await pressPrint(page);
+      await expect(page.getByTestId('ledger-print-row')).toHaveCount(rows);
+      // on the screen the sheet is not seen
       await expect(page.getByTestId('ledger-print-row').first()).toBeHidden();
 
       const pages = await printed(page);
@@ -1113,6 +1175,7 @@ test.describe('FB-D1: a customer ledger prints (or is saved) as a PDF', () => {
   }) => {
     await openLedger(page, e2eLogin('biller'), LEDGERS[0]);
     await page.getByRole('button', { name: /^Invoices/ }).click();
+    await pressPrint(page);
     const pages = await printed(page);
     expect(countIn(pages[0], LEDGERS[0].name)).toBeGreaterThan(0);
     expect(countIn(pages[0], `Invoice ${billNoOf('one', 1)}`)).toBe(1);

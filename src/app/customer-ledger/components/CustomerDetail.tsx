@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
 import {
   Banknote,
   CreditCard,
@@ -55,7 +56,8 @@ import ReceivePaymentPanel from './ReceivePaymentPanel';
 // The prototype's Delete buttons exist in a preview build only: a bill, a payment and a customer are never deleted on the API. WEB11: the owner (and nobody else) has "Hand money back" (X11)
 // and "Opening balance" (X12) here, a Void on each receipt of the Payments tab (X4) and Cancel and Re-issue on each bill of the Invoices tab (X5, X10).
 // FB-D1: "Print / Save PDF" asks the browser to print the customer's ledger. On paper the card is only its sheet (CustomerLedgerPrint, the rules `.ledger-card-root` and `.print-ledger-sheet` of
-// src/styles/tailwind.css), whichever tab is open.
+// src/styles/tailwind.css), whichever tab is open. The sheet is a second copy of every row, so it is in the page only while something is printing (Wave 2 fix 1): the button draws it, and then
+// asks the browser to print; the browser's own print (Ctrl/Cmd+P, the menu) draws it at `beforeprint` and drops it at `afterprint`.
 
 const TABS = [
   { id: 'ctab-ledger', label: 'Ledger' },
@@ -91,8 +93,26 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
   const ownerActions = useOwnerActions();
   const walkIn = customer.id === WALK_IN_ID;
   const [ledger, setLedger] = useState<LedgerEntry[]>(() => getLedgerForCustomer(customer.id));
+  const [printing, setPrinting] = useState(false);
 
   useRowCacheVersion(...BOOKS);
+
+  // the sheet is drawn at once, before the browser lays the page out for paper (flushSync: the print does not wait for a render that is only scheduled)
+  const handlePrint = () => {
+    flushSync(() => setPrinting(true));
+    window.print();
+  };
+
+  useEffect(() => {
+    const before = () => flushSync(() => setPrinting(true));
+    const after = () => setPrinting(false);
+    window.addEventListener('beforeprint', before);
+    window.addEventListener('afterprint', after);
+    return () => {
+      window.removeEventListener('beforeprint', before);
+      window.removeEventListener('afterprint', after);
+    };
+  }, []);
 
   useEffect(() => {
     const look = () => {
@@ -256,7 +276,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
             <button
               type="button"
               data-testid="print-ledger"
-              onClick={() => window.print()}
+              onClick={handlePrint}
               className="btn-secondary py-2"
             >
               <Printer size={14} />
@@ -377,7 +397,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
         </div>
       </div>
 
-      <CustomerLedgerPrint customer={customer} entries={ledger} />
+      {printing && <CustomerLedgerPrint customer={customer} entries={ledger} />}
     </div>
   );
 }

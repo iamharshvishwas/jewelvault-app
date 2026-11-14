@@ -553,8 +553,9 @@
   }
 
   /* FB-D1 (Siddhi #4): a customer's ledger. On paper the customer card is its sheet and nothing else (the card's own parts, the panels that may be open and the tabs are not printed); the
-     sheet flows over as many pages as the rows need, a row is never cut, the header row comes back on every page and the totals are kept whole, not alone on a page. */
-  .ledger-card-root > :not(.print-ledger-sheet) {
+     sheet flows over as many pages as the rows need, a row is never cut, the header row comes back on every page and the totals are kept whole, not alone on a page. The sheet is drawn only while
+     something prints (Wave 2 fix 1), so the card gives way to it only when it is in the page: a print that catches the card without its sheet is the card, never a blank page. */
+  .ledger-card-root:has(> .print-ledger-sheet) > :not(.print-ledger-sheet) {
     display: none !important;
   }
   .print-ledger-sheet {

@@ -400,12 +400,13 @@ async function ledgerWorld(
   const server = new FakeMoneyApi();
   vi.stubGlobal('fetch', server.fetch);
   server.ledgers.set(LEDGER_CUSTOMER, entries);
-  const [react, dom, cache, app, detail] = await Promise.all([
+  const [react, dom, cache, app, detail, sheet] = await Promise.all([
     import('react'),
     import('react-dom/server'),
     import('@/lib/cache/cache'),
     import('@/lib/appStore'),
     import('@/app/customer-ledger/components/CustomerDetail'),
+    import('@/app/customer-ledger/components/CustomerLedgerPrint'),
   ]);
   const book = {
     ...shop(),
@@ -425,7 +426,17 @@ async function ledgerWorld(
     );
   await app.loadLedgerForCustomer(LEDGER_CUSTOMER);
   const customer = app.getCustomers().find((c) => c.id === LEDGER_CUSTOMER)!;
-  return { html: dom.renderToStaticMarkup(react.createElement(detail.default, { customer })) };
+  return {
+    // the print sheet as it is drawn while something is printing (the card draws it only then: Wave 2 fix 1)
+    html: dom.renderToStaticMarkup(
+      react.createElement(sheet.default, {
+        customer,
+        entries: app.getLedgerForCustomer(LEDGER_CUSTOMER),
+      })
+    ),
+    // the customer card as it is drawn on the screen, with nothing printing
+    card: dom.renderToStaticMarkup(react.createElement(detail.default, { customer })),
+  };
 }
 
 /** The cells of every `<tr data-testid=...>` as plain text. */
@@ -437,7 +448,7 @@ const rowsOf = (html: string, testId: string): string[][] =>
 describe('FB-D1 the ledger sheet on the customer card', () => {
   it('has a Print / Save PDF button that asks the browser to print', async () => {
     const w = await ledgerWorld(ledgerRows(), null);
-    expect(w.html).toMatch(
+    expect(w.card).toMatch(
       /<button[^>]*>(?:<svg[\s\S]*?<\/svg>)?\s*Print \/ Save PDF\s*<\/button>/
     );
     const source = readFileSync(
@@ -445,6 +456,17 @@ describe('FB-D1 the ledger sheet on the customer card', () => {
       'utf8'
     );
     expect(source).toContain('window.print()');
+  });
+
+  // Wave 2 fix 1: the sheet is a second copy of the whole ledger, so the card draws it only while something is printing (the button, or the browser's own print at `beforeprint`, switches it on and
+  // `afterprint` off: that is looked at in the page, in tests/e2e/print.spec.ts).
+  it('the card on the screen does not hold the print sheet: nothing of it is drawn until something prints', async () => {
+    const w = await ledgerWorld(ledgerRows(), null);
+    expect(w.card).toContain('data-testid="ledger-row"');
+    expect(w.card).not.toContain('ledger-print-sheet');
+    expect(w.card).not.toContain('ledger-print-row');
+    const empty = await ledgerWorld([], null);
+    expect(empty.card).not.toContain('ledger-print-');
   });
 
   it("the shop's name, address and phone on the sheet are the Settings' (a blank one prints nothing)", async () => {
@@ -571,8 +593,12 @@ describe('FB-D1 the print rules of the ledger sheet', () => {
   });
 
   it('on paper the card shows its sheet and nothing else; the page around the card is not printed', () => {
-    const rule = printRule('.ledger-card-root > :not(.print-ledger-sheet)');
+    const rule = printRule(
+      '.ledger-card-root:has(> .print-ledger-sheet) > :not(.print-ledger-sheet)'
+    );
     expect(declared(rule, 'display')).toBe('none');
+    // the card hides its parts only when its sheet is in the page (Wave 2 fix 1: the sheet is drawn only while printing); a print with no sheet comes out as the card, never blank
+    expect(() => printRule('.ledger-card-root > :not(.print-ledger-sheet)')).toThrow();
     const source = readFileSync(
       path.join(SRC, 'app/customer-ledger/components/CustomerLedgerClient.tsx'),
       'utf8'
