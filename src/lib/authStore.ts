@@ -81,6 +81,7 @@ const SCREENS: ReadonlyArray<{ path: string; roles: readonly AuthRole[] }> = [
   { path: '/edit-stock', roles: ['owner', 'staff'] },
   { path: '/reports', roles: ['owner'] },
   { path: '/settings', roles: ['owner'] },
+  { path: '/activity-log', roles: ['owner'] },
   { path: '/scan-detail', roles: ['owner'] },
 ];
 

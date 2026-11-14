@@ -30,6 +30,7 @@ import {
   Menu,
   X,
   ScanLine,
+  ScrollText,
 } from 'lucide-react';
 
 interface NavItem {
@@ -204,6 +205,12 @@ const NAV_ITEMS: NavItem[] = [
         label: 'Numbering',
         href: '/settings?tab=numbering',
         icon: <Hash size={15} />,
+      },
+      {
+        id: 'nav-activity-log',
+        label: 'Activity Log',
+        href: '/activity-log',
+        icon: <ScrollText size={15} />,
       },
       {
         id: 'nav-business',

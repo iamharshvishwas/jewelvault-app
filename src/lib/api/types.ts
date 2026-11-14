@@ -561,6 +561,30 @@ export interface DailyTotalsResponse {
   rows: DailyTotalWire[];
 }
 
+/**
+ * One row of the audit log (`GET /v1/audit-log`, the owner only, FB-D4). `at` is the instant (UTC, microseconds); `actor` is the user, or null for a job, the admin door or a statement run by
+ * hand. A row of an audited table is an `insert` or an `update` with the row after (and before) it; a login, a logout and a change of password are `event` rows of the table `users` whose
+ * `new_row` names the event (`login`, `logout`, `change_password`). `old_row` and `new_row` are JSON of the owner's own, not money fields.
+ */
+export interface AuditRow {
+  id: number;
+  at: TimestampText;
+  actor: UuidText | null;
+  actor_role: string | null;
+  request_id: UuidText | null;
+  table_name: string;
+  row_id: string;
+  action: 'insert' | 'update' | 'event';
+  old_row: Record<string, unknown> | null;
+  new_row: Record<string, unknown> | null;
+}
+
+/** A page of the audit log, newest first (the highest id first). `next` is the cursor of the following page, set when the page was full; null is the end. */
+export interface AuditPageResponse {
+  rows: AuditRow[];
+  next: { before_id: number } | null;
+}
+
 /** How old something is and when it happened: an instant in the wire form, and the hours since it at the API's clock. */
 export interface HealthAge {
   last_at: TimestampText | null;
