@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { expect, test, type BrowserContext, type Locator, type Page } from '@playwright/test';
 import { e2eLane, e2eLogin, type E2eLogin, type E2eRole } from './global-setup';
@@ -11,6 +12,10 @@ import { e2eLane, e2eLogin, type E2eLogin, type E2eRole } from './global-setup';
 //   T-E05  (clause) after a session no business data is in browser storage
 //   T-C01  (clause) the browser sends no id and no number of its own making, and shows only the ones the server gave
 //   T-E03  (clause) the Save control of the edit screen is off while the banner "Offline: changes cannot be saved" shows
+//
+// FB-A3 (Siddhi #10): Edit Stock never edits a design nobody chose. /edit-stock with no id asks which design (a search box and a list, no Save button); an id that is not a design says
+// "Design not found"; a pick opens that design's form and not the first design of the list. The last test is a guard for "sometimes it does not work": two browsers on one design, the
+// second Save is answered stale and reloads, and the first person's change is on screen in both (it passed before FB-A3 and keeps passing).
 //
 // The pieces these tests edit are made directly in the lane's database as root (poll.spec.ts does the same), and taken out again after each test; the settings, the rates
 // and the categories a test changes are put back.
@@ -778,5 +783,117 @@ test.describe("T-E05 and T-C01: nothing in the browser's storage, and nothing ma
     });
     expect(storage.session).toEqual({});
     expect(storage.databases).toEqual([]);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ FB-A3
+
+test.describe('FB-A3: Edit Stock asks which design instead of opening the first one (Siddhi #10)', () => {
+  test.describe.configure({ timeout: 180_000 });
+
+  const SECOND_NO = 'WEB05-00002';
+
+  /** A second design (taken out again by cleanStock, which removes every WEB05- row). Returns its id. */
+  async function makeSecondDesign(): Promise<string> {
+    await laneSql(
+      `INSERT INTO designs (id, design_no, name, category_id, material, purity, selling_method) ` +
+        `SELECT UUID_v4(), '${SECOND_NO}', 'Edit test design two', id, 'Gold', '22K', 'By Weight' FROM categories ORDER BY name LIMIT 1; ` +
+        `INSERT INTO skus (id, design_id, sku_no, barcode, gross_weight, customer_net_weight, location, status) ` +
+        `SELECT UUID_v4(), id, '${SECOND_NO}-001', 'W5B00003', 6.000, 5.500, 'Main Showroom', 'In Stock' FROM designs WHERE design_no = '${SECOND_NO}';`
+    );
+    return (await laneSql(`SELECT id FROM designs WHERE design_no = '${SECOND_NO}'`)).trim();
+  }
+
+  test('with no id the screen asks which design: no form and no Save button; typing a design number narrows the list; a tap opens that design and not the first', async ({
+    page,
+  }) => {
+    const owner = e2eLogin('owner');
+    const secondId = await makeSecondDesign();
+    await open(page, owner, '/edit-stock');
+    await expect(page.getByRole('heading', { name: 'Choose a design to edit' })).toBeVisible();
+    await expect(saveChanges(page)).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Edit Existing Stock' })).toHaveCount(0);
+    await expect(page.getByLabel('Design Name')).toHaveCount(0);
+
+    // both designs are on the list; the search takes one out
+    await expect(page.getByRole('link', { name: DESIGN_NO })).toBeVisible();
+    await page.getByLabel('Search designs').fill(SECOND_NO);
+    await expect(page.getByRole('link', { name: SECOND_NO })).toHaveCount(1);
+    await expect(page.getByRole('link', { name: DESIGN_NO })).toHaveCount(0);
+
+    await page.getByRole('link', { name: SECOND_NO }).click();
+    await expect(page).toHaveURL(new RegExp(`/edit-stock\\?id=${secondId}$`));
+    await expect(page.getByRole('heading', { name: 'Edit Existing Stock' })).toBeVisible();
+    await expect(page.getByLabel('Design Name')).toHaveValue('Edit test design two');
+    await expect(piece(page, `${SECOND_NO}-001`)).toBeVisible();
+    await expect(saveChanges(page)).toBeDisabled();
+  });
+
+  test('an id that is not a design says "Design not found" and offers no form, and a draft of one design never follows the person to another', async ({
+    page,
+  }) => {
+    const owner = e2eLogin('owner');
+    const secondId = await makeSecondDesign();
+    await open(page, owner, `/edit-stock?id=${randomUUID()}`);
+    await expect(page.getByText('Design not found')).toBeVisible();
+    await expect(saveChanges(page)).toHaveCount(0);
+    await expect(page.getByLabel('Design Name')).toHaveCount(0);
+
+    // a half-made edit of one design, then the other design is chosen: the other design's own values are on the screen
+    await page.getByRole('link', { name: 'Choose a design' }).click();
+    await expect(page.getByRole('heading', { name: 'Choose a design to edit' })).toBeVisible();
+    await page.getByLabel('Search designs').fill(DESIGN_NO);
+    await page.getByRole('link', { name: DESIGN_NO }).click();
+    await expect(page.getByLabel('Design Name')).toHaveValue('Edit test design');
+    await page.getByLabel('Design Name').fill('typed and not saved');
+    // the menu's Edit Stock link asks again (the Stock group of the side bar is closed to start with)
+    await aside(page).getByRole('button', { name: 'Stock', exact: true }).click();
+    await aside(page).getByRole('link', { name: 'Edit Stock' }).click();
+    await expect(page.getByRole('heading', { name: 'Choose a design to edit' })).toBeVisible();
+    await page.getByLabel('Search designs').fill(SECOND_NO);
+    await page.getByRole('link', { name: SECOND_NO }).click();
+    await expect(page).toHaveURL(new RegExp(`/edit-stock\\?id=${secondId}$`));
+    await expect(page.getByLabel('Design Name')).toHaveValue('Edit test design two');
+    await expect(saveChanges(page)).toBeDisabled();
+    expect(await laneSql(`SELECT name FROM designs WHERE design_no = '${DESIGN_NO}'`)).toBe(
+      'Edit test design\n'
+    );
+  });
+
+  test("guard: two browsers on one design: the second Save says someone else saved and reloads, and the first person's change is on screen in both", async ({
+    browser,
+  }) => {
+    const owner = e2eLogin('owner');
+    const contexts: BrowserContext[] = [await browser.newContext(), await browser.newContext()];
+    try {
+      const [a, b] = await Promise.all(contexts.map((c) => c.newPage()));
+      await open(a, owner, `/edit-stock?id=${designId}`);
+      await open(b, owner, `/edit-stock?id=${designId}`);
+
+      // B starts an edit of the design as it is now ...
+      await b.getByLabel('Description').fill('written in the second browser');
+      // ... and A saves a change to the same design first
+      await a.getByLabel('Design Name').fill('Renamed in the first browser');
+      await saveChanges(a).click();
+      await expect(a.getByRole('status').filter({ hasText: 'Stock saved.' })).toBeVisible();
+
+      // B presses Save: its starting point is old, so the server answers stale and B shows what A saved
+      await saveChanges(b).click();
+      await expect(
+        b.getByRole('alert').filter({ hasText: 'This was changed by someone else' })
+      ).toHaveText(
+        'This was changed by someone else. The latest version has been loaded. Nothing was changed.'
+      );
+      await expect(b.getByLabel('Design Name')).toHaveValue('Renamed in the first browser');
+      await expect(b.getByLabel('Description')).toHaveValue('');
+      await expect(a.getByLabel('Design Name')).toHaveValue('Renamed in the first browser');
+      expect(
+        await laneSql(
+          `SELECT name, IFNULL(description, '') FROM designs WHERE design_no = '${DESIGN_NO}'`
+        )
+      ).toBe('Renamed in the first browser\t\n');
+    } finally {
+      await Promise.all(contexts.map((c) => c.close()));
+    }
   });
 });
