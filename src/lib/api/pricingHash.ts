@@ -3,4 +3,4 @@
 
 /** The SHA-256 of src/lib/pricing.ts as this build was made from it. `me` of the API must return the same. */
 export const BUILD_PRICING_SHA256 =
-  '202482b7bfa9aff7f5cf004a92311253b05aed98f9f86a00d6dc89c29a95fc09';
+  'eb2e0deabfb77cdf885505b6ca4b603fcbcbe9009a08dd8dc2b6db770645960d';

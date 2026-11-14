@@ -13,6 +13,7 @@ import { noteApiCall, roomInTheMinute } from './pacing';
 //   T-A03  (UNIT half, on the screen) choosing a customer sets the sale type and the default labour rate follows it
 //   T-A01  (screen half) the worked example (35.42 g, 6,920, labour 353, piroi 2.15) saves a bill of 257,612 and the screen's preview equals the saved figure
 //   T-C06  (screen half) two billers saving the same piece: one success, one message naming the piece
+//   FB-C3  pricing version 2 (FB-D2): a Semi-Wholesale silver By Weight bill owes fine like Wholesale: the screen, the saved bill and the customer card show the fine due, and Settle fine works on it
 //   and the messages and prompts of the screen: JV_CASH_LIMIT (biller and owner), JV_OVERPAYMENT, PAN_MISSING and the PAN prompt, "Advance adjusted", RATE_MISSING and RATE_STALE, a
 //   held piece asks for confirmation (confirm_held), no Credit row, the saved figures replace the preview and a notice says where they differ, a new customer then a bill
 //
@@ -204,7 +205,7 @@ async function cleanLane() {
       `DELETE FROM bills WHERE id IN (${billList}); ` +
       `DELETE FROM designs WHERE design_no LIKE 'W08-%'; ` +
       `DELETE FROM customers WHERE name LIKE 'W08 %'; ` +
-      `DELETE FROM daily_rates WHERE (material = 'Gold' AND purity IN ('22K', '24K'));`
+      `DELETE FROM daily_rates WHERE (material = 'Gold' AND purity IN ('22K', '24K')) OR (material = 'Silver' AND purity = '999');`
   );
   // X1 makes a row of sys_counters for the series of its bill numbers (and moves it), and deleting the bills does not take it away. The API's seed-volume tool, which the volume case of
   // hydrate.spec.ts runs, inserts that row itself and then checks invariant I5 (a counter that moved with no number issued above its seed is a fault): a series with no bill left is
@@ -1040,5 +1041,59 @@ test.describe('C13, Z1 to Z3, Y2, R2, R10: what the screen says', () => {
     expect(keys[1]).toMatch(/^bills:[0-9a-f-]{36}$/);
     expect(keys[0].split(':')[1]).not.toBe(keys[1].split(':')[1]);
     expect((await billsMade())[0].slice(1)).toEqual(['W08 Fresh', '7180.00', 'active']);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ FB-C3: pricing version 2
+
+test.describe('FB-C3 (FB-D2): a Semi-Wholesale silver By Weight bill owes fine like Wholesale', () => {
+  test.describe.configure({ timeout: 180_000 });
+
+  test('the line and the bill show the fine due and no metal amount; the bill is saved as pricing version 2; the customer card shows the fine and Settle fine clears it', async ({
+    page,
+  }) => {
+    // one Silver 999 By Weight piece of 120.000 g, labour 40 / 38 / 36 a gram, silver at 85.00 today: Semi-Wholesale gives labour 120 x 38 = 4,560.00, metal 0, fine 120.000 g
+    const silverDesign = randomUUID();
+    await laneSql(
+      `INSERT INTO designs (id, design_no, name, category_id, material, purity, selling_method) VALUES ('${silverDesign}', 'W08-D5', 'W08 D5', (SELECT id FROM categories WHERE name = 'Ring'), 'Silver', '999', 'By Weight'); ` +
+        `INSERT INTO skus (id, design_id, sku_no, barcode, gross_weight, customer_net_weight, piroi, labour_retail, labour_semi, labour_wholesale, status) VALUES ('${randomUUID()}', '${silverDesign}', '${sku('V1')}', 'W08BC-V1', 121.000, 120.000, 0.00, 40.00, 38.00, 36.00, 'In Stock'); ` +
+        `INSERT INTO daily_rates (id, material, purity, rate_per_gram, rate_date) VALUES (UUID(), 'Silver', '999', 85.00, '${kolkata()}');`
+    );
+    await open(page, e2eLogin('owner'));
+    await chooseCustomer(page, CUSTOMERS.semi);
+    await expect(
+      page.getByRole('button', { name: 'Semi-Wholesale', pressed: true, exact: true })
+    ).toBeVisible();
+    await addPiece(page, 'V1');
+    const row = page.locator(`tr[data-sku="${sku('V1')}"]`);
+    await expect(row).toContainText('120.000 g');
+    await expect(grandTotal(page)).toHaveText('₹4,560');
+    await expect(page.getByText('Silver fine due')).toBeVisible();
+
+    await save(page).click();
+    await expect(saved(page)).toBeVisible({ timeout: 30_000 });
+    await expect(row).toContainText('120.000 g'); // the saved figures
+    await expect(page.getByText('Silver fine due')).toBeVisible();
+    expect(
+      await laneSql(
+        `SELECT b.pricing_version, b.sale_type, b.grand_total, b.fine_weight_due, i.metal_amount, i.labour_amount, i.fine_weight_due FROM bills b JOIN bill_items i ON i.bill_id = b.id WHERE i.sku_no = '${sku('V1')}'`
+      )
+    ).toEqual([['2', 'Semi-Wholesale', '4560.00', '120.000', '0.00', '4560.00', '120.000']]);
+
+    // the customer card: the silver owed, then settled in silver
+    await page.goto('/customer-ledger');
+    await page.getByPlaceholder('Search customers...').fill(CUSTOMERS.semi);
+    await page.getByRole('button', { name: new RegExp(CUSTOMERS.semi) }).click();
+    await expect(page.getByRole('heading', { name: CUSTOMERS.semi, level: 2 })).toBeVisible();
+    await expect(page.getByTestId('cs-fine')).toHaveText('120.000 g', { timeout: 15_000 });
+    await page.getByRole('button', { name: 'Receive Payment', exact: true }).click();
+    await expect(page.getByTestId('payment-panel')).toContainText(CUSTOMERS.semi);
+    await page.getByTestId('payment-type').selectOption('Fine Silver');
+    await page.getByTestId('fine-grams').fill('120');
+    await page.getByTestId('save-payment').click();
+    await expect(page.getByTestId('fine-saved')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('fine-remaining')).toContainText('0.000 g');
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(page.getByTestId('cs-fine')).toHaveText('0.000 g', { timeout: 15_000 });
   });
 });
