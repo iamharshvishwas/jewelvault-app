@@ -1042,3 +1042,93 @@ test.describe('C13, Z1 to Z3, Y2, R2, R10: what the screen says', () => {
     expect((await billsMade())[0].slice(1)).toEqual(['W08 Fresh', '7180.00', 'active']);
   });
 });
+
+// ------------------------------------------------------------------------------------------------ FB-B3
+
+// FB-B3 (Siddhi #8): items can be added to a bill without a barcode. Typing two or more characters of a design number, a design name, a piece number or a barcode (any case) lists up to 20
+// pieces under the box; one tap adds the piece the way a scan of its number does, so a Reserved or On Approval piece still asks "Bill it anyway?" and a piece in Repair or Sold is never offered.
+test.describe('FB-B3 (Siddhi #8): pick a piece by name or number, with no barcode', () => {
+  test.describe.configure({ timeout: 150_000 });
+
+  const box = (page: Page) => page.getByPlaceholder('Enter SKU number or scan barcode...');
+  const matches = (page: Page) => page.getByTestId('piece-match');
+  const rowText = async (page: Page, key: string) =>
+    (await page.locator(`tr[data-sku="${sku(key)}"]`).innerText()).split(sku(key)).join('<SKU>');
+
+  test('part of a design name, in any case, lists its pieces; a tap puts the line on the bill and clears the box', async ({
+    page,
+  }) => {
+    await open(page, e2eLogin('owner'));
+    await box(page).fill('w08 d2'); // the design "W08 D2": its two Per Piece pieces
+    await expect(matches(page)).toHaveCount(2);
+    await expect(matches(page).first()).toContainText('W08 D2');
+    await expect(matches(page).first()).toContainText(sku('P1'));
+    await expect(matches(page).last()).toContainText(sku('P2'));
+    await matches(page)
+      .filter({ hasText: sku('P1') })
+      .click();
+    await expect(page.locator(`tr[data-sku="${sku('P1')}"]`)).toBeVisible();
+    await expect(box(page)).toHaveValue('');
+    await expect(matches(page)).toHaveCount(0);
+  });
+
+  test('a picked piece is on the bill exactly as a scanned one: the same line, the same figures, the same saved bill', async ({
+    page,
+  }) => {
+    await open(page, e2eLogin('owner'));
+    await box(page).fill('w08-s1');
+    await expect(matches(page)).toHaveCount(1);
+    await matches(page).click();
+    await expect(page.locator(`tr[data-sku="${sku('S1')}"]`)).toBeVisible();
+    await addPiece(page, 'S2'); // typed, Enter: a scan
+    expect(await rowText(page, 'S1')).toBe(await rowText(page, 'S2'));
+    for (const label of ['Labour rate', 'Piroi']) {
+      expect(await lineInput(page, label, 'S1').inputValue()).toBe(
+        await lineInput(page, label, 'S2').inputValue()
+      );
+    }
+    await expect(lineInput(page, 'Labour rate', 'S1')).toHaveValue('300.00');
+    await save(page).click();
+    await expect(saved(page)).toBeVisible({ timeout: 30_000 });
+    expect((await billsMade())[0][2]).toBe('14440.00'); // 2 x 7,220
+    expect(await pieceStatus('S1')).toBe('Sold');
+    expect(await pieceStatus('S2')).toBe('Sold');
+  });
+
+  test('a Reserved match still asks "Bill it anyway?"; a piece in Repair is not offered at all', async ({
+    page,
+  }) => {
+    await open(page, e2eLogin('owner'));
+    await box(page).fill('w08-h');
+    await expect(matches(page)).toHaveCount(1); // H1 (Reserved); H2 is in Repair
+    await expect(matches(page)).toContainText(sku('H1'));
+    await expect(matches(page)).toContainText('Reserved');
+    await matches(page).click();
+    const ask = page.getByTestId('scan-confirm');
+    await expect(ask).toContainText(`${sku('H1')} is Reserved`);
+    await expect(page.locator(`tr[data-sku="${sku('H1')}"]`)).toHaveCount(0); // not added yet
+    await ask.getByRole('button', { name: 'Bill it anyway' }).click();
+    await expect(page.locator(`tr[data-sku="${sku('H1')}"]`)).toBeVisible();
+    await expect(page.getByTestId('held-badge')).toContainText('Reserved');
+
+    await box(page).fill('w08-h2');
+    await expect(matches(page)).toHaveCount(0);
+    await expect(page.getByTestId('piece-matches-empty')).toBeVisible();
+  });
+
+  test('one character lists nothing; two list at most 20; the typed box still takes a whole code with Enter', async ({
+    page,
+  }) => {
+    await open(page, e2eLogin('owner'));
+    await box(page).fill('w');
+    await expect(matches(page)).toHaveCount(0);
+    await expect(page.getByTestId('piece-matches-empty')).toHaveCount(0);
+    await box(page).fill('w0');
+    await expect(matches(page).first()).toBeVisible();
+    expect(await matches(page).count()).toBeLessThanOrEqual(20);
+    await box(page).fill(`${sku('S3')}`);
+    await page.keyboard.press('Enter');
+    await expect(page.locator(`tr[data-sku="${sku('S3')}"]`)).toBeVisible();
+    await expect(matches(page)).toHaveCount(0);
+  });
+});

@@ -2,6 +2,7 @@
 import React, { useState, useRef } from 'react';
 import { Camera, ScanLine, Search } from 'lucide-react';
 import CameraScanner from '@/components/CameraScanner';
+import { searchPieces } from '@/lib/designStore';
 
 /**
  * What the billing screen says about a code that was scanned or typed (spec R10): the piece was added, it was refused with a reason (not found, already sold, not for sale, already on
@@ -50,11 +51,22 @@ export default function ScanItemPanel({ onScan, onAddHeld }: ScanItemPanelProps)
     setCameraAdded(null);
   };
 
+  // FB-B3: a piece picked from the list goes the way a scan of its number goes (a Reserved or On Approval one still asks)
+  const pick = (skuNumber: string) => {
+    take(skuNumber);
+    setCameraAdded(null);
+    setValue('');
+    inputRef.current?.focus();
+  };
+
   const handleCameraCode = (text: string) => {
     const code = text.trim();
     if (!code) return;
     setCameraAdded(take(code).kind === 'added' ? code : null);
   };
+
+  const query = value.trim();
+  const matches = query.length >= 2 ? searchPieces(query) : [];
 
   const confirmHeld = () => {
     if (!asking) return;
@@ -102,6 +114,50 @@ export default function ScanItemPanel({ onScan, onAddHeld }: ScanItemPanelProps)
           Add
         </button>
       </form>
+
+      {query.length >= 2 &&
+        (matches.length === 0 ? (
+          <p data-testid="piece-matches-empty" className="mt-2 text-xs text-muted-foreground">
+            No piece in stock matches &ldquo;{query}&rdquo;.
+          </p>
+        ) : (
+          <ul
+            aria-label="Matching pieces"
+            className="mt-2 max-h-64 overflow-y-auto divide-y divide-border rounded-sm border border-border"
+          >
+            {matches.map(({ design, sku }) => (
+              <li key={sku.id}>
+                <button
+                  type="button"
+                  data-testid="piece-match"
+                  data-sku={sku.skuNumber}
+                  onClick={() => pick(sku.skuNumber)}
+                  className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-muted/50"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-mono text-xs font-bold text-primary">
+                      {sku.skuNumber}
+                    </span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {design.designName || design.designNumber} · {design.designNumber} ·{' '}
+                      {sku.material} {sku.purity}
+                    </span>
+                  </span>
+                  {sku.customerNetWeight > 0 && (
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {sku.customerNetWeight.toFixed(3)} g
+                    </span>
+                  )}
+                  {sku.status !== 'In Stock' && (
+                    <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                      {sku.status}
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ))}
 
       {cameraAdded && (
         <p data-testid="scan-added" className="mt-2 text-xs font-semibold text-emerald-700">
