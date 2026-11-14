@@ -1132,3 +1132,69 @@ test.describe('FB-B3 (Siddhi #8): pick a piece by name or number, with no barcod
     await expect(matches(page)).toHaveCount(0);
   });
 });
+
+// FB-B fix: the picker on a phone. The match list has its own scroll (max-h-64), every match is a finger-sized button, and nothing makes the page wider than 375.
+test.describe('FB-B fix: the piece picker on a phone (375 x 812)', () => {
+  test.describe.configure({ timeout: 150_000 });
+  test.use({ viewport: { width: 375, height: 812 }, hasTouch: true });
+
+  const sideways = (page: Page) =>
+    page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+
+  test('the list scrolls inside its own box, a match far down it can be tapped, and nothing is wider than the phone', async ({
+    page,
+  }) => {
+    await open(page, e2eLogin('owner'));
+    await page.getByPlaceholder('Enter SKU number or scan barcode...').fill('w0');
+    const list = page.getByRole('list', { name: 'Matching pieces' });
+    await expect(list).toBeVisible();
+    const matches = page.getByTestId('piece-match');
+    expect(await matches.count(), 'more than fit in the box').toBeGreaterThan(8);
+    expect(await matches.count()).toBeLessThanOrEqual(20);
+
+    // the box is 16 rem at most and scrolls; the page does not grow with it, nor sideways
+    const metrics = await list.evaluate((el) => ({
+      client: el.clientHeight,
+      scroll: el.scrollHeight,
+      overflowY: getComputedStyle(el).overflowY,
+    }));
+    expect(metrics.client).toBeLessThanOrEqual(257);
+    expect(metrics.scroll).toBeGreaterThan(metrics.client);
+    expect(['auto', 'scroll']).toContain(metrics.overflowY);
+    const frame = await list.boundingBox();
+    expect(frame!.x).toBeGreaterThanOrEqual(0);
+    expect(frame!.x + frame!.width).toBeLessThanOrEqual(375);
+    expect(await sideways(page)).toBeLessThanOrEqual(1);
+
+    // a finger can hit each match, and the list moves under a scroll
+    const first = await matches.first().boundingBox();
+    expect(first!.height).toBeGreaterThanOrEqual(40);
+    await list.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    expect(await list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+
+    // one far down the list (the fourteenth) is tapped and is on the bill
+    const far = page.locator(`[data-testid="piece-match"][data-sku="${sku('S8')}"]`);
+    await far.tap();
+    await expect(page.locator(`tr[data-sku="${sku('S8')}"]`)).toBeVisible();
+    await expect(list).toHaveCount(0);
+    expect(await sideways(page)).toBeLessThanOrEqual(1);
+  });
+
+  test('a Reserved match asked about on the phone: the question fits and "Bill it anyway" can be tapped', async ({
+    page,
+  }) => {
+    await open(page, e2eLogin('owner'));
+    await page.getByPlaceholder('Enter SKU number or scan barcode...').fill('w08-h');
+    await page.getByTestId('piece-match').tap();
+    const ask = page.getByTestId('scan-confirm');
+    await expect(ask).toContainText(`${sku('H1')} is Reserved`);
+    const frame = await ask.boundingBox();
+    expect(frame!.x + frame!.width).toBeLessThanOrEqual(375);
+    await ask.getByRole('button', { name: 'Bill it anyway' }).tap();
+    await expect(page.locator(`tr[data-sku="${sku('H1')}"]`)).toBeVisible();
+  });
+});
