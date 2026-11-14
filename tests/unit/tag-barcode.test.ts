@@ -5,6 +5,9 @@
 //   - the options the tag draws it with, the value it encodes, and the short name the tag prints
 //   - the tag page draws one `svg[data-testid="tag-code128"]` for each tag, keeps the QR, and no longer draws the old bars
 //
+//   - FB-B final fix: the tag's Code 128 carries the piece number (`RING-00001-001`), not the longer barcode string (`BC-RING-00001-001`): fewer modules, so wider bars on a 58 mm tag at
+//     203 dpi. `findSkuByCode` matches a piece number as well as a barcode, so a scan of the Code 128 still finds the piece; the QR keeps the barcode
+//
 //   - FB-B fix 2: the barcode end of the tag fits every tag size the Settings allow (height from 13 mm, any barcode height): the Code 128 is always there and at least 4 mm high, the QR and
 //     the second printing of the piece number only where they fit; the default 28 mm tag is laid out as before
 //
@@ -21,6 +24,7 @@ import {
   TAG_ROOM_MM,
   tagBarcodeLayout,
   tagBarcodeValue,
+  tagCode128Value,
   tagShortName,
 } from '@/lib/tagBarcode';
 import { categoryRow, designRow, settingRow, skuRow, uuid } from './support/rows';
@@ -116,6 +120,30 @@ describe('FB-B1 the tag barcode is a real Code 128 of the piece barcode', () => 
     expect(tagBarcodeValue({ barcode: '', skuNumber: 'RING-00001-001' })).toBe('RING-00001-001');
   });
 
+  // FB-B final fix: what the Code 128 carries
+  it("the tag's Code 128 carries the piece number, exactly, and decodes back to it (the QR keeps the barcode)", () => {
+    const sku = { skuNumber: 'RING-00001-001', barcode: 'BC-RING-00001-001' };
+    expect(tagCode128Value(sku)).toBe('RING-00001-001');
+    const decoded = decode128(encode(tagCode128Value(sku)));
+    expect(decoded.text).toBe('RING-00001-001');
+    expect(decoded.checkOk).toBe(true);
+    // the QR is unchanged: the barcode, or the piece number when the piece has none
+    expect(tagBarcodeValue(sku)).toBe('BC-RING-00001-001');
+    expect(tagBarcodeValue({ ...sku, barcode: '' })).toBe('RING-00001-001');
+    // a piece with no barcode has the same text in both
+    expect(tagCode128Value({ ...sku, barcode: '' })).toBe('RING-00001-001');
+  });
+
+  it('the piece number is a shorter Code 128 than the barcode string: fewer modules, so a wider bar in the same width of tag', () => {
+    const sku = { skuNumber: 'RING-00001-001', barcode: 'BC-RING-00001-001' };
+    const number = encode(tagCode128Value(sku));
+    const barcode = encode(sku.barcode);
+    expect(barcode.length).toBe(222);
+    expect(number.length).toBeLessThan(barcode.length);
+    // the usable 21.6 mm of a 58 mm tag, in mm for one module
+    expect(21.6 / number.length).toBeGreaterThan(21.6 / barcode.length);
+  });
+
   it("the tag's business name is the Settings' short name, and the shop's configured one when blank", () => {
     expect(tagShortName({ displayName: 'Siddhi Jewels' })).toBe('Siddhi Jewels');
     expect(tagShortName({ displayName: '  Siddhi Jewels  ' })).toBe('Siddhi Jewels');
@@ -127,12 +155,14 @@ describe('FB-B1 the tag barcode is a real Code 128 of the piece barcode', () => 
 
 // ================================================================================================ the tag page
 
-async function drawTags(template?: Record<string, unknown>) {
+/** The stores filled with the shop of the tag tests (the cache, the design store and the tag page over them, as a browser would have them after sign-in). */
+async function loadTagShop(template?: Record<string, unknown>) {
   vi.resetModules();
   vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.test');
-  const [cache, page] = await Promise.all([
+  const [cache, designs, page] = await Promise.all([
     import('@/lib/cache/cache'),
+    import('@/lib/designStore'),
     import('@/app/print-tags/components/PrintTagsClient'),
   ]);
   if (template) cache.rowCache.merge('settings', [settingRow('tag_template', template)]);
@@ -145,6 +175,11 @@ async function drawTags(template?: Record<string, unknown>) {
     skuRow(2, 1, { sku_no: 'RING-00001-002', barcode: 'BC-RING-00001-002' }),
     skuRow(3, 1, { sku_no: 'RING-00001-003', barcode: 'BC-RING-00001-003', status: 'Sold' }),
   ]);
+  return { designs, page };
+}
+
+async function drawTags(template?: Record<string, unknown>) {
+  const { page } = await loadTagShop(template);
   return renderToStaticMarkup(React.createElement(page.default));
 }
 
@@ -163,6 +198,34 @@ describe('FB-B1 the tag page draws the Code 128 and keeps the QR', () => {
     expect(html).toContain('BC-RING-00001-001');
     expect(html).not.toContain('>JGP<');
     expect(html).toContain(`>${BUSINESS_SHORT_NAME}<`);
+  });
+
+  it('FB-B final fix: the page hands the Code 128 the piece number and the QR the barcode (a static render carries them in the aria-labels; the bars are drawn in the browser)', async () => {
+    const html = await drawTags();
+    for (const n of ['001', '002']) {
+      expect(html).toContain(`aria-label="Barcode RING-00001-${n}"`);
+      expect(html).toContain(`aria-label="QR code BC-RING-00001-${n}"`);
+      expect(html).not.toContain(`aria-label="Barcode BC-RING-00001-${n}"`);
+    }
+  });
+
+  it("FB-B final fix, end to end: the text a scanner reads from a tag's Code 128 finds the piece (findSkuByCode takes the piece number), and so does the QR's text", async () => {
+    const { designs } = await loadTagShop();
+    const pieces = designs.getDesigns().flatMap((design) => design.skus);
+    expect(pieces).toHaveLength(3);
+    for (const sku of pieces) {
+      const scanned = decode128(encode(tagCode128Value(sku)));
+      expect(scanned.checkOk, sku.skuNumber).toBe(true);
+      expect(designs.findSkuByCode(scanned.text)?.sku.id, `${sku.skuNumber} by its Code 128`).toBe(
+        sku.id
+      );
+      expect(
+        designs.findSkuByCode(tagBarcodeValue(sku))?.sku.id,
+        `${sku.skuNumber} by its QR`
+      ).toBe(sku.id);
+    }
+    // a scanner that sends capitals or a stray space still finds it
+    expect(designs.findSkuByCode(' ring-00001-001 ')?.sku.barcode).toBe('BC-RING-00001-001');
   });
 });
 

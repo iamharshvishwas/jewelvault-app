@@ -11,11 +11,12 @@ import {
   TAG_MIN_HEIGHT_MM,
   tagBarcodeLayout,
   tagBarcodeValue,
+  tagCode128Value,
   tagShortName,
 } from '@/lib/tagBarcode';
 import type { Sku } from '@/lib/mockData';
 
-// FB-B1: a real Code 128 of the piece barcode, drawn by JsBarcode into an svg that fills the width of the tag's barcode end (a scanner needs its bars as wide as the tag allows).
+// FB-B1: a real Code 128, drawn by JsBarcode into an svg that fills the width of the tag's barcode end (a scanner needs its bars as wide as the tag allows). It carries the piece number (FB-B final fix: shorter than the barcode, so wider bars).
 function Code128({ value, heightMm }: { value: string; heightMm: number }) {
   const ref = useRef<SVGSVGElement>(null);
 
@@ -112,7 +113,7 @@ function Tag({ sku }: { sku: Sku }) {
 
       <div className="print-tag-end print-tag-barcode" style={{ width: `${endWidth}mm` }}>
         <div className="tag-code-text">{sku.barcode}</div>
-        <Code128 value={tagBarcodeValue(sku)} heightMm={barcodeEnd.barcodeMm} />
+        <Code128 value={tagCode128Value(sku)} heightMm={barcodeEnd.barcodeMm} />
         {barcodeEnd.showQr && (
           <div className="tag-scan-row">
             <SmallQrCode value={tagBarcodeValue(sku)} />

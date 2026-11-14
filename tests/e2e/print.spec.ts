@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { clearLoginCounters } from './clear-counters';
@@ -659,6 +660,49 @@ test.describe('PT-W13: the printed estimate flows over as many pages as it needs
 
 // ------------------------------------------------------------------------------------------------ PT-W13: the tag page
 
+// JsBarcode ships no types for its inner modules: its own CODE128 encoder and symbol table are read the way node reads them (the same as tests/unit/tag-barcode.test.ts).
+const nodeRequire = createRequire(__filename);
+const code128Encoder = nodeRequire('jsbarcode/bin/barcodes').default.CODE128 as new (
+  text: string,
+  options: Record<string, unknown>
+) => { encode(): { data: string } };
+const { BARS: CODE128_BARS, STOP: CODE128_STOP } = nodeRequire(
+  'jsbarcode/bin/barcodes/CODE128/constants'
+) as { BARS: number[]; STOP: number };
+
+/** How many modules the Code 128 of `text` is wide. */
+const code128Modules = (text: string) => new code128Encoder(text, {}).encode().data.length;
+
+/** Reads a Code 128 symbol back (one character per module, '1' dark): start, data (sets A, B and C), check symbol, stop. Garbage gives no text and a failed check, never a pass. */
+function decodeCode128(bits: string): { text: string; checkOk: boolean } {
+  const stop = String(CODE128_BARS[CODE128_STOP]);
+  if (!bits.endsWith(stop) || (bits.length - stop.length) % 11 !== 0)
+    return { text: '', checkOk: false };
+  const valueOf = new Map(CODE128_BARS.map((pattern, value) => [String(pattern), value]));
+  const values: number[] = [];
+  for (let at = 0; at < bits.length - stop.length; at += 11) {
+    const value = valueOf.get(bits.slice(at, at + 11));
+    if (value === undefined) return { text: '', checkOk: false };
+    values.push(value);
+  }
+  const start = values[0];
+  if (![103, 104, 105].includes(start) || values.length < 3) return { text: '', checkOk: false };
+  const check = values[values.length - 1];
+  let set = start === 103 ? 'A' : start === 104 ? 'B' : 'C';
+  let sum = start;
+  let text = '';
+  values.slice(1, -1).forEach((value, i) => {
+    sum += value * (i + 1);
+    if (value === 99) set = 'C';
+    else if (value === 100) set = 'B';
+    else if (value === 101) set = 'A';
+    else if (set === 'C') text += String(value).padStart(2, '0');
+    else if (set === 'B') text += String.fromCharCode(value + 32);
+    else text += String.fromCharCode(value < 64 ? value + 32 : value - 64);
+  });
+  return { text, checkOk: sum % 103 === check };
+}
+
 async function openTags(page: Page, who: E2eLogin) {
   await open(page, who, '/print-tags', () =>
     expect(page.getByRole('heading', { name: 'Print Tags' })).toBeVisible({ timeout: 60_000 })
@@ -711,8 +755,9 @@ test.describe('PT-W13: the tag printout has no app bars and runs over as many pa
     checkTags(await printed(page));
   });
 
-  // FB-B1 (Siddhi #9): the tag carries a real Code 128 of the piece barcode (drawn by JsBarcode), next to the QR; the old bars drawn from the letters' bits are gone.
-  test('FB-B1: every tag has exactly one real Code 128 svg, a QR beside it, and none of the old fake bars', async ({
+  // FB-B1 (Siddhi #9): the tag carries a real Code 128 (drawn by JsBarcode), next to the QR; the old bars drawn from the letters' bits are gone.
+  // FB-B final fix: the Code 128 carries the PIECE NUMBER (`W13-T01`), the shorter text, so its bars are wider on a 58 mm tag; the QR and the words above the bars keep the barcode (`W13TB001`).
+  test('FB-B1: every tag has exactly one real Code 128 svg that decodes to its piece number, a QR beside it, and none of the old fake bars', async ({
     page,
   }) => {
     await openTags(page, e2eLogin('owner'));
@@ -722,17 +767,47 @@ test.describe('PT-W13: the tag printout has no app bars and runs over as many pa
       await expect(wrap.locator('svg[data-testid="tag-code128"]')).toHaveCount(1);
       await expect(wrap.locator('.tag-qr')).toHaveCount(1);
     }
-    // drawn: the first tag's svg holds bars, and its width in modules is that of a Code 128 symbol of 'W13TB001' (11 per symbol, 13 for the stop)
-    const first = codes.first();
-    await expect(first.locator('rect').first()).toBeAttached();
-    const modules = await first.evaluate((svg) =>
-      Number(svg.getAttribute('viewBox')?.split(' ')[2])
+    // drawn: the first tag's svg holds bars
+    await expect(codes.first().locator('rect').first()).toBeAttached();
+
+    // read the bars of every tag back, module by module (a rect in the svg's group is a run of dark modules, the first rect is the white background; the viewBox is the width in modules), and decode them as a scanner would
+    const tags = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.print-tag-wrap')).map((wrap) => {
+        const svg = wrap.querySelector('svg[data-testid="tag-code128"]') as SVGElement;
+        const modules = Number(svg.getAttribute('viewBox')?.split(' ')[2]);
+        const bits = new Array<string>(modules).fill('0');
+        svg.querySelectorAll('g rect').forEach((rect) => {
+          const x = Number(rect.getAttribute('x'));
+          const width = Number(rect.getAttribute('width'));
+          for (let at = x; at < x + width; at += 1) bits[at] = '1';
+        });
+        return {
+          bits: bits.join(''),
+          piece: wrap.querySelector('.tag-sku')?.textContent ?? '',
+          words: wrap.querySelector('.tag-code-text')?.textContent ?? '',
+          qr: wrap.querySelector('img.tag-qr')?.getAttribute('alt') ?? '',
+        };
+      })
     );
-    expect(modules, 'start + 8 characters (digits may pair) + check + stop').toBeGreaterThanOrEqual(
-      11 + 5 * 11 + 11 + 13
-    );
-    expect(modules).toBeLessThanOrEqual(11 + 8 * 11 + 11 + 13);
-    expect((modules - 13) % 11, 'a whole number of 11-module symbols and a stop').toBe(0);
+    expect(tags).toHaveLength(42);
+    const seen = new Set<string>();
+    for (const tag of tags) {
+      const where = `the tag of ${tag.piece}`;
+      expect(TAGS, where).toContain(tag.piece);
+      const scanned = decodeCode128(tag.bits);
+      expect(scanned.checkOk, `${where}: a good check symbol`).toBe(true);
+      expect(scanned.text, `${where}: its Code 128 carries the piece number`).toBe(tag.piece);
+      // the barcode of the piece is `W13TB` + the number of the tag; it is not what the bars say, but it is in words above them and in the QR
+      expect(tag.words, `${where}: the barcode in words`).toMatch(/^W13TB\d{3}$/);
+      expect(scanned.text, `${where}: not the barcode string`).not.toBe(tag.words);
+      expect(tag.qr, `${where}: the QR carries the barcode`).toBe(`QR code ${tag.words}`);
+      expect(
+        tag.bits.length,
+        `${where}: fewer modules than the barcode string would take`
+      ).toBeLessThan(code128Modules(tag.words));
+      seen.add(scanned.text);
+    }
+    expect(seen.size, 'all 42 tags carry their own piece number').toBe(42);
     // the old fake bars
     await expect(page.locator('.tag-barcode-bars, .tag-barcode-bars span')).toHaveCount(0);
     // and the business name is the Settings', no longer the fixed "JGP"

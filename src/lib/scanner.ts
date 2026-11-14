@@ -1,4 +1,4 @@
-// FB-B2 (Siddhi #9): reading a tag with the phone's camera. A tag carries a Code 128 and a QR of the piece barcode (FB-B1); both are read here, and the text that comes out is what a typed
+// FB-B2 (Siddhi #9): reading a tag with the phone's camera. A tag carries a Code 128 (of the piece number) and a QR (of the barcode) (FB-B1); both are read here, and the text that comes out, a piece number or a barcode, is what a typed
 // code or a USB scanner would have given the screen.
 //   - the browser's own `BarcodeDetector`, when it has one that reads both, is used as it is (nothing to download);
 //   - else `@zxing/browser` (plain JavaScript: no WebAssembly, no eval, so the Content-Security-Policy needs nothing new), loaded only when the camera is first opened;

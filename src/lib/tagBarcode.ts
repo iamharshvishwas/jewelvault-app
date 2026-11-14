@@ -1,6 +1,6 @@
 import { BUSINESS_SHORT_NAME } from '@/lib/businessConfig';
 
-// FB-B1 (Siddhi #9): what the tag prints as a barcode. A real Code 128 (drawn by JsBarcode in the tag page), of the piece barcode, next to the QR.
+// FB-B1 (Siddhi #9): what the tag prints as a barcode. A real Code 128 (drawn by JsBarcode in the tag page) next to the QR. FB-B final fix: the Code 128 carries the piece number, the QR the barcode.
 
 /** How JsBarcode draws the tag's Code 128: bars only (the text is printed in HTML), no margin, one module wide; the svg is stretched to the tag with CSS. */
 export const TAG_BARCODE_OPTIONS = {
@@ -11,9 +11,18 @@ export const TAG_BARCODE_OPTIONS = {
   width: 1,
 } as const;
 
-/** What the barcode says: the piece's barcode, or its piece number when it has none (the same text the QR carries). */
+/** What the QR carries (and the words above the Code 128): the piece's barcode, or its piece number when it has none. */
 export function tagBarcodeValue(sku: { barcode: string; skuNumber: string }): string {
   return sku.barcode || sku.skuNumber;
+}
+
+/**
+ * What the Code 128 carries: the piece number (`RING-00001-001`), not the barcode string (`BC-RING-00001-001`). The barcode string is 222 modules, about 0.1 mm each in the 21.6 mm of a 58 mm
+ * tag, narrower than the 0.125 mm dot of a 203 dpi thermal printer; the piece number is shorter (189 modules) and so has wider bars. `findSkuByCode` finds a piece by its number as well as by
+ * its barcode (the scan screen and the billing screen both use it), so a scan of this Code 128 finds the same piece.
+ */
+export function tagCode128Value(sku: { barcode: string; skuNumber: string }): string {
+  return sku.skuNumber;
 }
 
 /** The shop's name on the tag: the Settings' short name, or the configured one when that is blank. */
