@@ -25,6 +25,7 @@ import {
   userRow,
   uuid,
 } from './support/rows';
+import { sessionFor } from './support/access';
 
 /** `'session'` is the real session store (the preview build's demo person); the others are a role stood in for it. */
 type Who = 'owner' | 'biller' | 'staff' | null | 'session';
@@ -40,7 +41,7 @@ async function world(who: Who, { preview = false } = {}) {
     const original = await importOriginal<typeof import('@/lib/authStore')>();
     return {
       ...original,
-      useSession: () => (who === 'session' ? original.getSessionState() : { role: who }),
+      useSession: () => (who === 'session' ? original.getSessionState() : sessionFor(who)),
     };
   });
   const [cache, designs, table, tabs, info, gallery] = await Promise.all([

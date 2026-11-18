@@ -1,7 +1,6 @@
 // The rows of the inventory screen's CSV, Excel and print exports (spec D9, D12, A14; test T-D03; task WEB12b). The screen is open to all three roles, so what the rows hold depends on the role:
 // the owner-only original weight of a piece is a column for the owner and does not exist for anybody else. (A biller's or staff user's cache has no such weight to give, and the column of zeros
 // that the export used to carry for them read as "a weight of nothing", which is a false statement about the stock.)
-import type { AuthRole } from '@/lib/authStore';
 import type { ExportRow } from '@/lib/exportUtils';
 import type { Design } from '@/lib/mockData';
 
@@ -9,7 +8,7 @@ export const ORIGINAL_WEIGHT_COLUMN = 'Original Net Weight (g)';
 
 export function inventoryExportRows(
   designs: readonly Design[],
-  role: AuthRole | null
+  role: string | null // TODO(task-19): can() instead of the role key
 ): ExportRow[] {
   return designs.flatMap((design) =>
     design.skus.map((sku) => ({

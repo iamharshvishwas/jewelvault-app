@@ -8,19 +8,19 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import MobileNav from '@/components/MobileNav';
 import Sidebar from '@/components/Sidebar';
-import type { AuthRole, AuthSession } from '@/lib/authStore';
+import type { AuthSession } from '@/lib/authStore';
+import { sessionFor, type BuiltInRole } from './support/access';
 
 vi.mock('next/navigation', () => ({ usePathname: () => '/' }));
 
 const noop = () => undefined;
-const who = (role: AuthRole): AuthSession => ({
+const who = (role: BuiltInRole): AuthSession => ({
+  ...(sessionFor(role).session as AuthSession),
   userId: `u-${role}`,
   email: `${role}@example.test`,
   displayName: 'Test Person',
-  role,
-  mustChangePassword: false,
 });
-const drawer = (role: AuthRole) =>
+const drawer = (role: BuiltInRole) =>
   renderToStaticMarkup(
     createElement(Sidebar, {
       variant: 'drawer',
@@ -78,7 +78,7 @@ describe('PT-FBA1 drawer markup', () => {
 });
 
 // FB-A2: the bottom bar of a phone has an Estimates button for the roles that may open /estimate (the same table as the route gate), and Scan stays the owner's.
-const bottomBar = (role: AuthRole) =>
+const bottomBar = (role: BuiltInRole) =>
   renderToStaticMarkup(createElement(MobileNav, { session: who(role) }));
 
 describe('PT-FBA2 bottom bar', () => {

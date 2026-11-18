@@ -13,7 +13,8 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Design, Sku, SkuStatus } from '@/lib/mockData';
-import { canAccessPath } from '@/lib/authStore';
+import { canAccessPath } from '@/lib/access';
+import { holderFor } from './support/access';
 import { catalogueRows } from '@/lib/stockCatalogue';
 import {
   categoryRow,
@@ -394,7 +395,7 @@ describe('FB-D2 the catalogue screen', () => {
 describe('FB-D2 who may open the screen', () => {
   it('the owner, the biller and the staff; nobody without a role', () => {
     for (const role of ['owner', 'biller', 'staff'] as const)
-      expect(canAccessPath(role, '/stock-catalogue'), role).toBe(true);
+      expect(canAccessPath(holderFor(role), '/stock-catalogue'), role).toBe(true);
     expect(canAccessPath(null, '/stock-catalogue')).toBe(false);
   });
 

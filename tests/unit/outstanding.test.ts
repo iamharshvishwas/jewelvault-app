@@ -29,6 +29,7 @@ import { downloadCsv } from '@/lib/exportUtils';
 import { at, uuid } from './support/rows';
 import { balanceRow, billRow, customerRow, summaryRow } from './support/money-rows';
 import { parseCsv } from './support/csv';
+import { sessionFor } from './support/access';
 
 // ================================================================================================ rows made here
 
@@ -473,7 +474,7 @@ describe('FB-D3 the dashboard card "Payment pending over 60 days"', () => {
     if (role) {
       vi.doMock('@/lib/authStore', async (importOriginal) => ({
         ...(await importOriginal<typeof import('@/lib/authStore')>()),
-        useSession: () => ({ role }),
+        useSession: () => sessionFor(role),
       }));
     }
     const panel = await import('@/app/components/DashboardOverduePanel');

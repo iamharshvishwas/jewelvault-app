@@ -9,7 +9,6 @@ import {
   CreditCard,
   Package,
 } from 'lucide-react';
-import type { AuthRole } from '@/lib/authStore';
 
 const QUICK_ACTIONS = [
   {
@@ -87,7 +86,11 @@ const STAFF_QUICK_ACTIONS = [
   },
 ];
 
-export default function DashboardQuickActions({ role = 'owner' }: { role?: AuthRole }) {
+export default function DashboardQuickActions({
+  role = 'owner',
+}: {
+  role?: string; /* TODO(task-18): can() instead of the role key */
+}) {
   const actions = role === 'staff' ? STAFF_QUICK_ACTIONS : QUICK_ACTIONS;
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">

@@ -4,7 +4,6 @@ import React, { useRef, useState } from 'react';
 import { CalendarClock, ImagePlus, Phone, User } from 'lucide-react';
 import SaveButton from '@/components/ui/SaveButton';
 import { newUuid } from '@/lib/api/client';
-import type { Role } from '@/lib/api/types';
 import {
   addOrderPhoto,
   canAddPhoto,
@@ -34,7 +33,7 @@ export default function OrderCard({
   today,
 }: {
   order: OrderView;
-  role: Role | null;
+  role: string | null; // TODO(task-20): can() instead of the role key
   today: string;
 }) {
   const staffView = role !== 'owner' && role !== 'biller';

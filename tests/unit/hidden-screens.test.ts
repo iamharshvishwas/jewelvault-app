@@ -6,7 +6,8 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import DesignTabs from '@/app/design-detail/components/DesignTabs';
 import ReportsClient from '@/app/reports/components/ReportsClient';
-import { canAccessPath, type AuthRole } from '@/lib/authStore';
+import { canAccessPath } from '@/lib/access';
+import { PLAN_TICKS, holderFor, type RoleSpec } from './support/access';
 import { inventoryExportRows } from '@/lib/inventoryExport';
 import type { Design, Sku } from '@/lib/mockData';
 
@@ -51,16 +52,18 @@ function strings(file: string): string[] {
 
 // FB-F1: the Order Book is built (on the API, FB-E1) and open to every role; the public catalogue and its admin screen stay hidden.
 const HIDDEN = ['/catalogue', '/customer-catalogue'];
-const ROLES: AuthRole[] = ['owner', 'biller', 'staff'];
+// the three built-in roles, and a Super Admin with every tick: no tick opens a hidden screen
+const ROLES: RoleSpec[] = ['owner', 'biller', 'staff', { ticks: PLAN_TICKS, superAdmin: true }];
 
 describe('T-E04 the hidden screens cannot be reached by URL', () => {
   it.each(HIDDEN.flatMap((route) => ROLES.map((role) => [route, role] as const)))(
-    '%s is closed to %s, and a sub-path or a query does not open it',
+    '%s is closed to %j, and a sub-path or a query does not open it',
     (route, role) => {
-      expect(canAccessPath(role, route)).toBe(false);
-      expect(canAccessPath(role, `${route}/`)).toBe(false);
-      expect(canAccessPath(role, `${route}?id=1`)).toBe(false);
-      expect(canAccessPath(role, `${route}/anything`)).toBe(false);
+      const who = holderFor(role);
+      expect(canAccessPath(who, route)).toBe(false);
+      expect(canAccessPath(who, `${route}/`)).toBe(false);
+      expect(canAccessPath(who, `${route}?id=1`)).toBe(false);
+      expect(canAccessPath(who, `${route}/anything`)).toBe(false);
     }
   );
 

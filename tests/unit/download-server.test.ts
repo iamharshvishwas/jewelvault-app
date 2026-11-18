@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api/client';
-import type { AuthRole } from '@/lib/authStore';
 import { createRowCache, type RowCache } from '@/lib/cache/cache';
 import {
   createDownloadServer,
@@ -81,7 +80,7 @@ function fakePoller(order: string[]) {
   };
 }
 
-const OK_ROLE: AuthRole = 'owner';
+const OK_ROLE: string = 'owner';
 
 interface Rig {
   server: DownloadServer;
@@ -91,7 +90,7 @@ interface Rig {
   saved: Array<{ zip: Uint8Array; filename: string }>;
   posts: Array<{ path: string; body: unknown }>;
   hydrate: { current: HydrateState['status'] };
-  role: { current: AuthRole | null };
+  role: { current: string | null };
   postAnswer: { current: () => Promise<unknown> };
   logoutHooks: Array<() => void>;
   deps: DownloadServerDeps;
@@ -108,7 +107,7 @@ function rig(over: Partial<DownloadServerDeps> = {}): Rig {
   const saved: Rig['saved'] = [];
   const posts: Rig['posts'] = [];
   const hydrate = { current: 'ready' as HydrateState['status'] };
-  const role = { current: OK_ROLE as AuthRole | null };
+  const role = { current: OK_ROLE as string | null };
   const logoutHooks: Array<() => void> = [];
   const postAnswer = {
     current: async () => ({

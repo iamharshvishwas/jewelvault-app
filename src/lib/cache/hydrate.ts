@@ -2,13 +2,13 @@
 
 // The first hydrate behind the loading gate (spec C2, C3, U7, U8). Task WEB03.
 //
-// After a login, at start-up and after a change of role, every resource the role may read is loaded into the cache (cache.ts) by
+// After a login, at start-up and after a change of access, every resource the person may read (`reads` of `me`) is loaded into the cache (cache.ts) by
 // GET /v1/sync/<resource>. A page holds at most 1,000 rows and `next` is where the following page starts: the loader asks again from the
 // cursor the server hands back, so it advances by the rows it RECEIVED and a server that caps its pages lower than the page asked for (500, the
 // T-F03 case) is followed to the end. It stops when `next` is null. The tables of the stock side go first, the money side after them, and
 // three tables at a time are in flight, so one browser never crowds the API's pool of 8 connections.
 //
-// The gate (AppLayout) shows no data page until the load of THIS role and THIS session epoch is whole. While it runs it shows "3 of 8 tables"; if
+// The gate (AppLayout) shows no data page until the load of THIS access text and THIS session epoch is whole. While it runs it shows "3 of 8 tables"; if
 // any page fails it shows the plain message and a retry button, and what had arrived is thrown away: there is never sample data and never a
 // half-filled list behind the gate (D20). A retry starts again from the first page.
 //
@@ -26,7 +26,6 @@ import {
   PREVIEW_MODE,
   registerLogoutHook,
   reviewRole as siteReviewRole,
-  type AuthRole,
   type RoleReview,
 } from '@/lib/authStore';
 import { CacheDataError, rowCache, type RowCache } from './cache';
@@ -43,7 +42,7 @@ const MAX_PAGES_PER_TABLE = 2000;
 
 const COULD_NOT_LOAD = 'The data could not be loaded. Try again.';
 
-// ------------------------------------------------------------------------------------------------ what each role reads (A4, C3)
+// ------------------------------------------------------------------------------------------------ what a person reads (A4, C3, R6)
 
 /** The stock side: loaded first. */
 export const STOCK_SIDE: readonly SyncResource[] = [
@@ -74,18 +73,19 @@ const HYDRATE_ORDER: readonly SyncResource[] = [
   ...ORDER_BOOK,
 ];
 
-// The roles of the permission matrix of the API (A4, C3): the owner reads all 16; the biller all but the owner-only weight; staff the stock, the
-// categories, the rates, the settings, the people and the orders. A role is asked for nothing it may not read, because the API answers the whole call
-// 403 for one resource it forbids. tests/e2e/hydrate.spec.ts checks this table against the real API for each role.
-const NOT_READ: Record<AuthRole, readonly SyncResource[]> = {
-  owner: [],
-  biller: ['sku-private'],
-  staff: ['sku-private', ...MONEY_SIDE],
-};
+// What a person may read is what `me` says in `reads` (the API works it out from the ticks of the role). A person is asked for nothing else, because the
+// API answers the whole call 403 for one resource it forbids. tests/e2e/hydrate.spec.ts checks, for each built-in role, that the API accepts the poll for
+// exactly `reads`.
 
-/** The resources a role loads, the stock side first. */
-export function resourcesFor(role: AuthRole): SyncResource[] {
-  return HYDRATE_ORDER.filter((resource) => !NOT_READ[role].includes(resource));
+/** The resources a person loads: those of `reads`, in the order of the hydrate (the stock side first), each once. */
+export function resourcesFor(reads: readonly SyncResource[]): SyncResource[] {
+  return HYDRATE_ORDER.filter((resource) => reads.includes(resource));
+}
+
+/** What a load is for: the access text of the session and the resources it reads. */
+export interface HydrateKey {
+  access: string;
+  reads: readonly SyncResource[];
 }
 
 // ------------------------------------------------------------------------------------------------ the state
@@ -94,8 +94,10 @@ export type HydrateStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface HydrateState {
   status: HydrateStatus;
-  /** The role and the session epoch this state is for (null while idle). The gate opens only for the role and epoch of the session. */
-  role: AuthRole | null;
+  /** The access text and the session epoch this state is for (null while idle). The gate opens only for the access text and epoch of the session. */
+  access: string | null;
+  /** The resources this load is for, in the order of the hydrate (null while idle): the poller polls these. */
+  resources: readonly SyncResource[] | null;
   epoch: number | null;
   tablesDone: number;
   tablesTotal: number;
@@ -110,7 +112,8 @@ export interface HydrateState {
 
 const IDLE: HydrateState = {
   status: 'idle',
-  role: null,
+  access: null,
+  resources: null,
   epoch: null,
   tablesDone: 0,
   tablesTotal: 0,
@@ -125,9 +128,11 @@ export function progressText(state: Pick<HydrateState, 'tablesDone' | 'tablesTot
   return `${state.tablesDone} of ${state.tablesTotal} tables`;
 }
 
-/** C2, U7: may the page body be shown? Only when the load that is whole is the load of this role in this session epoch. */
-export function isGateOpen(state: HydrateState, role: AuthRole | null, epoch: number): boolean {
-  return state.status === 'ready' && role !== null && state.role === role && state.epoch === epoch;
+/** C2, U7: may the page body be shown? Only when the load that is whole is the load of this access text in this session epoch. */
+export function isGateOpen(state: HydrateState, access: string | null, epoch: number): boolean {
+  return (
+    state.status === 'ready' && access !== null && state.access === access && state.epoch === epoch
+  );
 }
 
 // ------------------------------------------------------------------------------------------------ the loader
@@ -135,7 +140,7 @@ export function isGateOpen(state: HydrateState, role: AuthRole | null, epoch: nu
 export interface HydrateDeps {
   api: Pick<ApiClient, 'syncPage'>;
   cache: RowCache;
-  /** A 403 from a page: ask the session whether the role changed (U6). Default: the site's `reviewRole`. */
+  /** A 403 from a page: ask the session whether the access changed (U6). Default: the site's `reviewRole`. */
   reviewRole?: () => Promise<RoleReview>;
   /** A preview build has no API: the stores hold sample data and the gate is open. */
   preview?: boolean;
@@ -147,8 +152,8 @@ export interface Hydrator {
   getState(): HydrateState;
   /** For useSyncExternalStore. */
   subscribe(listener: () => void): () => void;
-  /** Loads everything `role` may read, for this session epoch. Asked again for the same role and epoch (every page asks), it does nothing; an error waits for `retry`. */
-  start(role: AuthRole, epoch: number): void;
+  /** Loads everything of `key.reads`, for this access text and session epoch. Asked again for the same access and epoch (every page asks), it does nothing; an error waits for `retry`. */
+  start(key: HydrateKey, epoch: number): void;
   /** The retry button: empties what had arrived and loads again from the first page. */
   retry(): void;
   /** U8: stops a load that is running, empties the cache, closes the gate. */
@@ -158,7 +163,8 @@ export interface Hydrator {
 }
 
 interface Job {
-  role: AuthRole;
+  access: string;
+  resources: readonly SyncResource[];
   epoch: number;
   controller: AbortController;
   /** Work stops: a reset, a newer load, or a failure of one table. */
@@ -224,7 +230,7 @@ export function createHydrator(deps: HydrateDeps): Hydrator {
   }
 
   async function run(job: Job): Promise<void> {
-    const queue = resourcesFor(job.role);
+    const queue = [...job.resources];
     const worker = async (): Promise<void> => {
       for (;;) {
         if (job.stopped) return;
@@ -258,15 +264,15 @@ export function createHydrator(deps: HydrateDeps): Hydrator {
 
   async function fail(job: Job, error: unknown): Promise<void> {
     if (current !== job) return; // the person left, or a newer load took over: a late error is nobody's business
-    // U6: a 403 for a role that has just been changed is not an error to show; the session asks `me` (once) and, when the role is another, runs the hooks
-    // (this loader is reset) and opens the gate again, which starts the load of the new role.
+    // U6: a 403 for an access that has just been changed is not an error to show; the session asks `me` (once) and, when the access is another, runs the hooks
+    // (this loader is reset) and opens the gate again, which starts the load of the new access.
     if (isApiError(error) && error.code === 'JV_FORBIDDEN' && !job.reviewed) {
       job.reviewed = true;
       const review = deps.reviewRole ?? siteReviewRole;
       try {
         await review();
       } catch {
-        // the answer is only used to find out whether the role changed; the error below is shown either way
+        // the answer is only used to find out whether the access changed; the error below is shown either way
       }
       if (current !== job) return;
     }
@@ -294,11 +300,12 @@ export function createHydrator(deps: HydrateDeps): Hydrator {
     return COULD_NOT_LOAD;
   }
 
-  function begin(role: AuthRole, epoch: number): void {
+  function begin(access: string, resources: readonly SyncResource[], epoch: number): void {
     stop(current);
     cache.clear();
     const job: Job = {
-      role,
+      access,
+      resources,
       epoch,
       controller: new AbortController(),
       stopped: false,
@@ -311,10 +318,11 @@ export function createHydrator(deps: HydrateDeps): Hydrator {
     current = job;
     setState({
       status: 'loading',
-      role,
+      access,
+      resources,
       epoch,
       tablesDone: 0,
-      tablesTotal: resourcesFor(role).length,
+      tablesTotal: resources.length,
       rowsLoaded: 0,
       error: null,
       firstServerTime: null,
@@ -331,15 +339,21 @@ export function createHydrator(deps: HydrateDeps): Hydrator {
         listeners.delete(listener);
       };
     },
-    start: (role, epoch) => {
+    start: (key, epoch) => {
       if (preview) return;
-      if (state.status !== 'idle' && state.role === role && state.epoch === epoch) return;
-      begin(role, epoch);
+      if (state.status !== 'idle' && state.access === key.access && state.epoch === epoch) return;
+      begin(key.access, resourcesFor(key.reads), epoch);
     },
     retry: () => {
-      if (preview || state.status !== 'error' || state.role === null || state.epoch === null)
+      if (
+        preview ||
+        state.status !== 'error' ||
+        state.access === null ||
+        state.resources === null ||
+        state.epoch === null
+      )
         return;
-      begin(state.role, state.epoch);
+      begin(state.access, state.resources, state.epoch);
     },
     reset: () => {
       stop(current);
@@ -355,7 +369,7 @@ export function createHydrator(deps: HydrateDeps): Hydrator {
 
 /**
  * U8: registers the one logout hook of the cache. Every end of a session (a logout, the idle logout, any 401, another person signing in, a change of
- * role) runs it: the load that is running stops, the memory is emptied and the gate closes. Returns the way to take the hook away again.
+ * access) runs it: the load that is running stops, the memory is emptied and the gate closes. Returns the way to take the hook away again.
  */
 export function bindToSession(
   hydrator: Pick<Hydrator, 'reset'>,

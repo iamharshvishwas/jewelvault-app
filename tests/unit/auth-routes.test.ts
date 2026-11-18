@@ -11,24 +11,25 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { createApiClient } from '@/lib/api/client';
+import { canAccessPath } from '@/lib/access';
 import {
   IDLE_LIMIT_MS,
   IDLE_NOTICE,
-  canAccessPath,
   createSessionStore,
   getSessionState,
   initialsOf,
   isIdle,
   registerLogoutHook,
   signOut,
-  type AuthRole,
   type SessionHost,
 } from '@/lib/authStore';
+import { holderOf } from '@/lib/useAccess';
+import { accessFor, holderFor, type BuiltInRole } from './support/access';
 
-const ALL: AuthRole[] = ['owner', 'biller', 'staff'];
+const ALL: BuiltInRole[] = ['owner', 'biller', 'staff'];
 
-// [route, roles that may open it]
-const SCREENS: Array<[string, AuthRole[]]> = [
+// [route, built-in roles that may open it] (each role by its ticks, tests/unit/support/access.ts)
+const SCREENS: Array<[string, BuiltInRole[]]> = [
   ['/', ALL],
   ['/billing-pos', ['owner', 'biller']],
   ['/estimate', ['owner', 'biller']],
@@ -55,7 +56,7 @@ describe('the screens by role (spec 1.3)', () => {
     for (const role of ALL) {
       const expected = allowed.includes(role);
       it(`${role} ${expected ? 'may' : 'may not'} open ${route}`, () => {
-        expect(canAccessPath(role, route)).toBe(expected);
+        expect(canAccessPath(holderFor(role), route)).toBe(expected);
       });
     }
   }
@@ -66,25 +67,25 @@ describe('the screens by role (spec 1.3)', () => {
   });
 
   it('a route that is not in the table is closed to everybody', () => {
-    for (const role of ALL) expect(canAccessPath(role, '/no-such-screen')).toBe(false);
+    for (const role of ALL) expect(canAccessPath(holderFor(role), '/no-such-screen')).toBe(false);
   });
 
   it('a route that only starts with a listed name is not that route', () => {
-    expect(canAccessPath('staff', '/edit-stock-everything')).toBe(false);
-    expect(canAccessPath('biller', '/billing-pos-admin')).toBe(false);
-    expect(canAccessPath('owner', '/settingsx')).toBe(false);
+    expect(canAccessPath(holderFor('staff'), '/edit-stock-everything')).toBe(false);
+    expect(canAccessPath(holderFor('biller'), '/billing-pos-admin')).toBe(false);
+    expect(canAccessPath(holderFor('owner'), '/settingsx')).toBe(false);
   });
 
   it('a trailing slash and a query do not change the answer', () => {
-    expect(canAccessPath('biller', '/billing-pos/')).toBe(true);
-    expect(canAccessPath('staff', '/reports/')).toBe(false);
-    expect(canAccessPath('owner', '/settings?tab=users')).toBe(true);
-    expect(canAccessPath('biller', '/settings?tab=users')).toBe(false);
+    expect(canAccessPath(holderFor('biller'), '/billing-pos/')).toBe(true);
+    expect(canAccessPath(holderFor('staff'), '/reports/')).toBe(false);
+    expect(canAccessPath(holderFor('owner'), '/settings?tab=users')).toBe(true);
+    expect(canAccessPath(holderFor('biller'), '/settings?tab=users')).toBe(false);
   });
 
   it('a sub-path of a listed route follows the listed route', () => {
-    expect(canAccessPath('staff', '/inventory-management/anything')).toBe(true);
-    expect(canAccessPath('staff', '/customer-ledger/anything')).toBe(false);
+    expect(canAccessPath(holderFor('staff'), '/inventory-management/anything')).toBe(true);
+    expect(canAccessPath(holderFor('staff'), '/customer-ledger/anything')).toBe(false);
   });
 });
 
@@ -136,23 +137,41 @@ const json = (status: number, body: unknown) =>
 const refusal = (code: string, status: number, message = 'no.', details = {}) =>
   json(status, { error: { code, message, details }, request_id: 'req-1' });
 
+/** The person as `me` says them (R6): the login answer carries only the first five fields. */
 interface TestUser {
   id: string;
   email: string;
   full_name: string;
-  role: AuthRole;
+  role: string;
   must_change_password: boolean;
+  role_name: string;
+  permissions: string[];
+  is_super_admin: boolean;
+  access: string;
+  reads: string[];
 }
-const userOf = (role: AuthRole, extra: Partial<TestUser> = {}): TestUser => ({
-  id: `00000000-0000-4000-8000-00000000000${ALL.indexOf(role) + 1}`,
-  email: `${role}@jv.test`,
-  full_name: `Test ${role}`,
-  role,
-  must_change_password: false,
-  ...extra,
-});
+const userOf = (role: BuiltInRole, extra: Partial<TestUser> = {}): TestUser => {
+  const fields = accessFor(role);
+  return {
+    id: `00000000-0000-4000-8000-00000000000${ALL.indexOf(role) + 1}`,
+    email: `${role}@jv.test`,
+    full_name: `Test ${role}`,
+    role,
+    must_change_password: false,
+    role_name: fields.roleName,
+    permissions: fields.permissions,
+    is_super_admin: fields.isSuperAdmin,
+    access: fields.access,
+    reads: fields.reads,
+    ...extra,
+  };
+};
+/** The gate key of a built-in role: the access text its `me` carries. */
+const accessOf = (role: BuiltInRole) => accessFor(role).access;
 const LIFE = { idle_timeout_s: 43200, absolute_expires_at: '2026-10-30T00:00:00.000000Z' };
-const loginOk = (user: TestUser) => json(200, { user, ...LIFE });
+/** The login (and password change) answer: it does not say what the person may do, which is why the store asks `me` after it. */
+const loginOk = ({ id, email, full_name, role, must_change_password }: TestUser) =>
+  json(200, { user: { id, email, full_name, role, must_change_password }, ...LIFE });
 const meOk = (user: TestUser) => json(200, { user, ...LIFE, pricing_sha256: null });
 
 interface Sent {
@@ -282,7 +301,7 @@ describe('T-E01 the gate at start-up: loading, then the login screen or the app 
 
     const state = w.store.getState();
     expect(state.status).toBe('signedIn');
-    expect(state.role).toBe('biller');
+    expect(state.access).toBe(accessOf('biller'));
     expect(state.session).toMatchObject({
       userId: userOf('biller').id,
       email: 'biller@jv.test',
@@ -309,7 +328,7 @@ describe('T-E01 the gate at start-up: loading, then the login screen or the app 
     const off = w.store.subscribe(listener);
     await vi.advanceTimersByTimeAsync(0);
     expect(listener).toHaveBeenCalled();
-    expect(w.store.getState().role).toBe('staff');
+    expect(w.store.getState().access).toBe(accessOf('staff'));
     off();
     expect(w.store.getState().status, 'a page that goes away does not sign anybody out').toBe(
       'signedIn'
@@ -324,7 +343,7 @@ describe('T-E01 the gate at start-up: loading, then the login screen or the app 
     w.store.start();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(w.store.getState()).toMatchObject({ status: 'signedOut', session: null, role: null });
+    expect(w.store.getState()).toMatchObject({ status: 'signedOut', session: null, access: null });
     expect(w.store.getState().notice).toBeNull();
     expect(wiped).toHaveBeenCalledTimes(1);
     expect(w.sent).toHaveLength(1);
@@ -353,6 +372,21 @@ describe('T-E01 the gate at start-up: loading, then the login screen or the app 
     await vi.advanceTimersByTimeAsync(0);
     expect(w.store.getState().status).toBe('signedIn');
     expect(w.calls('GET', '/v1/auth/me')).toBe(2);
+  });
+
+  it('a `me` that does not say what the person may do (an older API) shows the error screen, never an app with no ticks', async () => {
+    const w = world();
+    const { id, email, full_name, role, must_change_password } = userOf('owner');
+    w.route('GET /v1/auth/me', () =>
+      json(200, {
+        user: { id, email, full_name, role, must_change_password },
+        ...LIFE,
+        pricing_sha256: null,
+      })
+    );
+    w.store.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(w.store.getState()).toMatchObject({ status: 'error', session: null, access: null });
   });
 
   it('a build with no API address shows the error screen instead of crashing', async () => {
@@ -384,7 +418,15 @@ describe('T-E01 login per role (U1, U5)', () => {
       const login = w.sent[1];
       expect(login.body).toEqual({ email: `${role}@jv.test`, password: 'a-password-for-the-test' });
       expect(login.headers.get('x-jv-client')).toBe('web');
-      expect(w.store.getState()).toMatchObject({ status: 'signedIn', role, notice: null });
+      expect(w.store.getState()).toMatchObject({
+        status: 'signedIn',
+        access: accessOf(role),
+        notice: null,
+      });
+      expect(w.store.getState().session).toMatchObject({
+        role,
+        roleName: accessFor(role).roleName,
+      });
       expect(w.store.getState().session?.displayName).toBe(`Test ${role}`);
     });
   }
@@ -394,7 +436,7 @@ describe('T-E01 login per role (U1, U5)', () => {
     w.knows(userOf('biller'));
     w.route('POST /v1/auth/login', () => loginOk(userOf('owner', { id: userOf('biller').id })));
     expect(await w.store.signIn('biller@jv.test', 'x-password-123')).toEqual({ error: null });
-    expect(w.store.getState().role).toBe('biller');
+    expect(w.store.getState().access).toBe(accessOf('biller'));
   });
 
   it('a wrong password: one plain message, still on the login screen, memory not touched, `me` not asked', async () => {
@@ -470,13 +512,13 @@ describe('T-E01 login per role (U1, U5)', () => {
     w.store.registerLogoutHook(wiped);
     w.knows(userOf('staff'));
     await w.store.signIn('staff@jv.test', 'x-password-123');
-    expect(w.store.getState().role).toBe('staff');
+    expect(w.store.getState().access).toBe(accessOf('staff'));
     expect(wiped).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('T-E01 a user who must change the password sees only the change-password screen (U11)', () => {
-  const mustChange = (role: AuthRole = 'biller') => userOf(role, { must_change_password: true });
+  const mustChange = (role: BuiltInRole = 'biller') => userOf(role, { must_change_password: true });
 
   it('after login the state is the change-password screen: a person, no role, no app', async () => {
     const w = world();
@@ -484,9 +526,9 @@ describe('T-E01 a user who must change the password sees only the change-passwor
     expect(await w.store.signIn('biller@jv.test', 'temporary-pass-1')).toEqual({ error: null });
     const state = w.store.getState();
     expect(state.status).toBe('mustChangePassword');
-    expect(state.role, 'no route opens').toBeNull();
+    expect(state.access, 'no route opens').toBeNull();
     expect(state.session?.displayName).toBe('Test biller');
-    expect(canAccessPath(state.role, '/')).toBe(false);
+    expect(canAccessPath(holderOf(state), '/')).toBe(false);
   });
 
   it('at start-up too (the temporary password was typed in an earlier visit)', async () => {
@@ -521,8 +563,24 @@ describe('T-E01 a user who must change the password sees only the change-passwor
       current_password: 'temporary-pass-1',
       new_password: 'a-new-long-password-9',
     });
-    expect(w.store.getState()).toMatchObject({ status: 'signedIn', role: 'biller' });
+    expect(w.store.getState()).toMatchObject({ status: 'signedIn', access: accessOf('biller') });
     expect(w.calls('GET', '/v1/auth/me')).toBe(2); // after the login and after the change
+  });
+
+  it('when `me` cannot be asked after the change, the app does not open on the answer of the change: the error screen asks `me` again', async () => {
+    const w = world();
+    w.knows(mustChange());
+    await w.store.signIn('biller@jv.test', 'temporary-pass-1');
+    w.route('POST /v1/auth/change-password', () => loginOk(userOf('biller')));
+    w.routes.delete('GET /v1/auth/me'); // the network fails
+    expect(await w.store.changePassword('temporary-pass-1', 'a-new-long-password-9')).toEqual({
+      error: null,
+    });
+    expect(w.store.getState()).toMatchObject({ status: 'error', access: null });
+    w.route('GET /v1/auth/me', () => meOk(userOf('biller')));
+    w.store.retry();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(w.store.getState()).toMatchObject({ status: 'signedIn', access: accessOf('biller') });
   });
 
   it('a wrong current password is told as such and does NOT sign the person out (a 422, never a 401)', async () => {
@@ -572,7 +630,7 @@ describe('T-E01 any 401 empties memory, stops the pollers and shows the login sc
     w.route('POST /v1/sync/poll', () => refusal('JV_UNAUTHENTICATED', 401, 'Sign in to continue.'));
     await expect(w.api.poll({})).rejects.toMatchObject({ status: 401 });
 
-    expect(w.store.getState()).toMatchObject({ status: 'signedOut', session: null, role: null });
+    expect(w.store.getState()).toMatchObject({ status: 'signedOut', session: null, access: null });
     expect(w.store.getState().notice).toBe('Sign in to continue.');
     expect(cache).toHaveBeenCalledTimes(1);
     expect(poller).toHaveBeenCalledTimes(1);
@@ -661,7 +719,7 @@ describe('T-E01 logout (U8)', () => {
     expect(broken).toHaveBeenCalledTimes(1);
     expect(poller, 'a hook after a failing one still runs').toHaveBeenCalledTimes(1);
     expect(later, 'a hook that was unregistered does not run').not.toHaveBeenCalled();
-    expect(w.store.getState()).toMatchObject({ status: 'signedOut', session: null, role: null });
+    expect(w.store.getState()).toMatchObject({ status: 'signedOut', session: null, access: null });
     expect(w.store.getState().notice).toBeNull();
 
     await w.store.signOut();
@@ -719,7 +777,7 @@ describe('T-E01 logout (U8)', () => {
     release();
     await login;
     expect(w.calls('POST', '/v1/auth/login')).toBe(2);
-    expect(w.store.getState().role).toBe('biller');
+    expect(w.store.getState().access).toBe(accessOf('biller'));
   });
 
   it('20 login and logout cycles never hang, and leave no timer and no listener behind', async () => {
@@ -729,7 +787,7 @@ describe('T-E01 logout (U8)', () => {
     for (let cycle = 0; cycle < 20; cycle++) {
       const role = ALL[cycle % ALL.length];
       await w.signInAs(userOf(role));
-      expect(w.store.getState().role, `cycle ${cycle + 1}`).toBe(role);
+      expect(w.store.getState().access, `cycle ${cycle + 1}`).toBe(accessOf(role));
       await w.store.signOut();
       expect(w.store.getState().status, `cycle ${cycle + 1}`).toBe('signedOut');
     }
@@ -748,7 +806,7 @@ describe('the module-level store (what the pages use)', () => {
     const off = registerLogoutHook(cache);
     await signOut();
     expect(cache).toHaveBeenCalledTimes(1);
-    expect(getSessionState()).toMatchObject({ status: 'signedOut', session: null, role: null });
+    expect(getSessionState()).toMatchObject({ status: 'signedOut', session: null, access: null });
     await signOut();
     expect(cache).toHaveBeenCalledTimes(1);
     off();
@@ -782,9 +840,9 @@ describe('T-E01 a 403 from the poll calls `me` once (U6, C18)', () => {
     expect(outcome).toBe('changed');
     expect(held.sku_private, 'sku_private is gone from memory').toEqual([]);
     expect(held.audit, 'the audit data is gone from memory').toEqual([]);
-    expect(w.store.getState()).toMatchObject({ status: 'signedIn', role: 'biller' });
+    expect(w.store.getState()).toMatchObject({ status: 'signedIn', access: accessOf('biller') });
     expect(w.store.getState().epoch, 'the gate is opened again').toBe(epoch + 1);
-    expect(canAccessPath(w.store.getState().role, '/reports')).toBe(false);
+    expect(canAccessPath(holderOf(w.store.getState()), '/reports')).toBe(false);
     expect(w.calls('GET', '/v1/auth/me')).toBe(2); // after the login, and ONCE for the 403
   });
 
@@ -796,7 +854,7 @@ describe('T-E01 a 403 from the poll calls `me` once (U6, C18)', () => {
     w.knows(userOf('owner', { id: userOf('staff').id }));
     expect(await w.store.reviewRole()).toBe('changed');
     expect(wiped).toHaveBeenCalledTimes(1);
-    expect(w.store.getState().role).toBe('owner');
+    expect(w.store.getState().access).toBe(accessOf('owner'));
   });
 
   it('the same role: nothing is emptied, the gate stays as it is, and the caller shows the error once', async () => {

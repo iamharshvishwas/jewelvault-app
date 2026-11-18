@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import { createApiClient, nextPollDelayMs } from '@/lib/api/client';
 import { resourcesFor } from '@/lib/cache/hydrate';
 import { clampPollIntervalMs, createPoller, type PollerDeps } from '@/lib/cache/poll';
-import type { AuthRole } from '@/lib/authStore';
+import { accessFor, type RoleSpec } from './support/access';
 import {
   FakeServer,
   balanceOf,
@@ -44,7 +44,7 @@ afterEach(() => {
 /** A shop, a session, a hydrate and a poller. Nothing has run: `await settle()` lets the person in, the hydrate finish and the first poll go. */
 function boot(
   over: Partial<PollerDeps> = {},
-  options: { role?: AuthRole; prepare?: (server: FakeServer) => void } = {}
+  options: { role?: RoleSpec; prepare?: (server: FakeServer) => void } = {}
 ) {
   const server = new FakeServer();
   server.role = options.role ?? 'owner';
@@ -78,8 +78,10 @@ describe('T-E07 the first poll and the cursors (C3, C4)', () => {
     expect(t.hydrator.getState().status).toBe('ready');
     expect(t.hydrator.getState().pollFrom).toBe(stampAt(70)); // the first page was read at 100 s
     const first = rounds(t.server)[0];
-    expect(Object.keys(first.cursors ?? {}).sort()).toEqual([...resourcesFor('owner')].sort());
-    for (const resource of resourcesFor('owner')) {
+    expect(Object.keys(first.cursors ?? {}).sort()).toEqual(
+      [...resourcesFor(accessFor('owner').reads)].sort()
+    );
+    for (const resource of resourcesFor(accessFor('owner').reads)) {
       const cursor = cursorOf(first, resource);
       expect(cursor, resource).toEqual({ updated_at: stampAt(70) });
       expect(Object.keys(cursor ?? {})).toEqual(['updated_at']); // no key: the server reads `updated_at >= ?`
@@ -97,7 +99,7 @@ describe('T-E07 the first poll and the cursors (C3, C4)', () => {
     const staff = boot({}, { role: 'staff' });
     await settle();
     expect(Object.keys(rounds(staff.server)[0].cursors ?? {}).sort()).toEqual(
-      [...resourcesFor('staff')].sort()
+      [...resourcesFor(accessFor('staff').reads)].sort()
     );
   });
 
@@ -129,6 +131,7 @@ describe('T-E07 the first poll and the cursors (C3, C4)', () => {
         results: { designs: { rows: [designOf(1, stampAt(90), { name: 'stale' })], next: null } },
         server_time: stampAt(t.server.now()),
         role: 'owner',
+        access: accessFor('owner').access,
       });
     };
     await settle(8);
@@ -229,6 +232,7 @@ describe('T-E07 paging (C3, C4)', () => {
         },
         server_time: stampAt(t.server.now()),
         role: 'owner',
+        access: accessFor('owner').access,
       });
     };
     await settle(8);
@@ -279,7 +283,7 @@ describe('T-E07 rows that commit late (C3, C4)', () => {
     await settle(8); // the poll at 148 s sees the setting
     await settle(); // and the hydrate that follows
     const hydratesAfter = t.server.seen.filter((s) => s.kind === 'sync' && !s.updatedAfter).length;
-    expect(hydratesAfter).toBe(hydratesBefore + resourcesFor('owner').length);
+    expect(hydratesAfter).toBe(hydratesBefore + resourcesFor(accessFor('owner').reads).length);
     expect(t.cache.get('designs', designOf(3, '').id as string)).toBeDefined();
     expect(t.hydrator.getState().status).toBe('ready');
     // the poller goes on from the NEW hydrate: its first poll starts 30 seconds before that hydrate's first page
@@ -685,13 +689,16 @@ describe('T-E01 a demoted owner loses sku_private and the audit data within one 
     expect(t.server.count('me')).toBe(mes + 1);
     expect(t.session.getState()).toMatchObject({
       status: 'signedIn',
-      role: 'biller',
+      access: accessFor('biller').access,
       epoch: epoch + 1,
     });
     await settle(); // the hydrate of the biller
     expect(t.cache.count('sku-private')).toBe(0);
     expect(audit.size).toBe(0);
-    expect(t.hydrator.getState()).toMatchObject({ status: 'ready', role: 'biller' });
+    expect(t.hydrator.getState()).toMatchObject({
+      status: 'ready',
+      access: accessFor('biller').access,
+    });
     // no loop: five minutes on, `me` has been asked once for the change and the poll goes on as a biller
     await settle(300);
     expect(t.server.count('me')).toBe(mes + 1);
@@ -703,7 +710,7 @@ describe('T-E01 a demoted owner loses sku_private and the audit data within one 
     expect(t.poller.getState().failures).toBe(0);
   });
 
-  it("staff to biller: the poll is answered, but its `role` is another than the session's: `me` is asked once and the screen hydrates again", async () => {
+  it("staff to biller: the poll is answered, but its `access` is another than the session's: `me` is asked once and the screen hydrates again", async () => {
     const t = boot({}, { role: 'staff' });
     await settle();
     expect(Object.keys(rounds(t.server)[0].cursors ?? {})).toHaveLength(8);
@@ -711,11 +718,14 @@ describe('T-E01 a demoted owner loses sku_private and the audit data within one 
     t.server.role = 'biller';
     await settle(8);
     expect(t.server.count('me')).toBe(mes + 1);
-    expect(t.session.getState()).toMatchObject({ status: 'signedIn', role: 'biller' });
+    expect(t.session.getState()).toMatchObject({
+      status: 'signedIn',
+      access: accessFor('biller').access,
+    });
     await settle();
     expect(t.hydrator.getState()).toMatchObject({
       status: 'ready',
-      role: 'biller',
+      access: accessFor('biller').access,
       tablesTotal: 15,
     });
     await settle(120);
@@ -729,7 +739,10 @@ describe('T-E01 a demoted owner loses sku_private and the audit data within one 
     t.server.forbidden.add('customers'); // the server refuses a resource the screen had been allowed to read
     await settle(8);
     expect(t.server.count('me')).toBe(mes + 1);
-    expect(t.session.getState()).toMatchObject({ status: 'signedIn', role: 'owner' });
+    expect(t.session.getState()).toMatchObject({
+      status: 'signedIn',
+      access: accessFor('owner').access,
+    });
     expect(t.poller.getState().notice).toBe('You are not allowed to do this.');
     expect(t.cache.count('designs')).toBe(2); // memory is kept: reads go on
     await settle(120); // 8, 16, 30 seconds apart: 403 each time, `me` not asked again
@@ -759,7 +772,7 @@ describe('T-E01 a demoted owner loses sku_private and the audit data within one 
     expect(t.poller.getState().failures).toBe(1);
     await settle(8);
     expect(t.server.count('me')).toBe(mes + 2); // one `me` for each 403, no more
-    expect(t.session.getState().role).toBe('owner');
+    expect(t.session.getState().access).toBe(accessFor('owner').access);
   });
 
   it('a person whose `me` is refused with a 401 while the 403 is looked at ends at the login screen, with nothing left', async () => {

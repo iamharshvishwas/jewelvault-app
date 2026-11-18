@@ -80,7 +80,7 @@ const rupeesOfText = (text: string): number | null => {
 };
 
 export default function ReceivePaymentPanel({ customer, onClose }: ReceivePaymentPanelProps) {
-  const { role } = useSession();
+  const role = useSession().session?.role ?? null; // TODO(task-20): can() instead of the role key
   const walkIn = customer.id === WALK_IN_ID;
   const [kind, setKind] = useState<Kind>('Amount');
   // the walk-in's dues are many strangers' dues: it names its bill, so nothing is filled in for it

@@ -1,23 +1,21 @@
 // The golden fixture of the website (plan: access and roles, Task 16; DESIGN section 8, P1; goal G3): what each of the three built-in roles opens and
 // loads TODAY, recorded from the code that is in place before the change to ticks: `canAccessPath` of src/lib/authStore.ts (the screens by role) and
 // `resourcesFor` of src/lib/cache/hydrate.ts (what the role loads). After the change the same three roles must get the same answers from the new
-// functions, so the fixture is written ONCE and never edited afterwards:
-//
-//   JV_RECORD_GOLDEN=1 npx vitest run tests/unit/access-golden.test.ts    writes tests/unit/fixtures/access-golden.json from the old functions
-//   npx vitest run tests/unit/access-golden.test.ts                       compares the old functions with that file
+// functions, so the fixture was written ONCE (commit b7f9c2e) and is never edited afterwards.
 //
 // The file holds, for each role key (`owner`, `biller`, `staff`), the verdict for each path and the resources the role loads, in the order the old
 // `resourcesFor` gives them (the stock side first).
 //
-// This test has two halves. The OLD half compares the old functions with the fixture, and is the only one that can write it; it goes when Task 17 removes the
-// functions it calls (with the code marked "old half" below). The NEW half compares the new functions (src/lib/access.ts, over the holders of
-// tests/unit/support/access.ts) with the same fixture, and stays.
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'; // mkdirSync and writeFileSync: old half
+// The test had two halves. The OLD half compared the old functions with the fixture and was the only one that could write it; Task 17 removed it with the
+// functions it called. What stays compares the new functions with the same fixture: the screens of src/lib/access.ts over the holders of
+// tests/unit/support/access.ts, and the loads of `resourcesFor` over the `reads` that `me` gives each built-in role (tests/e2e/hydrate.spec.ts checks that the
+// real API's `me.reads` equals the recording).
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { canAccessPath } from '@/lib/access';
-import { canAccessPath as oldCanAccessPath } from '@/lib/authStore'; // old half
-import { resourcesFor as oldResourcesFor } from '@/lib/cache/hydrate'; // old half
+import type { SyncResource } from '@/lib/api/types';
+import { resourcesFor } from '@/lib/cache/hydrate';
 import { holderFor } from './support/access';
 
 const FIXTURE = path.resolve(__dirname, 'fixtures/access-golden.json');
@@ -57,36 +55,6 @@ function readFixture(): Golden {
   return JSON.parse(readFileSync(FIXTURE, 'utf8')) as Golden;
 }
 
-// ------------------------------------------------------------------------------------------------ old half: today's functions (removed with them by Task 17)
-
-const RECORD = process.env.JV_RECORD_GOLDEN === '1';
-
-const NOTE =
-  'What each built-in role opens and loads, recorded on 19 Nov 2026 from the old canAccessPath (src/lib/authStore.ts) and resourcesFor (src/lib/cache/hydrate.ts) at 4f9c1b3, before the change to ticks. Never edited afterwards (plan rule P1).';
-
-/** The verdicts of the code as it is today. */
-function fromOldCode(): Golden {
-  const roles = {} as Golden['roles'];
-  for (const role of ROLES) {
-    roles[role] = {
-      screens: Object.fromEntries(PATHS.map((p) => [p, oldCanAccessPath(role, p)])),
-      resources: oldResourcesFor(role),
-    };
-  }
-  return { note: NOTE, roles };
-}
-
-describe("today's code is what the fixture holds", () => {
-  it.runIf(RECORD)('records tests/unit/fixtures/access-golden.json from the old functions', () => {
-    mkdirSync(path.dirname(FIXTURE), { recursive: true });
-    writeFileSync(FIXTURE, `${JSON.stringify(fromOldCode(), null, 2)}\n`);
-  });
-
-  it.skipIf(RECORD)('the old canAccessPath and resourcesFor give exactly the fixture', () => {
-    expect(fromOldCode().roles).toEqual(readFixture().roles);
-  });
-});
-
 // ------------------------------------------------------------------------------------------------ the new functions (this half stays)
 
 describe('the access module gives the three built-in roles what the fixture holds (P1)', () => {
@@ -96,6 +64,16 @@ describe('the access module gives the three built-in roles what the fixture hold
       for (const [pathname, opens] of Object.entries(golden.roles[role].screens)) {
         expect(canAccessPath(holderFor(role), pathname), `${role} ${pathname}`).toBe(opens);
       }
+    }
+  });
+
+  it('the hydrate loads, for the recorded reads of each role, exactly the recorded resources in the recorded order (P1)', () => {
+    const golden = readFixture();
+    for (const role of ROLES) {
+      const recorded = golden.roles[role].resources as SyncResource[];
+      // `me` names the resources in its own order (users first): the hydrate puts them in its own, which is the recorded one
+      const reads = [...recorded].reverse();
+      expect(resourcesFor(reads), role).toEqual(recorded);
     }
   });
 

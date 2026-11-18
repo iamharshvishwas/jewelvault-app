@@ -16,7 +16,8 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { TICK_KEYS, TICK_LABELS, type TickKey } from '@/lib/access';
-import { canAccessPath } from '@/lib/authStore';
+import { canAccessPath } from '@/lib/access';
+import { holderFor } from './support/access';
 import { createAuditFeed, describeAudit } from '@/lib/activityLog';
 import { AUDIT_PAGE_ROWS, createBooksServer } from '@/lib/cache/booksServer';
 import type { AuditPageResponse, AuditRow } from '@/lib/api/types';
@@ -827,9 +828,9 @@ describe('FB-D4 the screen draws what the feed holds', () => {
 
 describe("FB-D4 the screen is the owner's", () => {
   it('the route table: the owner and nobody else', () => {
-    expect(canAccessPath('owner', '/activity-log')).toBe(true);
-    expect(canAccessPath('biller', '/activity-log')).toBe(false);
-    expect(canAccessPath('staff', '/activity-log')).toBe(false);
+    expect(canAccessPath(holderFor('owner'), '/activity-log')).toBe(true);
+    expect(canAccessPath(holderFor('biller'), '/activity-log')).toBe(false);
+    expect(canAccessPath(holderFor('staff'), '/activity-log')).toBe(false);
     expect(canAccessPath(null, '/activity-log')).toBe(false);
   });
 

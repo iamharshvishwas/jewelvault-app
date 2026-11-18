@@ -50,6 +50,13 @@ export const TICK_KEYS = [
 
 export type TickKey = (typeof TICK_KEYS)[number];
 
+const TICK_SET: ReadonlySet<string> = new Set(TICK_KEYS);
+
+/** Is this one of the 32 tick keys? `me` may name a tick a later release dropped: the session keeps only the ticks this code knows, and ignores the rest. */
+export function isTickKey(value: unknown): value is TickKey {
+  return typeof value === 'string' && TICK_SET.has(value);
+}
+
 /**
  * Each tick in the words of the screen: the "Words on screen" of the table in DESIGN 6.2, verbatim, in plain English with no key and no technical word. The People & Roles
  * screen and the Activity Log say a tick this way. A `Record` over the keys, so a tick without words does not compile.

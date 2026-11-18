@@ -31,7 +31,7 @@ export default function HomePage() {
   const dateLabel = useSyncExternalStore(noSubscription, todayLabel, () => '');
   // U7: the role comes from the one session of the application, never from a read of the page's own. Until it is known
   // (and AppLayout shows nothing of the page until then) the page asks for the least.
-  const { role: signedInRole } = useSession();
+  const signedInRole = useSession().session?.role ?? null; // TODO(task-18): can() instead of the role key
   const role = signedInRole ?? 'staff';
 
   return (

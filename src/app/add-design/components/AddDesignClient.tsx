@@ -1359,7 +1359,7 @@ const sameAction = (a: string | null, b: string) => a !== null && a === b;
 
 export default function AddDesignClient() {
   const router = useRouter();
-  const { role } = useSession();
+  const role = useSession().session?.role ?? null; // TODO(task-19): can() instead of the role key
   const isOwner = role === 'owner';
   const [step, setStep] = useState(1);
   const [photos, setPhotos] = useState<PickedPhoto[]>([]);

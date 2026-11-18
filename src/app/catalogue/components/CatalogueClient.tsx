@@ -49,7 +49,7 @@ export default function CatalogueClient({ customerOnly = false }: { customerOnly
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [copied, setCopied] = useState('');
   const settings = getSettings();
-  const { role } = useSession();
+  const role = useSession().session?.role ?? null; // TODO(task-19): can() instead of the role key
 
   useEffect(() => {
     const sync = () => setDesigns(customerSafeDesigns());

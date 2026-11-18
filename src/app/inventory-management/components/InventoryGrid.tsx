@@ -123,7 +123,7 @@ export default function InventoryGrid() {
   // the page belongs to the filter and the order it was chosen under: a change of either is a new value, and the page is 1 again
   const [pageAt, setPageAt] = useState({ filter, sort, page: 1 });
   const [deleteTarget, setDeleteTarget] = useState<Design | null>(null);
-  const { role } = useSession();
+  const role = useSession().session?.role ?? null; // TODO(task-19): can() instead of the role key
   const perPage = 8;
   const isAdmin = role === 'owner';
 

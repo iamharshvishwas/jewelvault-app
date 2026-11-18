@@ -12,7 +12,6 @@ import {
   IndianRupee,
   BarChart3,
 } from 'lucide-react';
-import type { AuthRole } from '@/lib/authStore';
 import { billsShown, cancelledShown, paiseShown } from '@/lib/ledgerView';
 
 // The sales, the cancelled line and the outstanding are the selectors' figures over V1 and V2 (spec C14, V5; src/lib/selectors.ts through computeDashboardStats), written in whole paise the
@@ -22,7 +21,11 @@ function fmtWt(n: number) {
   return `${n.toFixed(3)} g`;
 }
 
-export default function DashboardKpiGrid({ role = 'owner' }: { role?: AuthRole }) {
+export default function DashboardKpiGrid({
+  role = 'owner',
+}: {
+  role?: string; /* TODO(task-18): can() instead of the role key */
+}) {
   const [s, setS] = useState(computeDashboardStats());
 
   useEffect(() => {

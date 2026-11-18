@@ -9,7 +9,7 @@ import type { Design } from '@/lib/mockData';
 // staff user have neither; a person whose role is not known yet has neither. In the preview build the session is the demo owner, as the rest of the preview. (A file-wide constant used to
 // stand for the role, 'admin', and so showed the button to everybody.) The API is the real wall: the weight itself only reaches an owner's cache (`sku-private`).
 export default function DesignSkuTable({ design }: { design: Design }) {
-  const { role } = useSession();
+  const role = useSession().session?.role ?? null; // TODO(task-19): can() instead of the role key
   const [showOriginalNW, setShowOriginalNW] = useState(false);
   const canViewOriginalNW = role === 'owner';
 

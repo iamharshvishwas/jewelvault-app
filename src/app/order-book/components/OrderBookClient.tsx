@@ -28,7 +28,7 @@ function matches(order: OrderView, query: string): boolean {
 
 export default function OrderBookClient() {
   useRowCacheVersion('orders', 'customers');
-  const { role } = useSession();
+  const role = useSession().session?.role ?? null; // TODO(task-20): can() instead of the role key
   const today = useBusinessToday();
   const canWrite = role === 'owner' || role === 'biller';
   const orders = getOrders({ withCustomers: canWrite });

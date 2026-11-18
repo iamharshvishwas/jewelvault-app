@@ -26,7 +26,7 @@ export default function InventoryHeader() {
   const view = useInventoryView();
   const filter = useInventoryFilter();
   const [allDesigns, setAllDesigns] = useState<Design[]>([]);
-  const { role } = useSession();
+  const role = useSession().session?.role ?? null; // TODO(task-19): can() instead of the role key
   const isAdmin = role === 'owner';
 
   useEffect(() => {

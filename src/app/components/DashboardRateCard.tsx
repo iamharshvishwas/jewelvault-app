@@ -27,7 +27,7 @@ const idOf = (entry: Pick<RateEntry, 'material' | 'purity'>) =>
   `rate-${entry.material}-${entry.purity}`.toLowerCase();
 
 export default function DashboardRateCard() {
-  const { role } = useSession();
+  const role = useSession().session?.role ?? null; // TODO(task-18): can() instead of the role key
   // the card is drawn again when a poll or a save changes a rate or the list of purities
   useRowCacheVersion('daily-rates', 'settings');
   const [today] = useState(businessToday);

@@ -103,7 +103,7 @@ export default function EditStockClient() {
 
 function EditStockForm({ stored }: { stored: Design }) {
   const router = useRouter();
-  const { role } = useSession();
+  const role = useSession().session?.role ?? null; // TODO(task-19): can() instead of the role key
   const isOwner = role === 'owner';
   const savingAllowed = useSavingAllowed();
 

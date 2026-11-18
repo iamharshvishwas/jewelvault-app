@@ -19,7 +19,7 @@ const SHOWN = 10;
 export default function DashboardOrdersPanel() {
   useRowCacheVersion('orders', 'customers');
   const today = useBusinessToday();
-  const { role } = useSession();
+  const role = useSession().session?.role ?? null; // TODO(task-18): can() instead of the role key
   const withCustomers = role === 'owner' || role === 'biller';
   const rows = today ? ordersDue(today, { withCustomers }) : [];
 

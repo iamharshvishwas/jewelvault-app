@@ -16,7 +16,6 @@
 // THE FORMULA GUARD. A text cell that starts with =, +, -, @, a tab or a carriage return gets a single quote in front (`guardFormula` of exportUtils, the one guard of downloadCsv, downloadExcel
 // and this zip, RV1-9); a number is not touched. Which cells are numbers is decided by the COLUMN, not by what the text looks like: money, weight and counts are numbers (a signed one such as
 // a round-off of -0.40 stays a number), and a number column that holds anything else is guarded like text.
-import type { AuthRole } from '@/lib/authStore';
 import type { SyncResource } from '@/lib/api/types';
 import { csvQuote, guardFormula } from './exportUtils';
 import { createZip } from './zipFile';
@@ -321,7 +320,7 @@ function compareRows(
 
 export interface DownloadInput {
   /** The role of the person: the owner-only weight is written for the owner and for nobody else. */
-  role: AuthRole;
+  role: string; // TODO(task-20): can() instead of the role key
   /** The rows of a resource as the cache holds them. */
   rows: (resource: SyncResource) => readonly object[];
   /** The business date (Asia/Kolkata, YYYY-MM-DD) of the moment: in the file name, the manifest and the record. */

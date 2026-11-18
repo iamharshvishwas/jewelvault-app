@@ -69,12 +69,27 @@ export interface ErrorBody {
 
 // ------------------------------------------------------------------------------------------------ session calls (NODE-DESIGN 2.5; handoff API05)
 
+/** The person as the login and the password change answer: `me` says more (`MeUser`). */
 export interface SessionUser {
   id: UuidText;
   email: string;
   full_name: string;
-  role: Role;
+  /** The key of the role (`owner`, `biller`, `staff`, or a role the Super Admin made). For display: what the person may do is `permissions`. */
+  role: string;
   must_change_password: boolean;
+}
+
+/** The person as `GET /v1/auth/me` says them (plan: access and roles, R6). */
+export interface MeUser extends SessionUser {
+  /** The name of the role, as the People & Roles screen shows it. */
+  role_name: string;
+  /** The ticks of the role, in catalogue order. A key this code does not know is ignored. */
+  permissions: string[];
+  is_super_admin: boolean;
+  /** An opaque text that changes whenever the role, its ticks or the Super Admin flag change (R5). The screen only compares it. */
+  access: string;
+  /** The sync resources the person may read, named as the poll names them. */
+  reads: string[];
 }
 
 export interface SessionLife {
@@ -90,7 +105,8 @@ export interface LoginResponse extends SessionLife {
 }
 
 /** `GET /v1/auth/me`. `pricing_sha256` is the SHA-256 of the API's copy of pricing.ts (C12). */
-export interface MeResponse extends LoginResponse {
+export interface MeResponse extends SessionLife {
+  user: MeUser;
   pricing_sha256: string | null;
 }
 
@@ -126,7 +142,8 @@ export type SkuStatus =
 export interface UserRow {
   id: UuidText;
   full_name: string;
-  role: Role;
+  /** The role key (see `SessionUser.role`). */
+  role: string;
   active: boolean;
   updated_at: TimestampText;
 }
@@ -443,8 +460,10 @@ export interface PollRequest {
 export interface PollResponse {
   results: { [R in SyncResource]?: { rows: SyncRows[R][]; next: SyncNext | null } };
   server_time: TimestampText;
-  /** The caller's role as the database says it now (C4, C18). */
-  role: Role;
+  /** The caller's role key as the database says it now (C4, C18). */
+  role: string;
+  /** The caller's access text as the database says it now (R5): the poller compares it with the session's. */
+  access: string;
 }
 
 // ------------------------------------------------------------------------------------------------ the writing functions (NODE-DESIGN 4.3; only X7 is built)

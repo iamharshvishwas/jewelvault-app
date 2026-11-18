@@ -2,44 +2,16 @@
 // for which tick. Pure functions, so the tests run in plain Node. What the three built-in roles open is checked against the recorded fixture in
 // access-golden.test.ts; here the module is tested on its own, with the holders of tests/unit/support/access.ts.
 import { describe, expect, it } from 'vitest';
-import { SCREENS, TICK_KEYS, can, canAccessPath, canAny, type TickKey } from '@/lib/access';
-import { accessFor, holderFor } from './support/access';
-
-/** The 32 ticks of the table of the plan, typed in here: the module's own list must equal it, key for key and in this order. */
-const PLAN_TICKS: readonly TickKey[] = [
-  'stock_add',
-  'stock_edit',
-  'stock_status',
-  'category_add',
-  'category_edit',
-  'design_material',
-  'secret_weight',
-  'photo_rewrite',
-  'customer_view',
-  'bill_view',
-  'cashbook_recent',
-  'cashbook_all',
-  'customer_edit',
-  'customer_archive',
-  'bill_make',
-  'payment_receive',
-  'rate_enter',
-  'rate_correct',
-  'back_date',
-  'bill_cancel',
-  'bill_reissue',
-  'payment_void',
-  'refund_give',
-  'opening_balance',
-  'cash_over_limit',
-  'order_view',
-  'order_edit',
-  'order_closed_change',
-  'reports_open',
-  'activity_log',
-  'download_all',
-  'settings_change',
-];
+import {
+  SCREENS,
+  TICK_KEYS,
+  can,
+  canAccessPath,
+  canAny,
+  isTickKey,
+  type TickKey,
+} from '@/lib/access';
+import { PLAN_TICKS, accessFor, holderFor } from './support/access';
 
 /** The 15 screens of today's table, in its order, then the new one. */
 const PATHS = [
@@ -87,6 +59,23 @@ describe('the ticks', () => {
 });
 
 describe('can and canAny', () => {
+  it('isTickKey knows the 32 keys and nothing else', () => {
+    for (const tick of PLAN_TICKS) expect(isTickKey(tick), tick).toBe(true);
+    for (const value of [
+      '',
+      'owner',
+      'STOCK_ADD',
+      'stock_add ',
+      'made_up_tick',
+      null,
+      undefined,
+      7,
+      {},
+      ['stock_add'],
+    ])
+      expect(isTickKey(value), String(value)).toBe(false);
+  });
+
   it('can is true for the ticks a holder was given and false for the others', () => {
     const holder = holderFor({ ticks: ['bill_make', 'order_view'] });
     expect(can(holder, 'bill_make')).toBe(true);
@@ -162,6 +151,10 @@ describe('the screens', () => {
     expect(canAccessPath(holderFor('staff'), '/reports/')).toBe(false);
     expect(canAccessPath(holderFor('owner'), '/settings?tab=users')).toBe(true);
     expect(canAccessPath(biller, '/settings?tab=users')).toBe(false);
+    // an empty path and a path of slashes only are the dashboard, which everybody signed in opens
+    expect(canAccessPath(holderFor('staff'), '')).toBe(true);
+    expect(canAccessPath(holderFor('staff'), '//')).toBe(true);
+    expect(canAccessPath(holderFor('staff'), '?a=1')).toBe(true);
   });
 
   it('a sub-path follows its screen, "/" is exact, and a longer name is another path', () => {
@@ -242,6 +235,21 @@ describe('the test support', () => {
     expect(accessFor('biller').reads).toContain('orders');
     expect(accessFor('staff').reads).toHaveLength(8);
     expect(accessFor('staff').reads).not.toContain('customers');
+  });
+
+  it('a custom Super Admin set has the role key of the Owner unless it names one; a custom set may name its key and name', () => {
+    expect(accessFor({ ticks: PLAN_TICKS, superAdmin: true })).toMatchObject({
+      role: 'owner',
+      roleName: 'Owner',
+      isSuperAdmin: true,
+    });
+    expect(accessFor({ ticks: ['order_view'] })).toMatchObject({
+      role: 'custom',
+      roleName: 'Custom',
+    });
+    const changedBiller = accessFor({ key: 'biller', name: 'Biller', ticks: ['bill_view'] });
+    expect(changedBiller).toMatchObject({ role: 'biller', roleName: 'Biller' });
+    expect(changedBiller.access).not.toBe(accessFor('biller').access);
   });
 
   it('a custom set passes its resources through and reads none when it names none', () => {

@@ -65,9 +65,10 @@ function BillingRoute() {
 
 function BillingEntry({ reissueId }: { reissueId: string | null }) {
   const session = useSession();
+  const role = session.session?.role ?? null; // TODO(task-20): can() instead of the role key
   // decided once, when the screen opens: after the re-issue is saved the old bill is cancelled, and the screen must stay on the saved bill
   const [setup] = useState<ReissueSetup | null>(() =>
-    reissueId ? prepareReissue(reissueId, session.role) : null
+    reissueId ? prepareReissue(reissueId, role) : null
   );
   if (setup && !setup.ok) {
     return (
@@ -119,6 +120,7 @@ function BillingScreen({ reissue }: { reissue: ReissueReady | null }) {
   // the question depends on the daily rates and on whether a bill dated today exists: draw again when a poll or a save changes either
   useRowCacheVersion('daily-rates', 'bills');
   const session = useSession();
+  const role = session.session?.role ?? null; // TODO(task-20): can() instead of the role key
   const pricing = usePricingCheck();
   const billsAllowed = PREVIEW_MODE || pricing.state === 'match';
 
@@ -415,7 +417,7 @@ function BillingScreen({ reissue }: { reissue: ReissueReady | null }) {
             invoiceNumber={invoiceNumber}
             saleType={saleType}
             invoiceDate={invoiceDate}
-            role={session.role}
+            role={role}
             billsAllowed={billsAllowed}
             locked={locked || askingForRates}
             saved={saved}

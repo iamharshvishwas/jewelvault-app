@@ -5,6 +5,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { categoryRow, rateRow, settingRow } from './support/rows';
+import { sessionFor } from './support/access';
 
 let role: 'owner' | 'biller' | 'staff' | null = 'owner';
 
@@ -14,7 +15,7 @@ async function draw(who: typeof role, rates: Array<Parameters<typeof rateRow>[1]
   vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
   vi.doMock('@/lib/authStore', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/lib/authStore')>()),
-    useSession: () => ({ role }),
+    useSession: () => sessionFor(role),
   }));
   const [{ rowCache }, settings, { default: Card }] = await Promise.all([
     import('@/lib/cache/cache'),

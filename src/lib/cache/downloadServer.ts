@@ -15,11 +15,7 @@
 // This file talks to the client, so, like moneyServer.ts and booksServer.ts, the stores that the screens re-read every second do not import it (C9).
 import { api as siteApi, isApiError, type ApiClient } from '@/lib/api/client';
 import type { DownloadRecordResponse } from '@/lib/api/types';
-import {
-  getSessionState,
-  registerLogoutHook as siteRegisterLogoutHook,
-  type AuthRole,
-} from '@/lib/authStore';
+import { getSessionState, registerLogoutHook as siteRegisterLogoutHook } from '@/lib/authStore';
 import { DownloadBooksNotLoaded, buildDownload } from '@/lib/downloadEverything';
 import { saveFile } from '@/lib/exportUtils';
 import { businessDateOf } from '@/lib/selectors';
@@ -42,7 +38,7 @@ export interface DownloadServerDeps {
   poller: Pick<Poller, 'getState' | 'subscribe' | 'pollNow'>;
   hydrator: Pick<Hydrator, 'getState'>;
   /** The role of the signed-in person, or null. */
-  role: () => AuthRole | null;
+  role: () => string | null; // TODO(task-20): can() instead of the role key
   /** Hands the zip to the browser as a file. May throw. */
   save: (zip: Uint8Array<ArrayBuffer>, filename: string) => void;
   now: () => Date;
@@ -225,7 +221,7 @@ export const downloadServer: DownloadServer = createDownloadServer({
   cache: rowCache,
   poller: siteInstancePoller,
   hydrator: siteHydrator,
-  role: () => getSessionState().role,
+  role: () => getSessionState().session?.role ?? null, // TODO(task-20): can() instead of the role key
   save: (zip, filename) => saveFile(zip, 'application/zip', filename, 60_000),
   now: () => new Date(),
   reloadHealth: () => booksServer.reloadHealth(),

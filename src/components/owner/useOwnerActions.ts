@@ -6,6 +6,6 @@ import { useSession } from '@/lib/authStore';
 import { PREVIEW_MODE } from '@/lib/previewMode';
 
 export function useOwnerActions(): boolean {
-  const { role } = useSession();
+  const role = useSession().session?.role ?? null; // TODO(task-20): can() instead of the role key
   return !PREVIEW_MODE && role === 'owner';
 }

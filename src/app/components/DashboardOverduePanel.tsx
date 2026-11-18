@@ -24,7 +24,7 @@ export default function DashboardOverduePanel() {
   useRowCacheVersion('bill-summary', 'customers');
   useBusinessToday(); // draws the card again at midnight in India (the list itself is of today's date)
   const rows = getOverdueCustomers();
-  const { role } = useSession();
+  const role = useSession().session?.role ?? null; // TODO(task-18): can() instead of the role key
 
   return (
     <section data-testid="overdue-panel" className="jewel-card p-4 space-y-3">

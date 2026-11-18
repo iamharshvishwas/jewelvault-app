@@ -48,7 +48,10 @@ export interface OrderAction {
 }
 
 /** The status buttons for an order: the forward step (owner and biller), then Cancel when the role may. Staff get none: they read the list only. */
-export function orderActions(status: OrderStatus, role: Role | null): OrderAction[] {
+export function orderActions(
+  status: OrderStatus,
+  role: string | null // TODO(task-20): can() instead of the role key
+): OrderAction[] {
   if (role !== 'owner' && role !== 'biller') return [];
   const step = ORDER_CHAIN[status];
   const actions: OrderAction[] = [];

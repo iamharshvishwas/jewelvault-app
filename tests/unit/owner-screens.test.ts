@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReactElement } from 'react';
 import type { LedgerEntry } from '@/lib/mockData';
 import { billRow, fill, id, receiptRow, type Shop } from './support/money-rows';
+import { sessionFor } from './support/access';
 
 const address = vi.hoisted(() => ({ search: '' }));
 vi.mock('next/navigation', () => ({
@@ -30,7 +31,7 @@ async function load(who: Who, { preview = false } = {}) {
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.test');
   vi.doMock('@/lib/authStore', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/lib/authStore')>()),
-    useSession: () => ({ role: who }),
+    useSession: () => sessionFor(who),
   }));
   const [react, dom, cache, app, actions, list, tab, detail, estimate] = await Promise.all([
     import('react'),

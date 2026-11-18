@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { createApiClient } from '@/lib/api/client';
 import { createSessionStore, type SessionHost } from '@/lib/authStore';
+import { accessFor } from './support/access';
 
 const BASE = 'https://api.example.test';
 const MINUTE = 60 * 1000;
@@ -54,8 +55,16 @@ function world() {
           error: { code: 'JV_SESSION_EXPIRED', message: 'Signed out.', details: {} },
           request_id: 'r',
         });
+      const owner = accessFor('owner');
       return json(200, {
-        user: user({ must_change_password: server.mustChange }),
+        user: user({
+          must_change_password: server.mustChange,
+          role_name: owner.roleName,
+          permissions: owner.permissions,
+          is_super_admin: owner.isSuperAdmin,
+          access: owner.access,
+          reads: owner.reads,
+        }),
         ...LIFE,
         pricing_sha256: server.hash,
       });

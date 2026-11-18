@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import AppLogo from '@/components/ui/AppLogo';
 import { BUSINESS_SHORT_NAME } from '@/lib/businessConfig';
-import { ROLE_LABEL, canAccessPath, initialsOf, signOut, type AuthSession } from '@/lib/authStore';
+import { canAccessPath } from '@/lib/access';
+import { initialsOf, signOut, type AuthSession } from '@/lib/authStore';
 import {
   LayoutDashboard,
   Package,
@@ -241,10 +242,10 @@ interface SidebarProps {
   variant?: 'desktop' | 'drawer';
 }
 
-// U5: the role decides which menu items exist. An item is offered when its route is open to the role (the same table as
-// the route gate in authStore), and a group when at least one of its items is.
+// U5: the ticks decide which menu items exist. An item is offered when its route is open to the person (the same table as
+// the route gate, src/lib/access.ts; the session is the Holder: its ticks and flag), and a group when at least one of its items is.
 function navForRole(session: AuthSession): NavItem[] {
-  const open = (item: NavItem) => (item.href ? canAccessPath(session.role, item.href) : true);
+  const open = (item: NavItem) => (item.href ? canAccessPath(session, item.href) : true);
   return NAV_ITEMS.flatMap((item) => {
     if (!item.children) return open(item) ? [item] : [];
     const children = item.children.filter(open);
@@ -268,7 +269,7 @@ export default function Sidebar({
     new Set(
       drawer
         ? visibleNav.filter((item) => item.children).map((item) => item.id)
-        : session.role === 'staff'
+        : session.role === 'staff' // TODO(task-18): can() instead of the role key
           ? ['nav-inventory', 'nav-stock']
           : ['nav-inventory', 'nav-sales']
     )
@@ -438,7 +439,7 @@ export default function Sidebar({
                 {session.displayName}
               </p>
               <p data-testid="session-role" className="text-xs text-muted-foreground">
-                {ROLE_LABEL[session.role]}
+                {session.roleName /* TODO(task-18): 'Super Admin' when isSuperAdmin */}
               </p>
             </div>
             <button
