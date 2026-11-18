@@ -1,6 +1,8 @@
 // FB-D4 (Siddhi #12): the owner's activity log, `/activity-log`, over `GET /v1/audit-log` (newest first, 200 a page, owner only).
 //   - `describeAudit(row, users)`: the time in India as `14 Nov 2026, 7:05 pm`, the person by name (`System` when the actor is not known) and the change in plain words: a login, a logout and a change of
 //     password (`event` rows of the table `users`), `New estimate <bill_no>`, `Payment <amount>`, `Stock edited <design_no or sku_no>`, and `<Action> <table>` for the rest
+//   - the Super Admin's changes (access and roles, Task 21): the `event` rows of the tables `roles` and `users` that People & Roles writes (a new role, a rename, the ticks turned on and off, a person added
+//     or given another role ...), in the words of the 32 ticks (`TICK_LABELS`), and the plain insert and update rows of the table `roles`
 //   - `readAuditPage(beforeId?)` asks for one page of 200, after the id the server last sent
 //   - the screen asks for ONE page when it opens and one more for each press of "Load more": a log of 10,000 rows draws 200 rows, then 400 (Review Focus 5), and a page that fails keeps the rows already drawn
 //   - the screen is the owner's: the route table, the menu (Settings) and the page itself
@@ -13,6 +15,7 @@ import path from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import { TICK_KEYS, TICK_LABELS, type TickKey } from '@/lib/access';
 import { canAccessPath } from '@/lib/authStore';
 import { createAuditFeed, describeAudit } from '@/lib/activityLog';
 import { AUDIT_PAGE_ROWS, createBooksServer } from '@/lib/cache/booksServer';
@@ -417,6 +420,225 @@ describe('FB-F1 describeAudit: the Order Book, a voided payment, a cancelled bil
         users
       ).what
     ).toBe('Photo removed');
+  });
+});
+
+// ================================================================================================ the Super Admin's changes
+
+// Access and roles (Task 21): what People & Roles writes (`/v1/super/*` of the API) is one `event` row for each change, in the table `roles` or `users`, whose new_row holds the facts: the kind
+// (`event`), the role key and name, or the person's id and name, and what else changed. The actor of the row is the Super Admin, so the line says her name. A new role and a changed role also leave
+// the plain rows of their insert and update (the audit trigger of the table `roles`).
+describe("access and roles: describeAudit words the Super Admin's changes", () => {
+  const roleEvent = (event: string, facts: Record<string, unknown> = {}) =>
+    row({
+      action: 'event',
+      table_name: 'roles',
+      row_id: 'sales',
+      new_row: { event, role: 'sales', name: 'Sales', ...facts },
+    });
+  const personEvent = (event: string, facts: Record<string, unknown> = {}) =>
+    row({
+      action: 'event',
+      table_name: 'users',
+      row_id: asha,
+      new_row: { event, person: asha, name: 'Asha Verma', ...facts },
+    });
+  const what = (shown: AuditRow) => describeAudit(shown, users).what;
+
+  it('role events are worded with the role name: created, renamed, described, switched off, switched on', () => {
+    // the line is the Super Admin's: her name and the time of the row
+    expect(describeAudit(roleEvent('role_created', { copied_from: 'biller' }), users)).toEqual({
+      when: '14 Nov 2026, 7:05 pm',
+      who: 'Siddhi Jain',
+      what: 'New role Sales',
+    });
+    expect(what(roleEvent('role_created', { copied_from: null }))).toBe('New role Sales');
+    // a rename says both names, as the facts give them (`name` is the one the role has now)
+    expect(
+      what(roleEvent('role_renamed', { name: 'Shop floor', from: 'Sales', to: 'Shop floor' }))
+    ).toBe('Role renamed Sales to Shop floor');
+    expect(what(roleEvent('role_described'))).toBe('Role Sales: description changed');
+    expect(what(roleEvent('role_switched_off'))).toBe('Role Sales switched off');
+    expect(what(roleEvent('role_switched_on'))).toBe('Role Sales switched on');
+  });
+
+  it('role_ticks_changed names the ticks turned on and off in words; a part with nothing is left out; an unknown key is shown as it is', () => {
+    const ticks = (turnedOn: unknown, turnedOff: unknown) =>
+      what(roleEvent('role_ticks_changed', { turned_on: turnedOn, turned_off: turnedOff }));
+    expect(ticks(['bill_make', 'payment_receive'], ['bill_cancel'])).toBe(
+      'Role Sales: turned on Make bills and estimates, Receive payments and settle fine; turned off Cancel a bill'
+    );
+    // the words are the whole label, whatever it holds
+    expect(ticks(['customer_view'], [])).toBe(
+      'Role Sales: turned on See customers (name, phone, address, GST)'
+    );
+    // a part with nothing is left out: no "turned off" with nothing after it, no stray ";"
+    expect(ticks(['bill_make'], [])).toBe('Role Sales: turned on Make bills and estimates');
+    expect(ticks([], ['bill_cancel', 'bill_reissue'])).toBe(
+      'Role Sales: turned off Cancel a bill, Re-issue a bill'
+    );
+    // a key with no words (one a later release dropped, or a hand edit) is shown as it is, among the others
+    expect(ticks(['bill_make', 'old_tick'], ['gone_tick'])).toBe(
+      'Role Sales: turned on Make bills and estimates, old_tick; turned off gone_tick'
+    );
+  });
+
+  it('person events are worded with the person name; a role change names the new role', () => {
+    expect(what(personEvent('person_added', { role: 'staff' }))).toBe('Person added Asha Verma');
+    expect(what(personEvent('person_edited', { fields: ['full_name', 'email'] }))).toBe(
+      'Person Asha Verma edited'
+    );
+    expect(
+      what(personEvent('person_role_changed', { from: 'staff', to: 'sales', to_name: 'Sales' }))
+    ).toBe('Asha Verma now has the role Sales');
+    expect(what(personEvent('person_switched_off', { sessions_ended: 2 }))).toBe(
+      'Asha Verma switched off'
+    );
+    expect(what(personEvent('person_switched_on'))).toBe('Asha Verma switched on');
+    expect(what(personEvent('person_password_reset', { sessions_ended: 1 }))).toBe(
+      'Password reset for Asha Verma'
+    );
+    // the actor is the Super Admin, not the person the change is about
+    expect(describeAudit(personEvent('person_added'), users).who).toBe('Siddhi Jain');
+    // the three events of before are worded as they were, also when the row carries a name
+    expect(what(personEvent('login'))).toBe('Logged in');
+    expect(what(personEvent('change_password'))).toBe('Changed password');
+  });
+
+  it('a plain insert or update row of roles reads "New role <name>" or "Role <name> changed"', () => {
+    const sales = {
+      role_key: 'sales',
+      name: 'Sales',
+      description: 'Counter staff',
+      active: 1,
+      ticks: ['bill_make'],
+    };
+    expect(
+      what(row({ action: 'insert', table_name: 'roles', row_id: 'sales', new_row: sales }))
+    ).toBe('New role Sales');
+    expect(
+      what(
+        row({
+          action: 'update',
+          table_name: 'roles',
+          row_id: 'sales',
+          old_row: { ...sales, ticks: [] },
+          new_row: sales,
+        })
+      )
+    ).toBe('Role Sales changed');
+  });
+
+  it('a row that lacks a fact is worded in a plain sentence: no "undefined", no stray space, no crash', () => {
+    // the plain rows of roles
+    expect(what(row({ action: 'insert', table_name: 'roles', new_row: null }))).toBe('New role');
+    expect(what(row({ action: 'update', table_name: 'roles', new_row: null }))).toBe(
+      'Role changed'
+    );
+    expect(what(row({ action: 'update', table_name: 'roles', new_row: { name: '  ' } }))).toBe(
+      'Role changed'
+    );
+    // the events of roles with no name, or with the names a sentence needs missing
+    expect(what(roleEvent('role_created', { name: null }))).toBe('New role');
+    expect(what(roleEvent('role_renamed', { name: null, from: 'Sales' }))).toBe('Role renamed');
+    expect(what(roleEvent('role_renamed', { from: 'Sales' }))).toBe('Role Sales renamed');
+    expect(what(roleEvent('role_renamed', { to: 42 }))).toBe('Role Sales renamed');
+    expect(what(roleEvent('role_described', { name: null }))).toBe('Role: description changed');
+    expect(what(roleEvent('role_switched_off', { name: null }))).toBe('Role switched off');
+    expect(what(roleEvent('role_switched_on', { name: 7 }))).toBe('Role switched on');
+    // the ticks: neither list, lists that are none, and items that are no keys
+    expect(what(roleEvent('role_ticks_changed'))).toBe('Role Sales changed');
+    expect(
+      what(roleEvent('role_ticks_changed', { turned_on: 'bill_make', turned_off: { 0: 'x' } }))
+    ).toBe('Role Sales changed');
+    expect(
+      what(
+        roleEvent('role_ticks_changed', {
+          turned_on: ['bill_make', 7, null, ' ', {}],
+          turned_off: null,
+        })
+      )
+    ).toBe('Role Sales: turned on Make bills and estimates');
+    // a key that every object has (a property of Object) is just an unknown key
+    expect(
+      what(
+        roleEvent('role_ticks_changed', { turned_on: ['constructor'], turned_off: ['toString'] })
+      )
+    ).toBe('Role Sales: turned on constructor; turned off toString');
+    // the events of users with no name, or with no new role
+    const nobody = { name: null };
+    expect(what(personEvent('person_added', nobody))).toBe('Person added');
+    expect(what(personEvent('person_edited', nobody))).toBe('Person edited');
+    expect(what(personEvent('person_role_changed', nobody))).toBe('Person now has a new role');
+    expect(what(personEvent('person_role_changed'))).toBe('Asha Verma now has a new role');
+    expect(what(personEvent('person_switched_off', nobody))).toBe('Person switched off');
+    expect(what(personEvent('person_switched_on', nobody))).toBe('Person switched on');
+    expect(what(personEvent('person_password_reset', nobody))).toBe('Password reset');
+    // an event the screen has no words for stays "Event <table>", as for every other table
+    expect(what(roleEvent('role_something_new'))).toBe('Event roles');
+    expect(what(row({ action: 'event', table_name: 'roles', new_row: null }))).toBe('Event roles');
+    expect(what(personEvent('person_something_new'))).toBe('Event users');
+  });
+});
+
+describe('access and roles: the words of the 32 ticks', () => {
+  // The table of the plan (DESIGN 6.2), typed in here and not read from the module: Task 26 compares these words with the API's catalogue.
+  const PLAN_WORDS: Readonly<Record<TickKey, string>> = {
+    // Stock
+    stock_add: 'Add designs and photos',
+    stock_edit: 'Edit design and piece details (including weights and labour rates)',
+    stock_status: "Change a piece's status",
+    category_add: 'Add categories and sub-categories',
+    category_edit: 'Edit or switch off categories',
+    design_material: "Change a design's metal, purity or selling method",
+    secret_weight: 'See and enter the original (secret) weight',
+    // Photos
+    photo_rewrite: 'Remove, reorder or replace photos (designs and orders)',
+    // Money
+    customer_view: 'See customers (name, phone, address, GST)',
+    bill_view: 'See bills, payments and customer ledgers',
+    cashbook_recent: 'See the cash book for today and yesterday',
+    cashbook_all: 'See the cash book for all days',
+    customer_edit: 'Add and edit customers',
+    customer_archive: 'Archive a customer',
+    bill_make: 'Make bills and estimates',
+    payment_receive: 'Receive payments and settle fine',
+    rate_enter: "Enter today's metal rates",
+    rate_correct: 'Correct a daily rate',
+    back_date: 'Use a date other than today (back-date)',
+    bill_cancel: 'Cancel a bill',
+    bill_reissue: 'Re-issue a bill',
+    payment_void: 'Void a payment',
+    refund_give: 'Give a refund',
+    opening_balance: 'Add an opening balance',
+    cash_over_limit: 'Take cash over the limit (with a reason)',
+    // Orders
+    order_view: 'See the Order Book',
+    order_edit: 'Make and change orders, add order photos',
+    order_closed_change: 'Change a delivered or cancelled order',
+    // Records
+    reports_open: 'Open Reports',
+    activity_log:
+      'See the Activity Log and health checks (shows every change ever made, including customers, money and the secret weight)',
+    download_all: 'Download everything',
+    // Shop
+    settings_change: 'Change shop settings',
+  };
+
+  it('TICK_LABELS has a label for each of the 32 keys and none contains an underscore', () => {
+    expect(TICK_KEYS).toHaveLength(32);
+    // the same keys as the catalogue, no more and no less
+    expect(Object.keys(TICK_LABELS).sort()).toEqual([...TICK_KEYS].sort());
+    for (const key of TICK_KEYS) {
+      expect(typeof TICK_LABELS[key], key).toBe('string');
+      expect(TICK_LABELS[key].trim(), key).not.toBe('');
+      // plain words: a key such as `sku_private` is never what the screen says
+      expect(TICK_LABELS[key], key).not.toContain('_');
+    }
+  });
+
+  it('TICK_LABELS holds the words of the plan, verbatim', () => {
+    expect(TICK_LABELS).toEqual(PLAN_WORDS);
   });
 });
 

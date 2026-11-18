@@ -1,7 +1,7 @@
 // Who may open what on the website (plan: access and roles, Task 16; DESIGN 6.2 and 6.4). What a person may do is the ticks of their role: 32 of them, the table of
-// DESIGN 6.2, with the same keys the API sends in `permissions` of `GET /v1/auth/me`. A screen opens when the person holds a tick for its data or its action, so the
-// table of screens below lists ticks and not role names. Like the old role table it is a front-end rule that mirrors the API, which is the real wall: it only decides
-// what the screen offers.
+// DESIGN 6.2, with the same keys the API sends in `permissions` of `GET /v1/auth/me` and the words each one has on screen (`TICK_LABELS`, Task 21). A screen opens when
+// the person holds a tick for its data or its action, so the table of screens below lists ticks and not role names. Like the old role table it is a front-end rule that
+// mirrors the API, which is the real wall: it only decides what the screen offers.
 //
 // Plain functions with no state, so they run in plain Node and the unit tests need no browser. They take a `Holder` (the ticks and the Super Admin flag of the person,
 // as `me` says them), or null for a person who is not signed in.
@@ -49,6 +49,52 @@ export const TICK_KEYS = [
 ] as const;
 
 export type TickKey = (typeof TICK_KEYS)[number];
+
+/**
+ * Each tick in the words of the screen: the "Words on screen" of the table in DESIGN 6.2, verbatim, in plain English with no key and no technical word. The People & Roles
+ * screen and the Activity Log say a tick this way. A `Record` over the keys, so a tick without words does not compile.
+ */
+export const TICK_LABELS: Readonly<Record<TickKey, string>> = {
+  // Stock
+  stock_add: 'Add designs and photos',
+  stock_edit: 'Edit design and piece details (including weights and labour rates)',
+  stock_status: "Change a piece's status",
+  category_add: 'Add categories and sub-categories',
+  category_edit: 'Edit or switch off categories',
+  design_material: "Change a design's metal, purity or selling method",
+  secret_weight: 'See and enter the original (secret) weight',
+  // Photos
+  photo_rewrite: 'Remove, reorder or replace photos (designs and orders)',
+  // Money
+  customer_view: 'See customers (name, phone, address, GST)',
+  bill_view: 'See bills, payments and customer ledgers',
+  cashbook_recent: 'See the cash book for today and yesterday',
+  cashbook_all: 'See the cash book for all days',
+  customer_edit: 'Add and edit customers',
+  customer_archive: 'Archive a customer',
+  bill_make: 'Make bills and estimates',
+  payment_receive: 'Receive payments and settle fine',
+  rate_enter: "Enter today's metal rates",
+  rate_correct: 'Correct a daily rate',
+  back_date: 'Use a date other than today (back-date)',
+  bill_cancel: 'Cancel a bill',
+  bill_reissue: 'Re-issue a bill',
+  payment_void: 'Void a payment',
+  refund_give: 'Give a refund',
+  opening_balance: 'Add an opening balance',
+  cash_over_limit: 'Take cash over the limit (with a reason)',
+  // Orders
+  order_view: 'See the Order Book',
+  order_edit: 'Make and change orders, add order photos',
+  order_closed_change: 'Change a delivered or cancelled order',
+  // Records
+  reports_open: 'Open Reports',
+  activity_log:
+    'See the Activity Log and health checks (shows every change ever made, including customers, money and the secret weight)',
+  download_all: 'Download everything',
+  // Shop
+  settings_change: 'Change shop settings',
+};
 
 /** The person the website is deciding about: the ticks of their role and the Super Admin flag, both as `me` says them. */
 export interface Holder {
