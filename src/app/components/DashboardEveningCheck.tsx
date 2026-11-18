@@ -17,6 +17,7 @@ import { dayLabel } from '@/lib/rateGuard';
 // The owner's evening check (spec V4, C14): today's Cash net, today's UPI net and the total outstanding, in one place. The two nets are the cash book of the day (V4, read from the API:
 // a payment, a refund or a void moves them), the outstanding is the sum of the customers' outstanding (V2, in memory): the same figures as the Payments report, the Outstanding tile and the
 // customer cards, because they come from the same selectors (src/lib/selectors.ts). A cash book that cannot be read shows a dash and says so: never a made-up zero.
+// The page mounts it for the person who holds `cashbook_all` and `bill_view` (the owner): src/lib/dashboardAccess.ts.
 
 function Tile({
   id,

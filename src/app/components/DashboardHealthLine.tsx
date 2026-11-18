@@ -12,7 +12,7 @@ import { buildHealthLine, type HealthLineModel, type Tone } from '@/lib/healthLi
 
 // The owner's dashboard line (spec section 12, I11, I12; task WEB12): "Books: OK at 02:17" or "Problem", the age of the last good backup and photo copy, the size of the database and of
 // the backup folder, the days since the last Download everything and since Harsh's last weekly pull, and yesterday's review counts. The level, the reasons and every colour are the API's
-// (GET /v1/dashboard/health through src/lib/healthLine.ts): this screen decides nothing. Owner only; the page does not mount it for anyone else.
+// (GET /v1/dashboard/health through src/lib/healthLine.ts): this screen decides nothing. For the person who holds `activity_log` (the owner); the page does not mount it for anyone else (src/lib/dashboardAccess.ts).
 
 const TONE_CLASS: Record<Tone, string> = {
   ok: 'text-emerald-700',

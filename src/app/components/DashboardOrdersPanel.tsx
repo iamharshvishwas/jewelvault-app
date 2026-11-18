@@ -2,16 +2,17 @@
 import React from 'react';
 import Link from 'next/link';
 import { ClipboardList } from 'lucide-react';
-import { useSession } from '@/lib/authStore';
 import { useBusinessToday } from '@/lib/businessClock';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { ordersDue } from '@/lib/orderStore';
 import { DUE_WITHIN_DAYS, dueLabel } from '@/lib/orderStatus';
 import { dayLabel } from '@/lib/rateGuard';
+import { useCan } from '@/lib/useAccess';
 
-// FB-F1 (FB-D8, Siddhi #13): "Orders due" on the dashboard, for the owner, the biller and the staff. The orders due today, tomorrow or the day after, or overdue, that are neither delivered
-// nor cancelled (`ordersDue`), counted from the Asia/Kolkata business day (`useBusinessToday`, never the computer's own day), the most overdue first. The card is drawn again when an order
-// changes (the poll brings another browser's order within one poll) and when the day changes. Staff see no customer (ruling A4). Each order opens the Order Book.
+// FB-F1 (FB-D8, Siddhi #13): "Orders due" on the dashboard, for every person who may read the orders (the page mounts it for `order_view`: the owner, the biller and the staff). The orders due today,
+// tomorrow or the day after, or overdue, that are neither delivered nor cancelled (`ordersDue`), counted from the Asia/Kolkata business day (`useBusinessToday`, never the computer's own day), the
+// most overdue first. The card is drawn again when an order changes (the poll brings another browser's order within one poll) and when the day changes. A person who may not see customers
+// (`customer_view`: staff) sees no customer (ruling A4). Each order opens the Order Book.
 
 /** How many orders the card lists; the Order Book has them all. */
 const SHOWN = 10;
@@ -19,8 +20,8 @@ const SHOWN = 10;
 export default function DashboardOrdersPanel() {
   useRowCacheVersion('orders', 'customers');
   const today = useBusinessToday();
-  const role = useSession().session?.role ?? null; // TODO(task-18): can() instead of the role key
-  const withCustomers = role === 'owner' || role === 'biller';
+  const can = useCan();
+  const withCustomers = can('customer_view');
   const rows = today ? ordersDue(today, { withCustomers }) : [];
 
   return (

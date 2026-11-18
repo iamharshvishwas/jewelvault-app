@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import AppLogo from '@/components/ui/AppLogo';
 import { BUSINESS_SHORT_NAME } from '@/lib/businessConfig';
-import { canAccessPath } from '@/lib/access';
+import { can, canAccessPath } from '@/lib/access';
 import { initialsOf, signOut, type AuthSession } from '@/lib/authStore';
 import {
   LayoutDashboard,
@@ -25,6 +25,7 @@ import {
   Layers,
   SlidersHorizontal,
   Shield,
+  ShieldCheck,
   Hash,
   FileText,
   Gem,
@@ -44,8 +45,9 @@ interface NavItem {
   children?: NavItem[];
 }
 
-// C15: the public catalogue and its admin screen are not connected and not reachable in M1, so the menu does not offer them (the route table in authStore closes them as well).
-// FB-F1: the Order Book is, for every role (staff read it).
+// C15: the public catalogue and its admin screen are not connected and not reachable in M1, so the menu does not offer them (the route table in src/lib/access.ts closes them as well).
+// FB-F1: the Order Book is, for whoever may read the orders (the three roles of today).
+// Access and roles (Task 18): People & Roles is the last item. The route table opens it for the Super Admin alone (`superAdmin`: no tick grants it), so the menu offers it to nobody else.
 const NAV_ITEMS: NavItem[] = [
   {
     id: 'nav-dashboard',
@@ -229,6 +231,12 @@ const NAV_ITEMS: NavItem[] = [
       },
     ],
   },
+  {
+    id: 'nav-people-roles',
+    label: 'People & Roles',
+    href: '/people-roles',
+    icon: <ShieldCheck size={18} />,
+  },
 ];
 
 interface SidebarProps {
@@ -269,9 +277,9 @@ export default function Sidebar({
     new Set(
       drawer
         ? visibleNav.filter((item) => item.children).map((item) => item.id)
-        : session.role === 'staff' // TODO(task-18): can() instead of the role key
-          ? ['nav-inventory', 'nav-stock']
-          : ['nav-inventory', 'nav-sales']
+        : can(session, 'bill_make')
+          ? ['nav-inventory', 'nav-sales']
+          : ['nav-inventory', 'nav-stock']
     )
   );
 
@@ -439,7 +447,7 @@ export default function Sidebar({
                 {session.displayName}
               </p>
               <p data-testid="session-role" className="text-xs text-muted-foreground">
-                {session.roleName /* TODO(task-18): 'Super Admin' when isSuperAdmin */}
+                {session.isSuperAdmin ? 'Super Admin' : session.roleName}
               </p>
             </div>
             <button

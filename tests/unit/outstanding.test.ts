@@ -29,7 +29,8 @@ import { downloadCsv } from '@/lib/exportUtils';
 import { at, uuid } from './support/rows';
 import { balanceRow, billRow, customerRow, summaryRow } from './support/money-rows';
 import { parseCsv } from './support/csv';
-import { sessionFor } from './support/access';
+import { holderFor, sessionFor, type RoleSpec } from './support/access';
+import { dashboardAccess } from '@/lib/dashboardAccess';
 
 // ================================================================================================ rows made here
 
@@ -360,7 +361,7 @@ describe('FB-D3 the CSV of the outstanding list', () => {
 
 // ================================================================================================ the readers over the store
 
-type Role = 'owner' | 'biller';
+type Role = RoleSpec;
 
 async function world(now: string) {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -557,6 +558,20 @@ describe('FB-D3 the dashboard card "Payment pending over 60 days"', () => {
     expect(plain(html)).not.toContain('Reports');
   });
 
+  // Access and roles (Task 18): the sentence follows the tick that opens Reports, not the name of the role
+  it("over ten customers, a role of the Super Admin's own that holds the Reports tick is told where the whole list is, and one that does not is told to ask", async () => {
+    const reports: Role = { ticks: ['bill_view', 'customer_view', 'reports_open'] };
+    const noReports: Role = { ticks: ['bill_view', 'customer_view'] };
+    const withReports = await draw('2026-11-15T10:00:00.000Z', { role: reports, extra: 11 });
+    expect(plain(/data-testid="overdue-more"[^>]*>([\s\S]*?)<\/p>/.exec(withReports)![1])).toBe(
+      'And 2 more. The owner has the whole list in Reports, Payments.'
+    );
+    const without = await draw('2026-11-15T10:00:00.000Z', { role: noReports, extra: 11 });
+    expect(plain(/data-testid="overdue-more"[^>]*>([\s\S]*?)<\/p>/.exec(without)![1])).toBe(
+      'And 2 more. Ask the owner for the full list.'
+    );
+  });
+
   it('up to ten customers there is no "And N more" line, for either of them', async () => {
     for (const role of ['owner', 'biller'] as const) {
       const html = await draw('2026-11-15T10:00:00.000Z', { role, extra: 9 });
@@ -565,11 +580,12 @@ describe('FB-D3 the dashboard card "Payment pending over 60 days"', () => {
     }
   });
 
-  it('is for the owner and the biller: the dashboard draws it for those two roles and not for the staff', () => {
+  it('is for the owner and the biller: the dashboard draws it for the ticks that read the bills and name the customers, so for those two roles and not for the staff', () => {
+    expect(dashboardAccess(holderFor('owner')).overduePanel).toBe(true);
+    expect(dashboardAccess(holderFor('biller')).overduePanel).toBe(true);
+    expect(dashboardAccess(holderFor('staff')).overduePanel).toBe(false);
     const page = readFileSync(path.resolve(__dirname, '../../src/app/page.tsx'), 'utf8');
-    expect(page).toMatch(
-      /\(role === 'owner' \|\| role === 'biller'\) && <DashboardOverduePanel \/>/
-    );
+    expect(page).toContain('{show.overduePanel && <DashboardOverduePanel />}');
   });
 });
 

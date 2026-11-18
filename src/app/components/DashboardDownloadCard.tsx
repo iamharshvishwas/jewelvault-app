@@ -9,7 +9,7 @@ import { PREVIEW_MODE } from '@/lib/previewMode';
 
 // The owner's "Download everything" card (spec B3, I12, O53; task WEB12b): the date of the last download, amber from 28 days and red from 36 (the API counts them, the card repeats the
 // state), and the button that makes the zip of the books in the browser and records it. The flow is src/lib/cache/downloadServer.ts, the files are src/lib/downloadEverything.ts.
-// Owner only; the page does not mount it for anybody else, and the API refuses the record to every other caller.
+// For the person who holds `download_all` (the owner); the page does not mount it for anybody else (src/lib/dashboardAccess.ts), and the API refuses the record to every other caller.
 
 const BOX_CLASS: Record<string, string> = {
   red: 'border-red-300 bg-red-50',
