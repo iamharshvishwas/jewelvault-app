@@ -246,21 +246,43 @@ describe('T-D03 (clause) no CSV export for a biller or staff holds the original 
       path.join(SRC, 'app/inventory-management/components/InventoryHeader.tsx'),
       'utf8'
     );
-    expect(header).toContain('inventoryExportRows(getDesigns(), role)');
+    expect(header).toContain('inventoryExportRows(getDesigns(), holder)');
     expect(header).not.toContain('originalNetWeight');
   });
 
   it("the owner's inventory export has the column, with the weight of every piece", () => {
-    const rows = inventoryExportRows(designs, 'owner');
+    const rows = inventoryExportRows(designs, holderFor('owner'));
     expect(rows).toHaveLength(2);
     expect(Object.keys(rows[0])).toContain('Original Net Weight (g)');
     expect(rows.map((r) => r['Original Net Weight (g)'])).toEqual([ORIGINAL, 8.001]);
   });
 
-  it.each(['biller', 'staff', null] as const)(
+  it('the column follows the secret-weight tick: a Super Admin and a role with only that tick have it, the Owner with that one tick taken away does not', () => {
+    for (const who of [
+      holderFor({ ticks: PLAN_TICKS, superAdmin: true }),
+      holderFor({ ticks: ['secret_weight'] }),
+    ]) {
+      const rows = inventoryExportRows(designs, who);
+      expect(rows.map((r) => r['Original Net Weight (g)'])).toEqual([ORIGINAL, 8.001]);
+    }
+    const ownerWithoutIt = holderFor({ ticks: PLAN_TICKS.filter((t) => t !== 'secret_weight') });
+    const rows = inventoryExportRows(designs, ownerWithoutIt);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(Object.keys(row).filter((k) => /original/i.test(k))).toEqual([]);
+      expect(Object.values(row)).not.toContain(ORIGINAL);
+    }
+  });
+
+  it.each([
+    ['biller', holderFor('biller')],
+    ['staff', holderFor('staff')],
+    ['a role with no tick', holderFor({ ticks: [] })],
+    ['nobody known', null],
+  ] as const)(
     'for %s the export has no such column, and no cell carries either weight',
-    (role) => {
-      const rows = inventoryExportRows(designs, role);
+    (_label, who) => {
+      const rows = inventoryExportRows(designs, who);
       expect(rows).toHaveLength(2);
       for (const row of rows) {
         expect(Object.keys(row).filter((k) => /original/i.test(k))).toEqual([]);

@@ -1,7 +1,7 @@
 // The clean-ups of 19 October, unit half (spec C8, U8, T-E05; the screens of WEB06 and WEB10). The browser half is tests/e2e/role-and-detail.spec.ts.
 //
-//   CL19-1  the owner-only original weight on the design page: the button (and, behind it, the column) is the OWNER's, by the role of the session, not by a constant of the file. A biller, a staff
-//           user and a person whose role is not known yet do not get it; the preview build's demo person is the owner and does.
+//   CL19-1  the original weight on the design page: the button (and, behind it, the column) is for the person who holds the secret-weight tick (the Owner among today's roles), by the ticks
+//           of the session, not by a constant of the file. A biller, a staff user and a person who is not known yet do not get it; the preview build's demo person holds every tick and does.
 //   CL19-2  the design page and the scan screen show the design and the piece that the address or the scanned code names, read from the stores (which read the cache): an address that names no
 //           design, or one that is not in the stock, says so and shows no other design; "View Design" carries the id of the design of the piece; no sample text is written in the screens; in the
 //           preview build the sample design and piece still show, because they come from the preview's sample store.
@@ -25,10 +25,11 @@ import {
   userRow,
   uuid,
 } from './support/rows';
-import { sessionFor } from './support/access';
+import { sessionFor, type RoleSpec } from './support/access';
+import { TICK_KEYS } from '@/lib/access';
 
-/** `'session'` is the real session store (the preview build's demo person); the others are a role stood in for it. */
-type Who = 'owner' | 'biller' | 'staff' | null | 'session';
+/** `'session'` is the real session store (the preview build's demo person); the others are a role (or a set of ticks) stood in for it. */
+type Who = RoleSpec | null | 'session';
 
 /** The owner's weight of the first piece: no other figure of the pages is this one. */
 const OWNER_WEIGHT = '34.987';
@@ -118,7 +119,7 @@ const NOT_THE_OWNER: Array<[string, Who]> = [
 
 // ================================================================================================ CL19-1
 
-describe('CL19-1 the original weight of a piece is for the owner, by the role of the session', () => {
+describe('CL19-1 the original weight of a piece is for the secret-weight tick, by the ticks of the session', () => {
   it('the owner has the button that shows the column', async () => {
     const w = await world('owner');
     fillShop(w.cache);
@@ -130,6 +131,28 @@ describe('CL19-1 the original weight of a piece is for the owner, by the role of
     fillShop(w.cache, { owner: who === 'staff' ? false : true });
     const design = designOf(w, 'RING-00001');
     for (const html of [w.drawTable(design), w.drawTabs(design)]) {
+      expect(html).toContain('RING-00001-001'); // the pieces are there
+      expect(html).not.toMatch(TOGGLE);
+      expect(html).not.toMatch(/Admin Only|Admin View|Orig\. NW/);
+      expect(html).not.toContain(OWNER_WEIGHT);
+    }
+  });
+
+  it('the button follows the tick: a role with only the secret-weight tick has it, and the Owner with that one tick taken away has not', async () => {
+    const only: RoleSpec = { ticks: ['secret_weight'] };
+    const w = await world(only);
+    fillShop(w.cache);
+    const design = designOf(w, 'RING-00001');
+    expect(w.drawTable(design)).toMatch(TOGGLE);
+    expect(w.drawTabs(design)).toMatch(TOGGLE);
+
+    const without: RoleSpec = { ticks: TICK_KEYS.filter((tick) => tick !== 'secret_weight') };
+    const v = await world(without);
+    fillShop(v.cache);
+    for (const html of [
+      v.drawTable(designOf(v, 'RING-00001')),
+      v.drawTabs(designOf(v, 'RING-00001')),
+    ]) {
       expect(html).toContain('RING-00001-001'); // the pieces are there
       expect(html).not.toMatch(TOGGLE);
       expect(html).not.toMatch(/Admin Only|Admin View|Orig\. NW/);
@@ -171,7 +194,9 @@ describe('CL19-1 the original weight of a piece is for the owner, by the role of
     };
     visit(source);
     expect(names.has('USER_ROLE')).toBe(false);
-    expect(names.has('useSession')).toBe(true);
+    // it asks the session for the person's ticks (the hook of src/lib/useAccess.ts), and holds no role key
+    expect(names.has('useHolder')).toBe(true);
+    expect(names.has('role')).toBe(false);
   });
 });
 

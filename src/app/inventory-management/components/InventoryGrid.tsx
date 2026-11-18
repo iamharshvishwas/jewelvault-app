@@ -25,7 +25,8 @@ import {
   Package,
   SearchX,
 } from 'lucide-react';
-import { useSession } from '@/lib/authStore';
+import { stockAccess } from '@/lib/stockAccess';
+import { useHolder } from '@/lib/useAccess';
 import type { SkuStatus, Design } from '@/lib/mockData';
 
 // ─── Delete Confirmation Modal ────────────────────────────────────────────────
@@ -123,9 +124,9 @@ export default function InventoryGrid() {
   // the page belongs to the filter and the order it was chosen under: a change of either is a new value, and the page is 1 again
   const [pageAt, setPageAt] = useState({ filter, sort, page: 1 });
   const [deleteTarget, setDeleteTarget] = useState<Design | null>(null);
-  const role = useSession().session?.role ?? null; // TODO(task-19): can() instead of the role key
+  // the Delete buttons (the grid, the table and the bulk bar) follow the ticks of what a removal would touch (src/lib/stockAccess.ts)
+  const mayDelete = stockAccess(useHolder()).deleteDesign;
   const perPage = 8;
-  const isAdmin = role === 'owner';
 
   // the screen opens on the grid each time (the switch is shared with the header, which is a sibling of this component)
   useEffect(() => resetInventoryView, []);
@@ -292,7 +293,7 @@ export default function InventoryGrid() {
             <button className="flex items-center gap-1.5 text-xs bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors">
               <Archive size={13} /> Archive
             </button>
-            {isAdmin && (
+            {mayDelete && (
               <button
                 onClick={handleDeleteSelected}
                 className="flex items-center gap-1.5 text-xs bg-red-500/80 hover:bg-red-500 px-3 py-1.5 rounded-lg transition-colors"
@@ -356,7 +357,7 @@ export default function InventoryGrid() {
                       className="w-4 h-4 rounded accent-primary cursor-pointer"
                     />
                   </div>
-                  {isAdmin && (
+                  {mayDelete && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -434,7 +435,7 @@ export default function InventoryGrid() {
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onSelectAll={selectAll}
-          onDeleteDesign={isAdmin ? (design) => setDeleteTarget(design) : undefined}
+          onDeleteDesign={mayDelete ? (design) => setDeleteTarget(design) : undefined}
         />
       )}
 

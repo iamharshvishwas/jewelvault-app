@@ -481,7 +481,7 @@ export async function upsertDesign(design: Design, base?: Design): Promise<numbe
 export interface PieceGroupInput {
   pieces: number;
   grossWeight: string;
-  /** The owner's own weight (D9). Only the owner's screen has the field; the API refuses it from anybody else. */
+  /** The original (secret) weight (D9). Only the screen of a person who holds the secret-weight tick has the field; the API refuses it from anybody else. */
   originalNetWeight: string;
   customerNetWeight: string;
   stones: string;
@@ -686,7 +686,7 @@ export function designSaveMessage(error: unknown): string {
   if (error.field === 'design_id')
     return 'This design was already saved. Look for it in the inventory. Nothing more was changed.';
   if (error.code === 'JV_FORBIDDEN' && error.field?.endsWith('original_net_weight'))
-    return 'Only the owner can enter the original net weight. Nothing was changed.';
+    return 'Your role cannot enter the original net weight. Nothing was changed.';
   if (error.field === 'design.photo_ids')
     return 'The photos could not be attached to the design. Remove them, add them again and save. Nothing was changed.';
   return error.message

@@ -19,15 +19,17 @@ import { setInventoryView, useInventoryView } from '@/lib/inventoryViewStore';
 import type { Design } from '@/lib/mockData';
 import { downloadCsv, downloadExcel, printPdf, type ExportRow } from '@/lib/exportUtils';
 import { inventoryExportRows } from '@/lib/inventoryExport';
-import { useSession } from '@/lib/authStore';
+import { stockAccess } from '@/lib/stockAccess';
+import { useHolder } from '@/lib/useAccess';
 
 export default function InventoryHeader() {
   // the same switch as the one above the grid
   const view = useInventoryView();
   const filter = useInventoryFilter();
   const [allDesigns, setAllDesigns] = useState<Design[]>([]);
-  const role = useSession().session?.role ?? null; // TODO(task-19): can() instead of the role key
-  const isAdmin = role === 'owner';
+  // the Scan link follows the gate of the Scan Detail screen, and the original-weight column of the exports follows the secret-weight tick (src/lib/stockAccess.ts)
+  const holder = useHolder();
+  const access = stockAccess(holder);
 
   useEffect(() => {
     const compute = () => setAllDesigns(getDesigns());
@@ -44,7 +46,7 @@ export default function InventoryHeader() {
   // the exports below are of the whole stock, filter or not, and say so with their own count
   const exportSkus = useMemo(() => inventoryStats(allDesigns).skus, [allDesigns]);
 
-  const inventoryRows = (): ExportRow[] => inventoryExportRows(getDesigns(), role);
+  const inventoryRows = (): ExportRow[] => inventoryExportRows(getDesigns(), holder);
 
   const exportInventory = (format: 'csv' | 'excel' | 'pdf') => {
     const rows = inventoryRows();
@@ -83,7 +85,7 @@ export default function InventoryHeader() {
           </button>
         </div>
 
-        {isAdmin && (
+        {access.scanLink && (
           <Link href="/scan-detail" className="btn-ghost py-2 text-xs">
             <ScanLine size={15} />
             <span className="hidden sm:inline">Scan</span>

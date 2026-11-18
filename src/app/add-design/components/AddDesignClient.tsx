@@ -22,7 +22,8 @@ import {
   Copy,
 } from 'lucide-react';
 import SaveButton from '@/components/ui/SaveButton';
-import { PREVIEW_MODE, useSession } from '@/lib/authStore';
+import { PREVIEW_MODE } from '@/lib/authStore';
+import type { Holder } from '@/lib/access';
 import { isApiError, newUuid } from '@/lib/api/client';
 import {
   addDesign,
@@ -32,6 +33,7 @@ import {
   reserveNextDesignNumber,
   type CreatedDesign,
   type NewDesignInput,
+  type PieceGroupInput,
 } from '@/lib/designStore';
 import type { Design, Sku, SkuStatus } from '@/lib/mockData';
 import { BUSINESS_LOCATION } from '@/lib/businessConfig';
@@ -52,6 +54,8 @@ import {
   type PhotoToUpload,
 } from '@/lib/photos';
 import { getSettings } from '@/lib/settingsStore';
+import { stockAccess } from '@/lib/stockAccess';
+import { useHolder } from '@/lib/useAccess';
 
 // Add Design (spec P2, P4, X8, D9, C6, C7, C11; task WEB06).
 //   - Photos: a picture is resized in the browser when it is chosen (longest side 1000 px at JPEG quality 72 and a 320 px thumbnail: src/lib/photos.ts), and a turn is made in the
@@ -62,7 +66,8 @@ import { getSettings } from '@/lib/settingsStore';
 //     returned after it.
 //   - Save is pressed again for the same action with the same Idempotency-Key when the first try could not be confirmed (C6), so one design is made; the control is off while a save
 //     runs and while the banner shows (C7).
-//   - The owner's own weight (D9) is a field for the owner only. Everybody else's screen has no such field, and the API refuses one.
+//   - The original (secret) weight (D9) is a field for a person who holds the secret-weight tick (the owner, among today's roles). Everybody else's screen has no such field and sends none,
+//     and the API refuses one. The rows that add a category or a sub-category are for a person who holds the add-category tick (src/lib/stockAccess.ts).
 // In a preview build (until WEB15) the screen keeps the prototype's behaviour with its sample data, in this page only.
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -137,6 +142,28 @@ const nextGroupId = () => {
 
 /** FB-A4: the next group made from the one before it: every field is copied (the pieces too, which the person changes) and the group gets an id of its own. Called from handlers only. */
 export const copyGroup = (previous: GroupRow): GroupRow => ({ ...previous, id: nextGroupId() });
+
+/**
+ * D9: the entries of one group as the call to create the design takes them. A person who does not hold the secret-weight tick has no field for the original weight and sends none, whatever
+ * the group holds; every other entry goes out as typed (the pieces as a number, one when left empty; the retail rate from the labour when it was left empty).
+ */
+export function pieceGroupInput(group: GroupRow, who: Holder | null): PieceGroupInput {
+  return {
+    pieces: group.pieces.trim() === '' ? 1 : Number(group.pieces),
+    grossWeight: group.grossWeight,
+    originalNetWeight: stockAccess(who).originalWeight ? group.originalNetWeight : '',
+    customerNetWeight: group.customerNetWeight,
+    stones: group.stones,
+    stoneWeight: group.stoneWeight,
+    kundan: group.kundan,
+    kundanWeight: group.kundanWeight,
+    piroi: group.piroi,
+    retailLabour: group.retailLabour || group.labour,
+    semiWholesaleLabour: group.semiWholesaleLabour,
+    wholesaleLabour: group.wholesaleLabour,
+    notes: group.notes,
+  };
+}
 
 const emptyGroup = (id: string): GroupRow => ({
   id,
@@ -423,7 +450,7 @@ function ImageUploadStep({
 
 // ─── Step 2: Design Details ───────────────────────────────────────────────────
 
-function DesignDetailsStep({
+export function DesignDetailsStep({
   form,
   onChange,
   generatedDesignNumber,
@@ -434,6 +461,8 @@ function DesignDetailsStep({
 }) {
   // drawn again when a category or a sub-category arrives from the server (a new one is shown only after the API has made it, C11)
   useRowCacheVersion('categories', 'subcategories');
+  // the rows that add a category or a sub-category are drawn only for a person who holds the add-category tick (the Owner and Staff do)
+  const canAddCategory = stockAccess(useHolder()).addCategory;
   const categories = getCategories();
   const [newCategory, setNewCategory] = useState('');
   const [newCategoryPrefix, setNewCategoryPrefix] = useState('');
@@ -555,36 +584,38 @@ function DesignDetailsStep({
               ))}
             </select>
           </label>
-          <div className="flex gap-2 mt-2">
-            <input
-              type="text"
-              aria-label="New category name"
-              value={newCategory}
-              onChange={(e) => setNewCategory(e.target.value)}
-              placeholder="Add new category"
-              className="flex-1 min-w-0 px-3 py-2 bg-card border border-input rounded-lg text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
-            />
-            {/* the prefix of the design numbers is written once, when the category is made (L3) */}
-            {!PREVIEW_MODE && newCategory.trim() !== '' && (
+          {canAddCategory && (
+            <div className="flex gap-2 mt-2">
               <input
                 type="text"
-                aria-label="Prefix of the new category"
-                value={newCategoryPrefix}
-                onChange={(e) => setNewCategoryPrefix(e.target.value.toUpperCase())}
-                placeholder={suggestCategoryPrefix(newCategory) || 'PREFIX'}
-                maxLength={6}
-                className="w-24 px-3 py-2 bg-card border border-input rounded-lg text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
+                aria-label="New category name"
+                value={newCategory}
+                onChange={(e) => setNewCategory(e.target.value)}
+                placeholder="Add new category"
+                className="flex-1 min-w-0 px-3 py-2 bg-card border border-input rounded-lg text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
               />
-            )}
-            <SaveButton
-              type="button"
-              onClick={handleAddCategory}
-              disabled={adding || newCategory.trim() === ''}
-              className="px-3 py-2 rounded-lg bg-secondary text-xs font-semibold text-foreground hover:border-primary border border-border transition-all disabled:opacity-50"
-            >
-              Add
-            </SaveButton>
-          </div>
+              {/* the prefix of the design numbers is written once, when the category is made (L3) */}
+              {!PREVIEW_MODE && newCategory.trim() !== '' && (
+                <input
+                  type="text"
+                  aria-label="Prefix of the new category"
+                  value={newCategoryPrefix}
+                  onChange={(e) => setNewCategoryPrefix(e.target.value.toUpperCase())}
+                  placeholder={suggestCategoryPrefix(newCategory) || 'PREFIX'}
+                  maxLength={6}
+                  className="w-24 px-3 py-2 bg-card border border-input rounded-lg text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
+                />
+              )}
+              <SaveButton
+                type="button"
+                onClick={handleAddCategory}
+                disabled={adding || newCategory.trim() === ''}
+                className="px-3 py-2 rounded-lg bg-secondary text-xs font-semibold text-foreground hover:border-primary border border-border transition-all disabled:opacity-50"
+              >
+                Add
+              </SaveButton>
+            </div>
+          )}
         </div>
 
         {/* Subcategory */}
@@ -606,25 +637,27 @@ function DesignDetailsStep({
               ))}
             </select>
           </label>
-          <div className="flex gap-2 mt-2">
-            <input
-              type="text"
-              aria-label="New sub-category name"
-              value={newSubcategory}
-              onChange={(e) => setNewSubcategory(e.target.value)}
-              disabled={!form.category}
-              placeholder="Add new sub-category"
-              className="flex-1 min-w-0 px-3 py-2 bg-card border border-input rounded-lg text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all disabled:opacity-50"
-            />
-            <SaveButton
-              type="button"
-              onClick={handleAddSubcategory}
-              disabled={adding || !form.category || newSubcategory.trim() === ''}
-              className="px-3 py-2 rounded-lg bg-secondary text-xs font-semibold text-foreground hover:border-primary border border-border transition-all disabled:opacity-50"
-            >
-              Add
-            </SaveButton>
-          </div>
+          {canAddCategory && (
+            <div className="flex gap-2 mt-2">
+              <input
+                type="text"
+                aria-label="New sub-category name"
+                value={newSubcategory}
+                onChange={(e) => setNewSubcategory(e.target.value)}
+                disabled={!form.category}
+                placeholder="Add new sub-category"
+                className="flex-1 min-w-0 px-3 py-2 bg-card border border-input rounded-lg text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all disabled:opacity-50"
+              />
+              <SaveButton
+                type="button"
+                onClick={handleAddSubcategory}
+                disabled={adding || !form.category || newSubcategory.trim() === ''}
+                className="px-3 py-2 rounded-lg bg-secondary text-xs font-semibold text-foreground hover:border-primary border border-border transition-all disabled:opacity-50"
+              >
+                Add
+              </SaveButton>
+            </div>
+          )}
         </div>
 
         {/* Base Material */}
@@ -759,20 +792,19 @@ function DesignDetailsStep({
 
 // ─── Step 3: Bulk SKU Creation ────────────────────────────────────────────────
 
-function BulkSkuStep({
+export function BulkSkuStep({
   designNumber,
   sellingMethod,
   skus,
-  showOriginalWeight,
   onSkusChange,
 }: {
   designNumber: string;
   sellingMethod: string;
   skus: GroupRow[];
-  /** D9: only the owner's screen has the field for the original net weight. */
-  showOriginalWeight: boolean;
   onSkusChange: (rows: GroupRow[]) => void;
 }) {
+  // D9: only the screen of a person who holds the secret-weight tick has the field for the original net weight
+  const showOriginalWeight = stockAccess(useHolder()).originalWeight;
   const [showQtyPrompt, setShowQtyPrompt] = React.useState(false);
   const [qtyInput, setQtyInput] = React.useState('1');
 
@@ -1359,8 +1391,8 @@ const sameAction = (a: string | null, b: string) => a !== null && a === b;
 
 export default function AddDesignClient() {
   const router = useRouter();
-  const role = useSession().session?.role ?? null; // TODO(task-19): can() instead of the role key
-  const isOwner = role === 'owner';
+  // what the screen offers follows the person's ticks: the steps read them for the original-weight field and the add-category rows, and the call below sends the original weight only for the secret-weight tick
+  const holder = useHolder();
   const [step, setStep] = useState(1);
   const [photos, setPhotos] = useState<PickedPhoto[]>([]);
   const [photoNotice, setPhotoNotice] = useState('');
@@ -1600,22 +1632,8 @@ export default function AddDesignClient() {
       notes: form.notes,
       photos: picked,
       primaryPhotoId: primary,
-      groups: groups.map((g) => ({
-        pieces: g.pieces.trim() === '' ? 1 : Number(g.pieces),
-        grossWeight: g.grossWeight,
-        // D9: a screen that has no such field sends none
-        originalNetWeight: isOwner ? g.originalNetWeight : '',
-        customerNetWeight: g.customerNetWeight,
-        stones: g.stones,
-        stoneWeight: g.stoneWeight,
-        kundan: g.kundan,
-        kundanWeight: g.kundanWeight,
-        piroi: g.piroi,
-        retailLabour: g.retailLabour || g.labour,
-        semiWholesaleLabour: g.semiWholesaleLabour,
-        wholesaleLabour: g.wholesaleLabour,
-        notes: g.notes,
-      })),
+      // D9: a screen that has no field for the original weight sends none
+      groups: groups.map((g) => pieceGroupInput(g, holder)),
     };
     // the same entries as the last try that could not be confirmed are the same action: the same key makes the design once (C6)
     const text = JSON.stringify({ ...input, photos: picked.map((p) => p.photoId) });
@@ -1727,7 +1745,6 @@ export default function AddDesignClient() {
             designNumber={designNumber}
             sellingMethod={form.sellingMethod}
             skus={groups}
-            showOriginalWeight={isOwner}
             onSkusChange={setGroups}
           />
         )}

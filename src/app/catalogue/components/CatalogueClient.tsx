@@ -8,8 +8,9 @@ import AppLogo from '@/components/ui/AppLogo';
 import MaterialBadge from '@/components/ui/MaterialBadge';
 import { getCategories } from '@/lib/catalogStore';
 import { getDesigns } from '@/lib/designStore';
+import { canAccessPath } from '@/lib/access';
 import { getSettings } from '@/lib/settingsStore';
-import { useSession } from '@/lib/authStore';
+import { useHolder } from '@/lib/useAccess';
 import type { Design, Sku } from '@/lib/mockData';
 
 type CatalogueDesign = Design & {
@@ -49,7 +50,8 @@ export default function CatalogueClient({ customerOnly = false }: { customerOnly
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [copied, setCopied] = useState('');
   const settings = getSettings();
-  const role = useSession().session?.role ?? null; // TODO(task-19): can() instead of the role key
+  // Create Estimate opens the billing screen, so it is offered to a person who may open it (`bill_make`); the screen itself (/catalogue) is closed to every role, see src/lib/access.ts
+  const mayCreateEstimate = canAccessPath(useHolder(), '/billing-pos');
 
   useEffect(() => {
     const sync = () => setDesigns(customerSafeDesigns());
@@ -109,7 +111,7 @@ export default function CatalogueClient({ customerOnly = false }: { customerOnly
               <Printer size={15} />
               Print
             </button>
-            {!customerOnly && role === 'owner' && (
+            {!customerOnly && mayCreateEstimate && (
               <Link href="/billing-pos" className="btn-primary py-2">
                 <ShoppingBag size={15} />
                 Create Estimate

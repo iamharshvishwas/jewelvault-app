@@ -3,10 +3,10 @@
 //
 //   PT-W6  the photo is made in the browser (longest side 1000 px at JPEG quality 72 and a thumbnail of 320 px), both kinds are uploaded under one id BEFORE create_design is
 //          called, create_design carries only ids and the person's own entries (no number, no barcode, no status, no image text), the numbers on the screen are the ones the API
-//          returned, a photo address comes from NEXT_PUBLIC_API_URL, the owner may enter the original weight and nobody else, a fourth photo is refused in plain words, a retry
+//          returned, a photo address comes from NEXT_PUBLIC_API_URL, the original weight is entered by the person who holds the secret-weight tick (the owner among today's roles) and nobody else, a fourth photo is refused in plain words, a retry
 //          of an unconfirmed save carries the same Idempotency-Key, and a status change is one call with the pieces asked
 //   T-C01  (clause) the only id the browser makes is the new design's (and its photos'); the API's numbers are shown
-//   T-D03  (clause) a staff body holds no original weight; the owner's weight is kept in memory only for the owner
+//   T-D03  (clause) a staff body holds no original weight; the owner's weight is kept in memory only for the owner; the call the screen makes carries the weight only of a person with the secret-weight tick
 //
 // The stores are the real ones over the real API client; only `fetch` is a stand-in (tests/unit/support/stockServer.ts, which answers as API16 and API17 do).
 import { readFileSync } from 'node:fs';
@@ -14,6 +14,7 @@ import path from 'node:path';
 import ts from 'typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PhotoToUpload } from '@/lib/photos';
+import { PLAN_TICKS, holderFor } from './support/access';
 import { FakeStockServer, refusal } from './support/stockServer';
 import {
   categoryRow,
@@ -594,9 +595,92 @@ describe("PT-W6 create_design (X8): the photos first, then one call with ids and
       .createDesign(input(second, { groups: [group({ originalNetWeight: '10' })] }))
       .catch((e: Error) => e);
     expect(second.designs.designSaveMessage(error)).toMatch(
-      /only the owner can enter the original net weight/i
+      /your role cannot enter the original net weight/i
     );
     expect(second.cache.rows('designs')).toEqual([]);
+  });
+
+  it("T-D03 clause (access and roles): the screen's call carries the original weight only of a person who holds the secret-weight tick, and blanks it for everybody else", async () => {
+    vi.resetModules();
+    const { pieceGroupInput } = await import('@/app/add-design/components/AddDesignClient');
+    const typed = {
+      id: 'group-1',
+      pieces: '2',
+      grossWeight: '12.5',
+      originalNetWeight: '10.125',
+      customerNetWeight: '11.25',
+      stones: '3',
+      stoneWeight: '0.5',
+      kundan: '2',
+      kundanWeight: '0.25',
+      piroi: '150',
+      labour: '40',
+      retailLabour: '',
+      semiWholesaleLabour: '325',
+      wholesaleLabour: '300',
+      notes: 'bridal',
+    };
+    // the owner, a Super Admin and a role that holds only the tick send the weight that was typed
+    for (const who of [
+      holderFor('owner'),
+      holderFor({ ticks: PLAN_TICKS, superAdmin: true }),
+      holderFor({ ticks: ['secret_weight'] }),
+    ])
+      expect(pieceGroupInput(typed, who).originalNetWeight).toBe('10.125');
+    // everybody else sends none, whatever is in the group (it may have been typed, or copied from a group of an earlier screen)
+    for (const who of [
+      holderFor('biller'),
+      holderFor('staff'),
+      holderFor({ ticks: PLAN_TICKS.filter((tick) => tick !== 'secret_weight') }),
+      holderFor({ ticks: [] }),
+      null,
+    ])
+      expect(pieceGroupInput(typed, who).originalNetWeight).toBe('');
+  });
+
+  it('T-D03 clause (access and roles): the rest of the group goes out as typed, for every person: the pieces as a number (1 when blank), the retail rate from the labour when it was left empty', async () => {
+    vi.resetModules();
+    const { pieceGroupInput } = await import('@/app/add-design/components/AddDesignClient');
+    const typed = {
+      id: 'group-1',
+      pieces: '2',
+      grossWeight: '12.5',
+      originalNetWeight: '10.125',
+      customerNetWeight: '11.25',
+      stones: '3',
+      stoneWeight: '0.5',
+      kundan: '2',
+      kundanWeight: '0.25',
+      piroi: '150',
+      labour: '40',
+      retailLabour: '',
+      semiWholesaleLabour: '325',
+      wholesaleLabour: '300',
+      notes: 'bridal',
+    };
+    const sent = {
+      pieces: 2,
+      grossWeight: '12.5',
+      customerNetWeight: '11.25',
+      stones: '3',
+      stoneWeight: '0.5',
+      kundan: '2',
+      kundanWeight: '0.25',
+      piroi: '150',
+      retailLabour: '40',
+      semiWholesaleLabour: '325',
+      wholesaleLabour: '300',
+      notes: 'bridal',
+    };
+    expect(pieceGroupInput(typed, holderFor('owner'))).toEqual({
+      ...sent,
+      originalNetWeight: '10.125',
+    });
+    expect(pieceGroupInput(typed, holderFor('staff'))).toEqual({ ...sent, originalNetWeight: '' });
+    // a typed retail rate wins over the labour; a blank number of pieces is one piece
+    expect(
+      pieceGroupInput({ ...typed, retailLabour: '353', pieces: '  ' }, holderFor('staff'))
+    ).toMatchObject({ retailLabour: '353', pieces: 1 });
   });
 
   it('the rows the API returned are in memory at once, with ITS numbers: the design number, the piece numbers and the barcodes are not made here', async () => {

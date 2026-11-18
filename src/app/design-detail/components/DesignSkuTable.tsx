@@ -1,17 +1,18 @@
 'use client';
 import React, { useState } from 'react';
 import StatusBadge from '@/components/ui/StatusBadge';
-import { useSession } from '@/lib/authStore';
+import { stockAccess } from '@/lib/stockAccess';
+import { useHolder } from '@/lib/useAccess';
 import { Printer, Edit, ScanLine, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import type { Design } from '@/lib/mockData';
 
-// The original (owner-only) net weight is the OWNER's: the button and the column follow the role of the signed-in person (the session store, WEB02), as the other screens do. A biller and a
-// staff user have neither; a person whose role is not known yet has neither. In the preview build the session is the demo owner, as the rest of the preview. (A file-wide constant used to
-// stand for the role, 'admin', and so showed the button to everybody.) The API is the real wall: the weight itself only reaches an owner's cache (`sku-private`).
+// The original (secret) net weight is for the person who holds the secret-weight tick (the owner, among today's roles): the button and the column follow the ticks of the signed-in person (the
+// session store, WEB02), as the other screens do. A biller and a staff user have neither; a person who is not known yet has neither. In the preview build the session is the demo owner, who
+// holds every tick, as the rest of the preview. (A file-wide constant used to stand for the role, 'admin', and so showed the button to everybody.) The API is the real wall: the weight itself
+// only reaches the cache of a person who may read it (`sku-private`).
 export default function DesignSkuTable({ design }: { design: Design }) {
-  const role = useSession().session?.role ?? null; // TODO(task-19): can() instead of the role key
   const [showOriginalNW, setShowOriginalNW] = useState(false);
-  const canViewOriginalNW = role === 'owner';
+  const canViewOriginalNW = stockAccess(useHolder()).originalWeight;
 
   return (
     <div className="space-y-3">
