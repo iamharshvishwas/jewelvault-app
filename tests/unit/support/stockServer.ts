@@ -281,12 +281,9 @@ export class FakeStockServer {
     if (claim) return json(201, claim.response, { 'idempotent-replay': 'true' });
     const withWeight = pieces.findIndex((g) => g.original_net_weight !== undefined);
     if (role !== 'owner' && withWeight >= 0)
-      return refusal(
-        'JV_FORBIDDEN',
-        403,
-        'The original net weight can only be entered by the owner.',
-        { field: `pieces[${withWeight}].original_net_weight` }
-      );
+      return refusal('JV_FORBIDDEN', 403, 'Your role cannot enter the original net weight.', {
+        field: `pieces[${withWeight}].original_net_weight`,
+      });
     // the checks
     if (this.designs.has(String(body.design_id)))
       return refusal('JV_INVALID_INPUT', 422, 'design_id is already used by a design', {
