@@ -7,7 +7,10 @@
 //   - the API's own sentence is shown as the client made it, except two that read like a log line and are said in plain words (`personRefusalWords`: a taken e-mail, a role that is switched off).
 //     A failure that is not the client's (a bug, a lost connection) is "Could not confirm that this was saved." (`failureOf` of afterWrite.ts, which the Roles tab uses too);
 //   - adding a person and resetting a password answer with a temporary password, shown once by the dialog. An answer without it is the one thing that is spelled out here: the person
-//     was made (or the password was reset), nothing can be shown, and the way on is another reset.
+//     was made (or the password was reset), nothing can be shown, and the way on is another reset;
+//   - an Add person or a Reset whose outcome nobody can vouch for (a lost answer) says "Could not confirm that this was saved." and then, in one more sentence, the way on (`IF_LISTED_LINE`,
+//     final review of the website, M2): the answer carried the one-time password, so the person may exist now with the password gone. The lists are read again, so the person is in the list
+//     if they were made. The other three writes have no password to lose and say only the first sentence.
 import { isApiError, type ApiClient } from '@/lib/api/client';
 import type { SuperNewPersonAnswer, SuperResetAnswer } from '@/lib/api/types';
 import { apiPartOf, failureOf, readAgain } from './afterWrite';
@@ -42,6 +45,10 @@ export interface ChangeOutcome {
 }
 
 const DONE: ChangeOutcome = { error: null, temporary: null };
+
+/** Said after "Could not confirm that this was saved." for an Add person or a Reset: the temporary password was in the answer that was lost (final review of the website, M2). */
+export const IF_LISTED_LINE =
+  'If the person is now in the list, use Reset password to get a new temporary password.';
 
 /** How the API's sentence for a taken e-mail ends (API Task 14, src/admin/routes.ts: `email is already used by another user`; an edit refuses it the same way). */
 const EMAIL_CLASH_ENDING = 'is already used by another user';
@@ -145,7 +152,10 @@ export async function runChange(
     outcome = await send(writes, change, password);
   } catch (cause) {
     const failure = failureOf(cause);
-    outcome = { error: personRefusalWords(cause, failure.error), temporary: null };
+    const said = personRefusalWords(cause, failure.error);
+    // an Add person or a Reset whose answer was lost: the person may be there now, and the one-time password is gone: say what to do
+    const lostPassword = failure.unconfirmed && (change.kind === 'add' || change.kind === 'reset');
+    outcome = { error: lostPassword ? `${said} ${IF_LISTED_LINE}` : said, temporary: null };
     reread = failure.reread;
   }
   if (reread) await readAgain(reload);

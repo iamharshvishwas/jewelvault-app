@@ -49,6 +49,7 @@ import {
   savedLine,
   type RoleEditWrites,
 } from '@/app/people-roles/lib/roleEdit';
+import { goToBox, saveHint } from '@/app/people-roles/lib/understandHint';
 import { shouldWarnOnUnload, warnBeforeUnload } from '@/app/people-roles/lib/unloadGuard';
 import { TICK_KEYS, type TickKey } from '@/lib/access';
 import { ApiError, type ApiClient } from '@/lib/api/client';
@@ -1372,5 +1373,42 @@ describe('Task 24b readRoleAgain: what "Reload" reads before it starts the scree
       },
     } as unknown as Pick<ApiClient, 'superRoles'>;
     await expect(readRoleAgain(client, 'zk-cashier')).resolves.toBeNull();
+  });
+});
+
+describe('Final review M5 saveHint and goToBox: the hint under Save is a way to the box "I understand", and nothing else is', () => {
+  // On a phone the box of a sensitive tick is at the TOP of the editor and the bar that sticks to the bottom says "Tick “I understand” first.": nothing took her to the box. The hint is a
+  // button that does (the real browser check is in the report: plain Node has no DOM, so what the button does to the element is pinned from the code and from a stand-in for the element).
+  it('the hint is a way to the box exactly when the box is what stops Save; otherwise it is the plain line about the password', () => {
+    expect(saveHint(true)).toEqual({ kind: 'go-to-box', text: 'Tick “I understand” first.' });
+    expect(saveHint(false)).toEqual({ kind: 'plain', text: 'Asks for your password' });
+    // the words are the constants of the screen, one sentence each
+    expect(saveHint(true).text).toBe(UNDERSTAND_FIRST);
+    expect(saveHint(false).text).toBe(PASSWORD_HINT);
+  });
+
+  /** A box as the page holds it (an element has these two methods): what it was asked, in order. */
+  const standIn = () => {
+    const asked: Array<[string, unknown]> = [];
+    return {
+      asked,
+      box: {
+        scrollIntoView: (options?: unknown) => void asked.push(['scrollIntoView', options]),
+        focus: (options?: unknown) => void asked.push(['focus', options]),
+      },
+    };
+  };
+
+  it('goToBox scrolls the box to the middle of the screen, then gives its check box the cursor without scrolling again, and says it went', () => {
+    const { asked, box } = standIn();
+    expect(goToBox(box)).toBe(true);
+    expect(asked).toEqual([
+      ['scrollIntoView', { block: 'center' }],
+      ['focus', { preventScroll: true }],
+    ]);
+  });
+
+  it('with no box (it is not on the page: nothing sensitive is on, or the box was ticked and is gone with its question) it does nothing and says so', () => {
+    expect(goToBox(null)).toBe(false);
   });
 });

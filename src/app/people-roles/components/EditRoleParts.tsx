@@ -19,7 +19,10 @@ import {
 //     the name or the description of the same save is already live, the alert of the first says so before its sentence ("The name was saved, but the ticks were not."): Reload would
 //     drop her ticks, and she must know the rename stuck. When she pressed Reload and the role could not be read again, the same alert says so after its sentence (Task 24b) and keeps
 //     its button, so that she can press it again;
-//   - the box is ticked for the sensitive ticks that are newly on, which it lists by their words; it is tied to the list for a screen reader.
+//   - the chips with the names of the people who have the role are as wide as their line at the most, and a name can break anywhere (`break-words [overflow-wrap:anywhere]`, as in the lists: final
+//     review of the website, M3): a name of 78 letters with no space made the page scroll sideways at 375 px;
+//   - the box is ticked for the sensitive ticks that are newly on, which it lists by their words; it is tied to the list for a screen reader, and its check box is where the hint under Save leads
+//     (`boxRef`, final review of the website, M5).
 
 export function LeavePrompt({ onLeave, onKeep }: { onLeave: () => void; onKeep: () => void }) {
   const box = useRef<HTMLDivElement>(null);
@@ -106,7 +109,7 @@ export function Holders({ role, people }: { role: SuperRole; people: readonly Su
         names.map((person) => (
           <span
             key={person.id}
-            className="rounded-full border border-border bg-secondary px-2.5 py-0.5 text-xs font-medium text-foreground"
+            className="max-w-full break-words [overflow-wrap:anywhere] rounded-full border border-border bg-secondary px-2.5 py-0.5 text-xs font-medium text-foreground"
           >
             {person.full_name}
           </span>
@@ -116,10 +119,13 @@ export function Holders({ role, people }: { role: SuperRole; people: readonly Su
 }
 
 export function Understand({
+  boxRef,
   labels,
   checked,
   onChange,
 }: {
+  /** The check box, for the hint under Save to go to (final review of the website, M5). */
+  boxRef: React.RefObject<HTMLInputElement | null>;
   labels: readonly string[];
   checked: boolean;
   onChange: (on: boolean) => void;
@@ -131,6 +137,7 @@ export function Understand({
       className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-[13px] text-red-900"
     >
       <input
+        ref={boxRef}
         id={`${id}-box`}
         type="checkbox"
         data-testid="edit-role-understand-box"

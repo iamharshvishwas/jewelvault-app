@@ -67,8 +67,12 @@ function Row({
       }`}
     >
       <td role="cell" className={CELL}>
-        <span className="block font-semibold">{person.full_name}</span>
-        <span className="block text-[13px] text-muted-foreground">{person.email}</span>
+        <span className="block font-semibold break-words [overflow-wrap:anywhere]">
+          {person.full_name}
+        </span>
+        <span className="block text-[13px] text-muted-foreground break-words [overflow-wrap:anywhere]">
+          {person.email}
+        </span>
       </td>
       <td role="cell" className={CELL}>
         <RolePill person={person} />

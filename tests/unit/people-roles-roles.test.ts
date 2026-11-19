@@ -1395,6 +1395,39 @@ describe('Task 25 review: the cursor goes to the first empty REQUIRED field', ()
   });
 });
 
+describe('Final review M3: a long role name or description wraps in a row of the Roles list (375 px)', () => {
+  // Found with the People list by the final review (a role name of 40 characters, and a description of 200, with no space in them, ran past the card and were cut off, and in the table pushed
+  // the Actions column out of it). The same two classes as the People list, and the name may shrink inside its line of marks (`min-w-0`: it is a flex item).
+  const LONG_NAME = `ABCDEFGHIJ${'K'.repeat(30)}`;
+  const LONG_DESCRIPTION = 'X'.repeat(200);
+  const classesOf = (html: string, text: string) =>
+    (new RegExp(`<span class="([^"]*)">${text}</span>`).exec(html)?.[1] ?? '').split(/\s+/);
+  const html = () =>
+    drawList([
+      R_OWNER,
+      role({ key: 'zk-long', name: LONG_NAME, description: LONG_DESCRIPTION, people: 0 }),
+    ]);
+
+  it('the name and the description of a role can break anywhere, and the name can shrink in its line', () => {
+    const name = classesOf(html(), LONG_NAME);
+    expect(name).toEqual(
+      expect.arrayContaining(['min-w-0', 'break-words', '[overflow-wrap:anywhere]'])
+    );
+    const description = classesOf(html(), LONG_DESCRIPTION);
+    expect(description).toEqual(
+      expect.arrayContaining(['break-words', '[overflow-wrap:anywhere]'])
+    );
+  });
+
+  it('the rest of the row is as it was: the name is bold, the description small and grey, and the marks (Fixed, Switched off) beside the name are drawn by the same line', () => {
+    expect(classesOf(html(), LONG_NAME)).toContain('font-semibold');
+    expect(classesOf(html(), LONG_DESCRIPTION)).toEqual(
+      expect.arrayContaining(['block', 'text-[13px]', 'text-muted-foreground'])
+    );
+    expect(plain(rowsOf(html())[0])).toContain('Fixed');
+  });
+});
+
 // ================================================================================================ no password can leak
 
 // ================================================================================================ Task 24b: the fixes of the real-browser run (the stale refusal, the clash of names)

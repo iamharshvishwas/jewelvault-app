@@ -68,11 +68,15 @@ function Row({
     >
       <td role="cell" className={CELL}>
         <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-          <span className="font-semibold">{role.name}</span>
+          <span className="min-w-0 font-semibold break-words [overflow-wrap:anywhere]">
+            {role.name}
+          </span>
           <Marks role={role} />
         </span>
         {role.description !== '' && (
-          <span className="block text-[13px] text-muted-foreground">{role.description}</span>
+          <span className="block text-[13px] text-muted-foreground break-words [overflow-wrap:anywhere]">
+            {role.description}
+          </span>
         )}
       </td>
       <td role="cell" className={SHORT_CELL}>

@@ -1,5 +1,5 @@
 'use client';
-import React from 'react';
+import React, { useRef } from 'react';
 import { ChevronLeft, CircleAlert } from 'lucide-react';
 import type { TickKey } from '@/lib/access';
 import type { SuperPerson, SuperRole } from '@/lib/api/types';
@@ -13,6 +13,7 @@ import {
 } from '../lib/editWords';
 import type { SuperTicks } from '../lib/superStore';
 import { groupedTicks, lockedTicks } from '../lib/tickEdit';
+import { goToBox } from '../lib/understandHint';
 import { Holders, LeavePrompt, Notices, Understand } from './EditRoleParts';
 import { TextAreaField, TextField } from './FormFields';
 import SaveBar from './SaveBar';
@@ -28,7 +29,8 @@ import TickGroup from './TickGroup';
 //   - the Owner role is fixed: it is shown as plain text with every tick on and locked, and has no Save;
 //   - on a tablet and a desktop Cancel and Save are in the heading; below `md` they are in a bar that sticks to the bottom of the page, just above the phone menu, which is fixed to the
 //     bottom of the screen and about 69 px (4.3rem) high, hence the offset;
-//   - the ticks are two columns from `xl` (1280 px) in the order of the catalogue, one column below; no tick key, role key, id or stamp is in the markup.
+//   - the ticks are two columns from `xl` (1280 px) in the order of the catalogue, one column below; no tick key, role key, id or stamp is in the markup;
+//   - the box "I understand" is where the hint under Save leads (final review of the website, M5): the page holds a ref to its check box and gives both bars the one handler that goes to it.
 
 /** What each press of the page does. */
 export interface EditorActions {
@@ -76,7 +78,16 @@ export default function EditRoleView({
   const shownOn = fixed ? everything : draft.ticks;
   const locked = fixed ? new Map() : lockedTicks(catalogue.ticks, draft.ticks);
   const needsBox = info.confirm.length > 0 && !info.understood;
-  const bar = { canSave: info.canSave, needsBox, onCancel: on.leave, onSave: on.save };
+  // the check box of the box "I understand": what the hint under Save takes her to (on a phone the box is at the top and the bar at the bottom)
+  const understandBox = useRef<HTMLInputElement>(null);
+  const showBox = () => goToBox(understandBox.current);
+  const bar = {
+    canSave: info.canSave,
+    needsBox,
+    onCancel: on.leave,
+    onSave: on.save,
+    onShowBox: showBox,
+  };
   return (
     <fieldset
       data-testid="edit-role"
@@ -184,6 +195,7 @@ export default function EditRoleView({
 
       {!fixed && info.confirm.length > 0 && (
         <Understand
+          boxRef={understandBox}
           labels={info.confirm.flatMap((key) => labels.get(key) ?? [])}
           checked={info.understood}
           onChange={on.understood}

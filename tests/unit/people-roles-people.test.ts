@@ -11,7 +11,7 @@
 //
 // Run: npx vitest run tests/unit/people-roles-people.test.ts
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -52,6 +52,7 @@ import {
 } from '@/app/people-roles/lib/personChange';
 import { CONFIRMING, flowReducer, openIfFree } from '@/app/people-roles/lib/personFlow';
 import {
+  IF_LISTED_LINE,
   personRefusalWords,
   runChange,
   type PeopleWrites,
@@ -59,7 +60,7 @@ import {
 } from '@/app/people-roles/lib/personWrite';
 import { createSuperStore } from '@/app/people-roles/lib/superStore';
 import type { SuperView } from '@/app/people-roles/lib/useSuper';
-import { ApiError } from '@/lib/api/client';
+import { ApiError, createApiClient } from '@/lib/api/client';
 import { UNCONFIRMED_MESSAGE } from '@/lib/api/errorMap';
 import type {
   SuperAddPersonBody,
@@ -70,7 +71,16 @@ import type {
 } from '@/lib/api/types';
 import { PLAN_TICKS, sessionFor, type RoleSpec } from './support/access';
 import { PASSWORD_NAMES, leaksOf, sourcesUnder } from './support/leaks';
-import { buttonsOf, callsOf, chosenOf, draw, elementsOf, optionsOf, plain } from './support/screen';
+import {
+  buttonsOf,
+  callsOf,
+  chosenOf,
+  draw,
+  effectsCalling,
+  elementsOf,
+  optionsOf,
+  plain,
+} from './support/screen';
 
 const STAMP = '2026-11-19T07:41:12.123456Z';
 /** The id `sessionFor()` gives to the person who is signed in: the caller's own row has this id. */
@@ -756,7 +766,11 @@ describe('Task 23 runChange: the lists are read again after a write', () => {
         resetPersonChange(MEENA),
         PASSWORD
       );
-      expect(outcome).toEqual({ error: UNCONFIRMED_MESSAGE, temporary: null });
+      // a Reset whose answer was lost says the way on too (final review M2: its own tests are below)
+      expect(outcome).toEqual({
+        error: `${UNCONFIRMED_MESSAGE} ${IF_LISTED_LINE}`,
+        temporary: null,
+      });
       expect(reload).toHaveBeenCalledTimes(1);
     }
   });
@@ -837,7 +851,10 @@ describe('Task 23 runChange: the lists are read again after a write', () => {
       resetPersonChange(MEENA),
       PASSWORD
     );
-    expect(outcome).toEqual({ error: UNCONFIRMED_MESSAGE, temporary: null });
+    expect(outcome).toEqual({
+      error: `${UNCONFIRMED_MESSAGE} ${IF_LISTED_LINE}`,
+      temporary: null,
+    });
   });
 });
 
@@ -1103,7 +1120,10 @@ describe('Final review I2: what the lists show after a refusal (the real store, 
       ),
       PASSWORD
     );
-    expect(outcome).toEqual({ error: UNCONFIRMED_MESSAGE, temporary: null });
+    expect(outcome).toEqual({
+      error: `${UNCONFIRMED_MESSAGE} ${IF_LISTED_LINE}`,
+      temporary: null,
+    });
     expect(writes.superAddPerson).toHaveBeenCalledTimes(1);
     expect(store.state().people.map((one) => one.email)).toEqual([
       SIDDHI.email,
@@ -1618,6 +1638,262 @@ describe('Task 23 the temporary password dialog', () => {
     const html = draw(TemporaryPasswordDialog, { temporary: added, onDone: noop });
     const attributes = [...html.matchAll(/\s[\w-]+="([^"]*)"/g)].map((m) => m[1]);
     expect(attributes.some((value) => value.includes(TEMPORARY))).toBe(false);
+  });
+});
+
+// ================================================================================================ the riders of the final review (M1, M2, M3)
+
+describe('Final review M1: a reload or closing the tab asks first while the temporary password is on screen', () => {
+  // The password is shown once and made by the API (hashed, never kept): a reload or closing the tab loses it for good, and the only way back is another reset. The Edit role screen asks the
+  // browser the same question for its edits (`unloadGuard.ts`); the dialog that shows the password registers the same listener while it is on screen and takes it away when it goes. The
+  // sidebar and Back are moves inside the page, which `beforeunload` never sees (accepted, as for the editor).
+  it('one effect adds the listener of the editor and its cleanup removes the same listener: on when the dialog is drawn, off when it goes away, with no dependency that could swap it', () => {
+    const adding = effectsCalling('TemporaryPasswordDialog.tsx', 'window.addEventListener');
+    expect(adding).toHaveLength(1);
+    expect(adding[0].calls).toEqual([["'beforeunload'", 'warnBeforeUnload']]);
+    expect(adding[0].deps).toBe('[]');
+    const removing = effectsCalling('TemporaryPasswordDialog.tsx', 'window.removeEventListener');
+    expect(removing).toHaveLength(1);
+    expect(removing[0].calls).toEqual([]);
+    expect(removing[0].cleanup).toEqual([["'beforeunload'", 'warnBeforeUnload']]);
+    expect(removing[0].deps).toBe('[]');
+    expect(callsOf('TemporaryPasswordDialog.tsx', 'window.addEventListener')).toHaveLength(1);
+    expect(callsOf('TemporaryPasswordDialog.tsx', 'window.removeEventListener')).toHaveLength(1);
+    // one effect holds both lines, so a listener that is added is a listener that is removed
+    const source = readFileSync(
+      path.resolve(__dirname, '../../src/app/people-roles/components/TemporaryPasswordDialog.tsx'),
+      'utf8'
+    );
+    const effect =
+      /useEffect\(\(\) => \{\s*window\.addEventListener[\s\S]*?\}, \[\]\);/.exec(source)?.[0] ?? '';
+    expect(effect).toContain("window.addEventListener('beforeunload', warnBeforeUnload)");
+    expect(effect).toContain(
+      "return () => window.removeEventListener('beforeunload', warnBeforeUnload)"
+    );
+    expect(effect.indexOf('removeEventListener')).toBeGreaterThan(
+      effect.indexOf('addEventListener')
+    );
+  });
+
+  it('it is the very function of the Edit role screen (imported from unloadGuard.ts, written nowhere else), and the only listener of the dialog: no key, so Escape still does nothing', () => {
+    const source = readFileSync(
+      path.resolve(__dirname, '../../src/app/people-roles/components/TemporaryPasswordDialog.tsx'),
+      'utf8'
+    );
+    expect(source).toMatch(
+      /import \{[^}]*\bwarnBeforeUnload\b[^}]*\} from '\.\.\/lib\/unloadGuard'/
+    );
+    expect(source).not.toMatch(/(?:function|const)\s+warnBeforeUnload/);
+    expect(callsOf('TemporaryPasswordDialog.tsx', 'document.addEventListener')).toEqual([]);
+    expect(callsOf('TemporaryPasswordDialog.tsx', 'window.addEventListener')).toEqual([
+      ["'beforeunload'", 'warnBeforeUnload'],
+    ]);
+  });
+
+  it('no other dialog or form of the People tab asks (a form that is filled can be filled again; only what cannot be shown again is guarded): the one listener of the folder, besides the editor, is the dialog that shows the password', () => {
+    const folder = path.resolve(__dirname, '../../src/app/people-roles/components');
+    const holders = readdirSync(folder)
+      .filter((file) => file.endsWith('.tsx'))
+      .filter((file) => callsOf(file, 'window.addEventListener').length > 0)
+      .sort();
+    expect(holders).toEqual(['EditRole.tsx', 'TemporaryPasswordDialog.tsx']);
+  });
+});
+
+describe('Final review M2: an Add person or a Reset whose outcome nobody can vouch for says what to do', () => {
+  // "Could not confirm that this was saved." is all a lost answer used to say. For an Add person or a Reset the answer carried the one-time password, so the person may exist now (or the
+  // password may be reset) with the password gone: one more sentence tells her the way on. The lists are read again as before, so the person is in the list if they were made.
+  const IF_LISTED =
+    'If the person is now in the list, use Reset password to get a new temporary password.';
+  const lost = [
+    new TypeError('Failed to fetch'),
+    'boom',
+    refusal('JV_INTERNAL', 500, UNCONFIRMED_MESSAGE),
+    refusal('GATEWAY', 502, UNCONFIRMED_MESSAGE),
+    refusal('JV_BUSY', 503, UNCONFIRMED_MESSAGE),
+    refusal('NETWORK', 0, UNCONFIRMED_MESSAGE),
+  ];
+
+  it('the sentence is the ruled one, in one place', () => {
+    expect(IF_LISTED_LINE).toBe(IF_LISTED);
+  });
+
+  it('an Add person and a Reset whose outcome is unknown say "Could not confirm that this was saved." and then the way on; the lists are read again, once', async () => {
+    for (const [call, build] of [
+      [
+        'superAddPerson',
+        () => newPersonChange({ full_name: 'M', email: 'm@x.co', role: 'zk-cashier' }, ROLES),
+      ],
+      ['superResetPassword', () => resetPersonChange(MEENA)],
+    ] as const) {
+      for (const cause of lost) {
+        const { writes, reload } = fakeWrites();
+        (writes[call] as ReturnType<typeof vi.fn>).mockRejectedValueOnce(cause);
+        const outcome = await runChange(
+          writes as unknown as PeopleWrites,
+          reload,
+          build(),
+          PASSWORD
+        );
+        expect(outcome, `${call}: ${String(cause)}`).toEqual({
+          error: `${UNCONFIRMED_MESSAGE} ${IF_LISTED}`,
+          temporary: null,
+        });
+        expect(reload, `${call}: ${String(cause)}`).toHaveBeenCalledTimes(1);
+      }
+    }
+  });
+
+  it('the other three writes (an edit, a role, a switch) say only "Could not confirm that this was saved.": there is no password to lose', async () => {
+    for (const [call, build] of [
+      [
+        'superEditPerson',
+        () => editPersonChange(MEENA, { full_name: 'N', email: 'meena@example.test' }, ME_ID),
+      ],
+      ['superSetPersonRole', () => rolePersonChange(MEENA, 'zk-cashier', ROLES)],
+      ['superSetPersonActive', () => switchPersonChange(MEENA)],
+    ] as const) {
+      for (const cause of lost) {
+        const { writes, reload } = fakeWrites();
+        (writes[call] as ReturnType<typeof vi.fn>).mockRejectedValueOnce(cause);
+        const outcome = await runChange(
+          writes as unknown as PeopleWrites,
+          reload,
+          build(),
+          PASSWORD
+        );
+        expect(outcome, `${call}: ${String(cause)}`).toEqual({
+          error: UNCONFIRMED_MESSAGE,
+          temporary: null,
+        });
+      }
+    }
+  });
+
+  it('a refusal that says what is wrong, and a server that says it did nothing, keep their own words for an Add person and a Reset: nothing about the list is added', async () => {
+    for (const refused of [
+      refusal(
+        'JV_NOT_ALLOWED',
+        409,
+        'A Super Admin login is managed in the terminal. Nothing was changed.'
+      ),
+      refusal('JV_INVALID_INPUT', 422, 'Your password is not correct.', { field: 'password' }),
+      refusal('JV_RATE_LIMITED', 429, 'Too many wrong passwords. Try again in 15 minutes.'),
+      refusal('JV_FORBIDDEN', 403, 'You are not allowed to do this. Nothing was changed.'),
+      refusal('JV_UNAVAILABLE', 503, 'Cannot reach the server. Try again in a minute.'),
+    ]) {
+      for (const [call, build] of [
+        [
+          'superAddPerson',
+          () => newPersonChange({ full_name: 'M', email: 'm@x.co', role: 'zk-cashier' }, ROLES),
+        ],
+        ['superResetPassword', () => resetPersonChange(MEENA)],
+      ] as const) {
+        const { writes, reload } = fakeWrites();
+        (writes[call] as ReturnType<typeof vi.fn>).mockRejectedValueOnce(refused);
+        const outcome = await runChange(
+          writes as unknown as PeopleWrites,
+          reload,
+          build(),
+          PASSWORD
+        );
+        expect(outcome, `${call}: ${refused.message}`).toEqual({
+          error: refused.message,
+          temporary: null,
+        });
+      }
+    }
+  });
+
+  it('an answer that has no temporary password keeps its own sentence (the person WAS made, and the way on is spelled out there): no second sentence', async () => {
+    const { writes, reload } = fakeWrites();
+    writes.superAddPerson.mockResolvedValueOnce({
+      person: MEENA,
+    } as unknown as SuperNewPersonAnswer);
+    const outcome = await runChange(
+      writes as unknown as PeopleWrites,
+      reload,
+      newPersonChange({ full_name: 'M', email: 'm@x.co', role: 'zk-cashier' }, ROLES),
+      PASSWORD
+    );
+    expect(outcome.error).toMatch(/temporary password could not be read/);
+    expect(outcome.error).not.toContain(IF_LISTED);
+  });
+
+  it('through the real client, an Add person whose answer is a gateway page is sent ONCE, says it could not be confirmed with the way on, and reads the lists (the person made by the lost answer is there)', async () => {
+    const fetched: string[] = [];
+    const server = { people: [SIDDHI] };
+    const client = createApiClient({
+      baseUrl: 'https://api.example.test',
+      sleep: async () => undefined,
+      fetch: (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+        const url = new URL(String(input));
+        fetched.push(`${init.method ?? 'GET'} ${url.pathname}`);
+        if (init.method === 'POST') {
+          // the API commits, and a gateway answers instead of it, again and again
+          server.people.push(person({ full_name: 'Meena Shah', email: 'meena@example.test' }));
+          return new Response('<html>Bad gateway</html>', { status: 502 });
+        }
+        const body = url.pathname.endsWith('/people')
+          ? { people: server.people }
+          : { roles: [R_OWNER, R_CASHIER] };
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as typeof globalThis.fetch,
+    });
+    const store = createSuperStore({
+      superTicks: async () => ({ groups: [], ticks: [] }),
+      superPeople: () => client.superPeople(),
+      superRoles: () => client.superRoles(),
+    });
+    await store.open();
+    fetched.length = 0;
+    const outcome = await runChange(
+      client,
+      store.reload,
+      newPersonChange(
+        { full_name: 'Meena Shah', email: 'meena@example.test', role: 'zk-cashier' },
+        ROLES
+      ),
+      PASSWORD
+    );
+    expect(fetched.filter((call) => call.startsWith('POST'))).toEqual(['POST /v1/super/people']);
+    expect(outcome).toEqual({ error: `${UNCONFIRMED_MESSAGE} ${IF_LISTED}`, temporary: null });
+    expect(store.state().people.map((one) => one.email)).toEqual([
+      SIDDHI.email,
+      'meena@example.test',
+    ]);
+  });
+});
+
+describe('Final review M3: a long name or e-mail wraps in a row of the People list (375 px)', () => {
+  // Found by the final review: a name of 120 characters or an e-mail of 254 (the API's limits) with no space in it was cut off at the edge of the card (`overflow-hidden`), and in the table
+  // (768 px and up) pushed the Actions column out of it. `break-words` is what wraps a block on a phone; `overflow-wrap: anywhere` is what also lets a table column shrink below the length of
+  // its longest word (`break-word` does not), so both are on the text. Measured in a real browser at 375, 768 and 1280 px.
+  const LONG_NAME = `Abcdefghij${'k'.repeat(110)}`;
+  const LONG_EMAIL = `${'a'.repeat(64)}@${'b'.repeat(60)}.example.test`;
+  const classesOf = (html: string, text: string) =>
+    (new RegExp(`<span class="([^"]*)">${text}</span>`).exec(html)?.[1] ?? '').split(/\s+/);
+
+  it('the name and the e-mail of a person can break anywhere', () => {
+    const html = rowsOf(drawList([person({ full_name: LONG_NAME, email: LONG_EMAIL })]))[0];
+    for (const text of [LONG_NAME, LONG_EMAIL]) {
+      const classes = classesOf(html, text);
+      expect(classes, text.slice(0, 12)).toContain('break-words');
+      expect(classes, text.slice(0, 12)).toContain('[overflow-wrap:anywhere]');
+    }
+  });
+
+  it('the name is still the bold block and the e-mail the small grey one: only the wrapping was added', () => {
+    const html = rowsOf(drawList([ANITA]))[0];
+    expect(classesOf(html, 'Anita Sharma')).toEqual(
+      expect.arrayContaining(['block', 'font-semibold'])
+    );
+    expect(classesOf(html, 'anita@example.test')).toEqual(
+      expect.arrayContaining(['block', 'text-[13px]', 'text-muted-foreground'])
+    );
   });
 });
 

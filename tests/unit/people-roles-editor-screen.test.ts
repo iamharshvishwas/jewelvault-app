@@ -947,6 +947,117 @@ describe('Task 25 the shell opens the screen of a role', () => {
   });
 });
 
+describe('Final review M5 the screen: the hint under Save is a button that goes to the box', () => {
+  const sensitive = () => drawEditor(run(CLEAN, tick('bill_cancel', true)));
+  const hintId = (html: string, which: 'head' | 'phone') =>
+    /\sid="([^"]+)"/.exec(tagOf(html, `edit-role-${which}-hint`))?.[1] ?? '';
+
+  it('while the box is what stops Save, each bar says "Tick “I understand” first." in a button, which is also the description of its Save', () => {
+    const html = sensitive();
+    for (const which of ['head', 'phone'] as const) {
+      const hint = tagOfBlock(html, `edit-role-${which}-hint`);
+      expect(hint, which).toMatch(/^<button[^>]*\stype="button"/);
+      expect(plain(hint), which).toBe('Tick “I understand” first.');
+      expect(hintId(html, which), which).not.toBe('');
+      expect(tagOf(html, `edit-role-${which}-save`), which).toContain(
+        `aria-describedby="${hintId(html, which)}"`
+      );
+    }
+  });
+
+  it('the two hints have ids of their own, and the page has ONE box for them to go to', () => {
+    const html = sensitive();
+    expect(hintId(html, 'head')).not.toBe(hintId(html, 'phone'));
+    expect(html.match(/data-testid="edit-role-understand-box"/g)).toHaveLength(1);
+  });
+
+  it('when the box is not what stops Save (no sensitive tick, or the box is ticked) the hint is the plain line about the password: no button, nothing to press', () => {
+    const confirm = infoOf(run(CLEAN, tick('bill_cancel', true)), CATALOGUE, ROLES).confirm;
+    for (const html of [
+      drawEditor(CLEAN),
+      drawEditor(run(CLEAN, tick('cashbook_all', true))),
+      drawEditor(run(CLEAN, tick('bill_cancel', true), { type: 'understood', confirm, on: true })),
+    ])
+      for (const which of ['head', 'phone'] as const) {
+        const hint = tagOfBlock(html, `edit-role-${which}-hint`);
+        expect(hint, which).toMatch(/^<p[^>]*>/);
+        expect(hint, which).not.toContain('<button');
+        expect(plain(hint), which).toBe('Asks for your password');
+        expect(tagOf(html, `edit-role-${which}-save`), which).toContain(
+          `aria-describedby="${hintId(html, which)}"`
+        );
+      }
+  });
+
+  it('the hint button does not save and is no key of the page: the buttons of a bar are Cancel, Save and the hint, and the box keeps its label', () => {
+    const html = sensitive();
+    expect(buttonsOf(tagOfBlock(html, 'edit-role-phone-bar'))).toEqual([
+      'Cancel',
+      'Save changes',
+      'Tick “I understand” first.',
+    ]);
+    expect(tagOfBlock(html, 'edit-role-understand')).toContain('Sensitive.');
+  });
+
+  it('the box is the target: the check box of `Understand` carries the ref that EditRoleView holds, and the handler of both bars asks goToBox for exactly that element', () => {
+    expect(elementsOf('SaveBar.tsx', 'button').map((button) => button.onClick)).toEqual([
+      'onCancel',
+      'onShowBox',
+    ]);
+    expect(declarationsOf('EditRoleView.tsx', 'understandBox')).toEqual([
+      'useRef<HTMLInputElement>(null)',
+    ]);
+    expect(declarationsOf('EditRoleView.tsx', 'showBox')).toEqual([
+      '() => goToBox(understandBox.current)',
+    ]);
+    expect(callsOf('EditRoleView.tsx', 'goToBox')).toEqual([['understandBox.current']]);
+    const understand = elementsOf('EditRoleView.tsx', 'Understand');
+    expect(understand).toHaveLength(1);
+    expect(understand[0].boxRef).toBe('understandBox');
+    const boxes = elementsOf('EditRoleParts.tsx', 'input');
+    expect(boxes).toHaveLength(1);
+    expect(boxes[0].ref).toBe('boxRef');
+    // both bars are given the same handler: through the one `bar` they share
+    expect(elementsOf('EditRoleView.tsx', 'SaveBar')).toHaveLength(2);
+  });
+
+  it('the hint reads its words from saveHint, and a plain hint is no button: the button is drawn under the decision of the pure function only', () => {
+    expect(callsOf('SaveBar.tsx', 'saveHint')).toEqual([['needsBox']]);
+    expect(declarationsOf('SaveBar.tsx', 'hint')).toEqual(['saveHint(needsBox)']);
+    const source = readFileSync(
+      path.resolve(__dirname, '../../src/app/people-roles/components/SaveBar.tsx'),
+      'utf8'
+    );
+    expect(source).toMatch(/hint\.kind === 'go-to-box'/);
+  });
+});
+
+describe('Final review M3 the screen of a role: the names of the people who have the role wrap', () => {
+  // Found while looking at M3 in the real browser (375 px): a person with a name of 78 letters and no space, listed under the name of the role, ran past the card and made the page scroll
+  // sideways (`main` is 515 px wide in a 375 px window). The chip may not be wider than its line, and its text can break anywhere (the same two classes as the lists).
+  const LONG = `Abcdefghij${'k'.repeat(110)}`;
+  const chips = (html: string) =>
+    [...tagOfBlock(html, 'edit-role-people').matchAll(/<span class="([^"]*)">([^<]*)<\/span>/g)]
+      .map((m) => ({ classes: m[1].split(/\s+/), text: m[2] }))
+      .filter((chip) => chip.classes.includes('rounded-full'));
+
+  it('a chip is as wide as its line at the most, and its text can break anywhere', () => {
+    const html = drawEditor(CLEAN, { people: [person(1, LONG, 'zk-cashier')] });
+    const found = chips(html);
+    expect(found.map((chip) => chip.text)).toEqual([LONG]);
+    expect(found[0].classes).toEqual(
+      expect.arrayContaining(['max-w-full', 'break-words', '[overflow-wrap:anywhere]'])
+    );
+  });
+
+  it('the chips of ordinary names are as they were: a rounded chip each, in the order of the list', () => {
+    const found = chips(drawEditor(CLEAN));
+    expect(found.map((chip) => chip.text)).toEqual(['Anita Sharma', 'Imran Shaikh', 'Pooja Nair']);
+    for (const chip of found)
+      expect(chip.classes).toEqual(expect.arrayContaining(['rounded-full', 'border', 'text-xs']));
+  });
+});
+
 // ================================================================================================ the password step
 
 describe('Task 25 the password step as it is drawn', () => {
@@ -1050,15 +1161,20 @@ describe('Task 25 the editor is wired', () => {
   });
 
   it('Save and Cancel of the bars call the actions, Save is off unless the screen says it works, and both bars get the same', () => {
+    // Final review M5: the hint under Save is a button too, and goes to the box "I understand"
     expect(elementsOf('SaveBar.tsx', 'button').map((button) => button.onClick)).toEqual([
       'onCancel',
+      'onShowBox',
     ]);
     const save = elementsOf('SaveBar.tsx', 'SaveButton');
     expect(save).toHaveLength(1);
     expect(save[0].onClick).toBe('onSave');
     expect(save[0].disabled).toBe('!canSave');
-    expect(declarationsOf('EditRoleView.tsx', 'bar')).toEqual([
-      '{ canSave: info.canSave, needsBox, onCancel: on.leave, onSave: on.save }',
+    // (the layout of the object is Prettier's: its text is compared with the white space folded)
+    expect(
+      declarationsOf('EditRoleView.tsx', 'bar').map((text) => text.replace(/\s+/g, ' '))
+    ).toEqual([
+      '{ canSave: info.canSave, needsBox, onCancel: on.leave, onSave: on.save, onShowBox: showBox, }',
     ]);
     expect(declarationsOf('EditRoleView.tsx', 'needsBox')).toEqual([
       'info.confirm.length > 0 && !info.understood',
