@@ -2,6 +2,7 @@
 //   - `confirm`: the password step is up; the write has not gone through;
 //   - `temporary`: a person was added or a password reset, and the temporary password is on screen. It is in this state and nowhere else, and it is shown once;
 //   - `closed`: the dialog is done. Closing empties the state: nothing of a temporary password is left, and a late answer cannot bring it back.
+// The tabs share one more rule about dialogs, `openIfFree` (the People tab and the Roles tab both use it): one dialog at a time, and an open one is never replaced.
 import type { TemporaryPassword } from './personWrite';
 
 export type FlowState =
@@ -27,4 +28,13 @@ export function flowReducer(state: FlowState, action: FlowAction): FlowState {
     case 'closed':
       return CLOSED;
   }
+}
+
+/**
+ * The dialog that a tab shows after one of its openers was pressed: what is open now when something is open, else the one that was asked for. Nothing traps the keyboard behind the
+ * overlay, so a button of the list can still be pressed while a dialog is up (the temporary password that is shown once, or a write that is on its way): the opener then does nothing.
+ * Used as `setOpen((now) => openIfFree(now, next))`, so it answers from what is open at that moment and not from what was drawn.
+ */
+export function openIfFree<T>(now: T | null, next: T): T {
+  return now ?? next;
 }

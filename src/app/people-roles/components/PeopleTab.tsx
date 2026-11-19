@@ -3,6 +3,7 @@ import React, { useCallback, useState } from 'react';
 import type { SuperPerson, SuperRole } from '@/lib/api/types';
 import { useSession } from '@/lib/authStore';
 import type { PersonAction } from '../lib/people';
+import { openIfFree } from '../lib/personFlow';
 import AddPersonDialog from './AddPersonDialog';
 import ChangeRoleDialog from './ChangeRoleDialog';
 import EditPersonDialog from './EditPersonDialog';
@@ -15,7 +16,9 @@ import SwitchPersonDialog from './SwitchPersonDialog';
 // do. The list, the "+ Add person" button, and the dialogs of the buttons of a row. This file owns which dialog is open (one at a time); each dialog does its own steps and, after a write,
 // reads the people and the roles again (`reload`, given by the shell).
 //   - the caller's own id comes from the signed-in session (`useSession`), the one place the screen reads who is signed in: her own row is the one that has Edit only (R12);
-//   - the button is drawn at the top of the panel, under the tabs: the heading and the tabs belong to the shell.
+//   - the button is drawn at the top of the panel, under the tabs: the heading and the tabs belong to the shell;
+//   - an open dialog is never replaced: nothing traps the keyboard behind the overlay, so a button of the list can be pressed while a dialog is up (and the temporary password is shown
+//     once). Both openers go through `openIfFree`, which keeps what is open.
 
 /** Which dialog is open: the add form, or the dialog of one button of one row. */
 type Open = { kind: 'add' } | { kind: PersonAction; person: SuperPerson };
@@ -97,8 +100,8 @@ export default function PeopleTab({ people, roles, reload }: TabBodyProps) {
       <PeopleTabView
         people={people}
         meId={meId}
-        onAdd={() => setOpen({ kind: 'add' })}
-        onAction={(action, person) => setOpen({ kind: action, person })}
+        onAdd={() => setOpen((now) => openIfFree(now, { kind: 'add' }))}
+        onAction={(action, person) => setOpen((now) => openIfFree(now, { kind: action, person }))}
       />
       {open !== null && (
         <OpenDialog open={open} meId={meId} roles={roles} reload={reload} onClose={close} />

@@ -1,6 +1,7 @@
 // What is about to happen to a person, in words (plan: access and roles, Task 23; the picture is mockups/4-password-confirm.png): the five writes of the People tab as one value each, and
 // the title, the sentences and the button of the password step that comes before every one of them. Plain TypeScript with no React; `personWrite.ts` does the write.
-//   - the first sentence says exactly what will happen ("Add Meena Shah as Biller"); a second says what follows from it, where something does (a sign-out, a temporary password);
+//   - the first sentence says exactly what will happen ("Add Meena Shah (meena@example.test) as Biller": the e-mail too, since this is the last look before the login exists); a second
+//     says what follows from it, where something does (a sign-out, a temporary password). Sign-outs are counted in devices, the word of the temporary password dialog;
 //   - the values are those that will be saved: the name without the spaces around it, the e-mail in lower case, the role by its name. A role is named in words and never by its key.
 import type { SuperPerson, SuperRole } from '@/lib/api/types';
 import {
@@ -88,7 +89,7 @@ export function changeSummary(c: PersonChange): string[] {
   switch (c.kind) {
     case 'add':
       return [
-        `Add ${c.full_name} as ${c.roleName}`,
+        `Add ${c.full_name} (${c.email}) as ${c.roleName}`,
         'A temporary password is shown once. They must change it the first time they sign in.',
       ];
     case 'role':
@@ -125,7 +126,7 @@ function editSummary(c: Extract<PersonChange, { kind: 'edit' }>): string[] {
   if (email !== undefined)
     lines.push(
       c.self
-        ? 'Your other sessions are signed out. This one stays.'
+        ? 'Your other devices are signed out. This one stays.'
         : 'They are signed out everywhere and must sign in with the new e-mail.'
     );
   return lines;

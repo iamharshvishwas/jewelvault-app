@@ -48,7 +48,7 @@ import {
   rolePersonChange,
   switchPersonChange,
 } from '@/app/people-roles/lib/personChange';
-import { CONFIRMING, flowReducer } from '@/app/people-roles/lib/personFlow';
+import { CONFIRMING, flowReducer, openIfFree } from '@/app/people-roles/lib/personFlow';
 import {
   runChange,
   type PeopleWrites,
@@ -331,7 +331,7 @@ describe('Task 23 the password step says exactly what will happen', () => {
       roleName: 'Cashier',
     });
     expect(changeSummary(add)).toEqual([
-      'Add Meena Shah as Cashier',
+      'Add Meena Shah (meena@example.test) as Cashier',
       'A temporary password is shown once. They must change it the first time they sign in.',
     ]);
     expect(changeTitle(add)).toBe('Add this person?');
@@ -410,7 +410,7 @@ describe('Task 23 the password step says exactly what will happen', () => {
     expect(changeConfirmLabel(both)).toBe('Confirm and save');
   });
 
-  it('her own e-mail: her other sessions end and this one stays (R11)', () => {
+  it('her own e-mail: her other devices are signed out and this one stays (R11)', () => {
     const own = editPersonChange(
       SIDDHI,
       { full_name: 'Siddhi', email: 'siddhi.new@example.test' },
@@ -423,7 +423,7 @@ describe('Task 23 the password step says exactly what will happen', () => {
     });
     expect(changeSummary(own)).toEqual([
       'Change the e-mail of Siddhi to siddhi.new@example.test',
-      'Your other sessions are signed out. This one stays.',
+      'Your other devices are signed out. This one stays.',
     ]);
   });
 });
@@ -709,6 +709,52 @@ describe('Task 23 runChange: the lists are read again after a write', () => {
     );
     expect(outcome.temporary?.sessionsEnded).toBeNull();
   });
+
+  it('a reload that rejects after a write that went through does not lose the temporary password (add and reset)', async () => {
+    for (const [build, kind] of [
+      [
+        () => newPersonChange({ full_name: 'M', email: 'm@x.co', role: 'zk-cashier' }, ROLES),
+        'add',
+      ],
+      [() => resetPersonChange(MEENA), 'reset'],
+    ] as const) {
+      const { writes, reload } = fakeWrites();
+      reload.mockRejectedValueOnce(new Error('the lists could not be read'));
+      const outcome = await runChange(writes as unknown as PeopleWrites, reload, build(), PASSWORD);
+      expect(reload, kind).toHaveBeenCalledTimes(1);
+      expect(outcome.error, kind).toBeNull();
+      expect(maskedTemporary(outcome.temporary), kind).toMatchObject({
+        kind,
+        password: 'the temporary password',
+      });
+    }
+  });
+
+  it('a reload that rejects after an edit, a role change or a switch is still a write that went through', async () => {
+    for (const change of [
+      editPersonChange(MEENA, { full_name: 'N', email: 'meena@example.test' }, ME_ID),
+      rolePersonChange(MEENA, 'zk-cashier', ROLES),
+      switchPersonChange(MEENA),
+    ]) {
+      const { writes, reload } = fakeWrites();
+      reload.mockRejectedValueOnce(new Error('the lists could not be read'));
+      const outcome = await runChange(writes as unknown as PeopleWrites, reload, change, PASSWORD);
+      expect(outcome, change.kind).toEqual({ error: null, temporary: null });
+    }
+  });
+
+  it('a write nobody can vouch for, and a reload that rejects as well, still says it could not be confirmed and does not throw', async () => {
+    const { writes, reload } = fakeWrites();
+    writes.superResetPassword.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    reload.mockRejectedValueOnce(new Error('the lists could not be read'));
+    const outcome = await runChange(
+      writes as unknown as PeopleWrites,
+      reload,
+      resetPersonChange(MEENA),
+      PASSWORD
+    );
+    expect(outcome).toEqual({ error: UNCONFIRMED_MESSAGE, temporary: null });
+  });
 });
 
 // ================================================================================================ the steps after the password, and the copy button
@@ -784,6 +830,60 @@ describe('Task 23 copyText', () => {
 
   it('asks the clipboard of the page when it is not given one, and says it could not where there is none (this test runs in plain Node)', async () => {
     expect(await copyText('some text')).toBe(false);
+  });
+
+  it('never throws when the page refuses to hand over its clipboard: a getter that throws is "could not copy"', async () => {
+    vi.stubGlobal('navigator', {
+      get clipboard(): never {
+        throw new Error('the browser refuses');
+      },
+    });
+    try {
+      await expect(copyText('some text')).resolves.toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('asks the clipboard of the page only when it is not given one (null is "none", and is not replaced by the browser)', async () => {
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    try {
+      expect(await copyText('from the page')).toBe(true);
+      expect(writeText).toHaveBeenCalledWith('from the page');
+      expect(await copyText('not copied', null)).toBe(false);
+      expect(writeText).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('Task 23 review: openIfFree keeps the one dialog that is open', () => {
+  it('gives back what is open when something is open, and the new one when nothing is', () => {
+    const open = { kind: 'reset', person: MEENA };
+    const next = { kind: 'add' };
+    expect(Object.is(openIfFree<object>(open, next), open)).toBe(true);
+    expect(Object.is(openIfFree<object>(null, next), next)).toBe(true);
+  });
+
+  it('a second opener cannot take the place of the first (the slot as React keeps it: each opener hands its choice to the one before it)', () => {
+    let slot: { kind: string } | null = null;
+    const open = (next: { kind: string }) => {
+      slot = openIfFree(slot, next);
+    };
+    open({ kind: 'reset' });
+    open({ kind: 'add' });
+    open({ kind: 'switch' });
+    expect(slot).toEqual({ kind: 'reset' });
+    slot = null; // closing empties the slot, and then the next opener works
+    open({ kind: 'add' });
+    expect(slot).toEqual({ kind: 'add' });
+  });
+
+  it('treats an opener whose value looks empty (0, an empty text) as open: only null is free', () => {
+    expect(openIfFree<number | null>(0, 5)).toBe(0);
+    expect(openIfFree<string | null>('', 'x')).toBe('');
   });
 });
 
@@ -1039,6 +1139,19 @@ describe('Task 23 the forms before the password step', () => {
     expect(plain(html)).toContain('Current role: Old Role');
     expect(chosenOf(html)).toEqual(['Choose a role']);
   });
+
+  /** The opening tag of the input with this test id, as drawn. */
+  const inputTag = (html: string, testId: string) =>
+    html.match(new RegExp(`<input[^>]*data-testid="${testId}"[^>]*>`))?.[0] ?? '';
+
+  it('Task 23 review: a name starts with a capital letter on a phone, an e-mail does not (Add and Edit): the capitals are set for each field, not for all of them', () => {
+    const add = draw(AddPersonDialog, { roles: ROLES, reload, onClose: noop });
+    expect(inputTag(add, 'add-person-name')).toContain('autoCapitalize="words"');
+    expect(inputTag(add, 'add-person-email')).toContain('autoCapitalize="none"');
+    const edit = draw(EditPersonDialog, { person: MEENA, meId: ME_ID, reload, onClose: noop });
+    expect(inputTag(edit, 'edit-person-name')).toContain('autoCapitalize="words"');
+    expect(inputTag(edit, 'edit-person-email')).toContain('autoCapitalize="none"');
+  });
 });
 
 describe('Task 23 the password step of the buttons that have no form', () => {
@@ -1238,6 +1351,27 @@ describe("Task 23 the shell's reload reaches every write", () => {
     const tab = elementsOf('PeopleRolesClient.tsx', 'PeopleTab');
     expect(tab).toHaveLength(1);
     expect(tab[0].reload).toBe('reload');
+  });
+});
+
+describe('Task 23 review: no opener can replace the dialog that is open', () => {
+  // Focus is not trapped behind the overlay: a button of the list can be reached with the keyboard while a dialog is up (the temporary password, or a write on its way). So both openers
+  // hand their choice to `openIfFree`, which keeps what is open. There is no DOM here, so the glue is read from the code.
+  it('every call of setOpen in the People tab either closes (null) or hands its choice to openIfFree with what is open now', () => {
+    const calls = callsOf('PeopleTab.tsx', 'setOpen').map(([argument]) => argument);
+    expect(calls).toHaveLength(3);
+    expect(calls.filter((argument) => argument === 'null')).toHaveLength(1);
+    for (const argument of calls.filter((a) => a !== 'null'))
+      expect(argument).toMatch(/^\(now\) => openIfFree\(now, \{/);
+  });
+
+  it('the two openers are the add button and the buttons of a row', () => {
+    const calls = callsOf('PeopleTab.tsx', 'openIfFree');
+    expect(calls).toHaveLength(2);
+    expect(calls.map(([, choice]) => choice).sort()).toEqual([
+      "{ kind: 'add' }",
+      '{ kind: action, person }',
+    ]);
   });
 });
 

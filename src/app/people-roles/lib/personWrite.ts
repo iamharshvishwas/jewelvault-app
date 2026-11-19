@@ -105,7 +105,10 @@ async function send(
   }
 }
 
-/** Does the write, then reads the lists again unless nothing was written. Never throws: a failure is the `error` of the outcome. */
+/**
+ * Does the write, then reads the lists again unless nothing was written. Never throws: a failure is the `error` of the outcome, and a read of the lists that fails is not a failure of the
+ * write (the temporary password of a person who was just made must reach the screen whatever the lists do).
+ */
 export async function runChange(
   writes: PeopleWrites,
   reload: () => Promise<void>,
@@ -121,6 +124,12 @@ export async function runChange(
     outcome = { error: sentence === '' ? UNCONFIRMED_MESSAGE : sentence, temporary: null };
     reread = !(isApiError(cause) && cause.nothingChanged);
   }
-  if (reread) await reload();
+  if (reread) {
+    try {
+      await reload();
+    } catch {
+      // the store's own `reload` never rejects (a failed read shows on the screen as it is); should one reject all the same, what the write gave must not be lost behind it
+    }
+  }
   return outcome;
 }

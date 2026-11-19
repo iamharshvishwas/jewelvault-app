@@ -67,6 +67,7 @@ export default function EditPersonDialog({
       <TextField
         label="Name"
         testId="edit-person-name"
+        capitalize="words"
         value={values.full_name}
         onChange={set('full_name')}
         error={errors.full_name}
@@ -75,6 +76,7 @@ export default function EditPersonDialog({
       <TextField
         label="E-mail"
         testId="edit-person-email"
+        capitalize="none"
         type="email"
         value={values.email}
         onChange={set('email')}

@@ -4,6 +4,8 @@ import type { SuperRole } from '@/lib/api/types';
 
 // The fields of the forms before the password step (plan: access and roles, Task 23): a label, the control, and the sentence that says what is wrong with it. The look is the one of the
 // password field of ConfirmPasswordDialog.
+//   - what a phone does with capital letters is chosen for each field (`capitalize`): a name starts with a capital letter ("words"), an e-mail or a code never does ("none"). The prop has
+//     no default, so that a new field has to say which it is.
 
 const LABEL = 'text-xs font-semibold text-foreground block';
 
@@ -24,6 +26,7 @@ export function TextField({
   testId,
   type = 'text',
   maxLength,
+  capitalize,
 }: {
   label: string;
   value: string;
@@ -32,6 +35,8 @@ export function TextField({
   testId: string;
   type?: 'text' | 'email';
   maxLength?: number;
+  /** What a phone's keyboard does with capital letters: "words" for a name, "none" for an e-mail or a code. */
+  capitalize: 'words' | 'none';
 }) {
   const errorId = useId();
   return (
@@ -45,7 +50,7 @@ export function TextField({
           onChange={(event) => onChange(event.target.value)}
           maxLength={maxLength}
           autoComplete="off"
-          autoCapitalize="none"
+          autoCapitalize={capitalize}
           spellCheck={false}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? errorId : undefined}
