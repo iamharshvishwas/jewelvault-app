@@ -7,9 +7,19 @@ import type { SuperRole } from '@/lib/api/types';
 //   - what a phone does with capital letters is chosen for each field (`capitalize`): a name starts with a capital letter ("words"), an e-mail or a code never does ("none"). The prop has
 //     no default, so that a new field has to say which it is;
 //   - whether a field must be filled is said for each field too (`required`, no default): it is drawn as `aria-required`, which is also what tells the frame of a form (`firstToFill`) where
-//     the cursor goes. The forms are not checked by the browser (they are `noValidate`): the sentences of the screen say what is missing.
+//     the cursor goes. The forms are not checked by the browser (they are `noValidate`): the sentences of the screen say what is missing;
+//   - a text field is drawn in a dialog by default; on a page of its own (the Edit role screen) `look="page"` gives it the small capital label of the picture (mockups/3-edit-role.png).
 
 const LABEL = 'text-xs font-semibold text-foreground block';
+const PAGE_LABEL = 'block';
+const PAGE_LABEL_TEXT = 'block text-xs font-bold uppercase tracking-wider text-muted-foreground';
+
+/** Where a field is drawn: in a dialog (the default), or on a page of its own. */
+export type FieldLook = 'dialog' | 'page';
+
+function Label({ look, text }: { look: FieldLook; text: string }) {
+  return look === 'page' ? <span className={PAGE_LABEL_TEXT}>{text}</span> : <>{text}</>;
+}
 
 function FieldError({ id, error }: { id: string; error: string | undefined }) {
   if (!error) return null;
@@ -30,6 +40,7 @@ export function TextField({
   maxLength,
   capitalize,
   required,
+  look = 'dialog',
 }: {
   label: string;
   value: string;
@@ -42,12 +53,13 @@ export function TextField({
   capitalize: 'words' | 'none';
   /** Whether the field must be filled in. */
   required: boolean;
+  look?: FieldLook;
 }) {
   const errorId = useId();
   return (
     <div>
-      <label className={LABEL}>
-        {label}
+      <label className={look === 'page' ? PAGE_LABEL : LABEL}>
+        <Label look={look} text={label} />
         <input
           type={type}
           data-testid={testId}
@@ -77,6 +89,7 @@ export function TextAreaField({
   testId,
   maxLength,
   required,
+  look = 'dialog',
 }: {
   label: string;
   value: string;
@@ -86,12 +99,13 @@ export function TextAreaField({
   maxLength?: number;
   /** Whether the field must be filled in. */
   required: boolean;
+  look?: FieldLook;
 }) {
   const errorId = useId();
   return (
     <div>
-      <label className={LABEL}>
-        {label}
+      <label className={look === 'page' ? PAGE_LABEL : LABEL}>
+        <Label look={look} text={label} />
         <textarea
           data-testid={testId}
           value={value}
