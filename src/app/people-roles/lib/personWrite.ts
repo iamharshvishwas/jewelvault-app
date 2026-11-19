@@ -3,12 +3,13 @@
 //   - the password goes to the one call and nowhere else: not into the address (the id is the only part of it), not into what this returns, not into any message;
 //   - a write that was refused with a sentence that says nothing was changed (a wrong password, the pause, a taken e-mail, a stale change) reads nothing again: nothing happened. Any other
 //     failure, and every success, reads the lists again: a write whose outcome nobody can vouch for may have gone through;
-//   - the API's own sentence is shown as the client made it. A failure that is not the client's (a bug, a lost connection) is "Could not confirm that this was saved.";
+//   - the API's own sentence is shown as the client made it. A failure that is not the client's (a bug, a lost connection) is "Could not confirm that this was saved." (`failureOf` of
+//     afterWrite.ts, which the Roles tab uses too);
 //   - adding a person and resetting a password answer with a temporary password, shown once by the dialog. An answer without it is the one thing that is spelled out here: the person
 //     was made (or the password was reset), nothing can be shown, and the way on is another reset.
-import { isApiError, type ApiClient } from '@/lib/api/client';
-import { UNCONFIRMED_MESSAGE } from '@/lib/api/errorMap';
+import type { ApiClient } from '@/lib/api/client';
 import type { SuperNewPersonAnswer, SuperResetAnswer } from '@/lib/api/types';
+import { failureOf, readAgain } from './afterWrite';
 import type { PersonChange } from './personChange';
 
 /** The part of the client the five writes use. */
@@ -120,16 +121,10 @@ export async function runChange(
   try {
     outcome = await send(writes, change, password);
   } catch (cause) {
-    const sentence = isApiError(cause) ? cause.message.trim() : '';
-    outcome = { error: sentence === '' ? UNCONFIRMED_MESSAGE : sentence, temporary: null };
-    reread = !(isApiError(cause) && cause.nothingChanged);
+    const failure = failureOf(cause);
+    outcome = { error: failure.error, temporary: null };
+    reread = failure.reread;
   }
-  if (reread) {
-    try {
-      await reload();
-    } catch {
-      // the store's own `reload` never rejects (a failed read shows on the screen as it is); should one reject all the same, what the write gave must not be lost behind it
-    }
-  }
+  if (reread) await readAgain(reload);
   return outcome;
 }

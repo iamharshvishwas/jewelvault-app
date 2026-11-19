@@ -6,12 +6,13 @@ import { useHolder } from '@/lib/useAccess';
 import type { SuperTicks } from '../lib/superStore';
 import { useSuper, type SuperView } from '../lib/useSuper';
 import PeopleTab from './PeopleTab';
+import RolesTab from './RolesTab';
 
 // People & Roles (plan: access and roles, Tasks 22 to 25; DESIGN 6.5; the pictures are mockups/1-people.png to 5-phone.png): the Super Admin's own screen, where she runs the logins
 // and the roles of the shop. This is the shell: the heading, the two tabs (People first; component state, no address of their own) and what the screen says while it loads or when
 // a read failed. The bodies of the tabs are given what has been loaded as props, and call `reload` after each write: the People tab is Task 23 (`PeopleTab`), the Roles tab is
-// Task 24 and is still the placeholder below. The route gate (AppLayout) opens the screen for the Super Admin alone (`superAdmin` in SCREENS of src/lib/access.ts); the check here keeps the screen from
-// reading anything for a person it is not for.
+// Task 24 (`RolesTab`; its Edit button is wired to the editor by Task 25). The route gate (AppLayout) opens the screen for the Super Admin alone (`superAdmin` in SCREENS of
+// src/lib/access.ts); the check here keeps the screen from reading anything for a person it is not for.
 
 export type PeopleRolesTab = 'people' | 'roles';
 
@@ -29,8 +30,8 @@ export interface TabBodyProps {
   reload: () => Promise<void>;
 }
 
-// Task 24 replaces this by the Roles tab.
-const RolesTabBody: React.FC<TabBodyProps> = () => <div data-testid="roles-tab" />;
+// TODO(task-25): open the editor
+const openEditor = () => undefined;
 
 /** The screen as the store holds it now (drawn from the view it is given: the container below gives it the store's). */
 export function PeopleRolesView({
@@ -113,7 +114,13 @@ export function PeopleRolesView({
             {tab === 'people' ? (
               <PeopleTab ticks={ticks} people={people} roles={roles} reload={reload} />
             ) : (
-              <RolesTabBody ticks={ticks} people={people} roles={roles} reload={reload} />
+              <RolesTab
+                ticks={ticks}
+                people={people}
+                roles={roles}
+                reload={reload}
+                onEdit={openEditor}
+              />
             )}
           </div>
         </div>

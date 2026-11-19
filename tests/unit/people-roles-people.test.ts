@@ -15,7 +15,6 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import ts from 'typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AddPersonDialog from '@/app/people-roles/components/AddPersonDialog';
 import ChangeRoleDialog from '@/app/people-roles/components/ChangeRoleDialog';
@@ -66,6 +65,7 @@ import type {
 } from '@/lib/api/types';
 import { PLAN_TICKS, sessionFor, type RoleSpec } from './support/access';
 import { PASSWORD_NAMES, leaksOf, sourcesUnder } from './support/leaks';
+import { buttonsOf, callsOf, chosenOf, draw, elementsOf, optionsOf, plain } from './support/screen';
 
 const STAMP = '2026-11-19T07:41:12.123456Z';
 /** The id `sessionFor()` gives to the person who is signed in: the caller's own row has this id. */
@@ -138,18 +138,6 @@ const R_CASHIER = role({ key: 'zk-cashier', name: 'Cashier' });
 const R_KEEPER = role({ key: 'zk-keeper', name: 'Stock Keeper' });
 const R_OLD = role({ key: 'zk-old', name: 'Old Role', active: false });
 const ROLES = [R_OWNER, R_CASHIER, R_OLD, R_KEEPER];
-
-/** What a screen shows of a piece of markup: the words, with the entities of React's output turned back. */
-const plain = (html: string) =>
-  html
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&#x27;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/\s+/g, ' ')
-    .trim();
-const draw = (component: unknown, props: object) =>
-  renderToStaticMarkup(createElement(component as never, props as never));
 
 // ================================================================================================ the rules of the tab
 
@@ -895,13 +883,6 @@ const drawList = (people: SuperPerson[] = ROSTER) =>
   draw(PeopleTabView, { people, meId: ME_ID, onAdd: noop, onAction: noop });
 const rowsOf = (html: string) =>
   [...html.matchAll(/<tr[^>]*data-testid="person-row"[^>]*>[\s\S]*?<\/tr>/g)].map((m) => m[0]);
-const buttonsOf = (html: string) =>
-  [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
-/** The words of the options of the drop-down lists, and of those of them that are chosen. */
-const optionsOf = (html: string) =>
-  [...html.matchAll(/<option[^>]*>([^<]*)<\/option>/g)].map((m) => m[1]);
-const chosenOf = (html: string) =>
-  [...html.matchAll(/<option[^>]*selected[^>]*>([^<]*)<\/option>/g)].map((m) => m[1]);
 
 describe('Task 23 the People list', () => {
   it('has the table of the picture: Person, Role, Status, Actions, one row for each person, and the note under it', () => {
@@ -1265,53 +1246,6 @@ describe('Task 23 the temporary password dialog', () => {
 
 // There is no DOM here, so the hand-over of `reload` from the shell down to the write is read from the syntax tree (the way the screens of Task 20b pin a seam): a dialog that handed on a
 // reload of its own, or none, would show the old list after a write.
-const SRC_DIR = path.resolve(__dirname, '../../src/app/people-roles/components');
-const treeOf = (file: string) =>
-  ts.createSourceFile(
-    file,
-    readFileSync(path.join(SRC_DIR, file), 'utf8'),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TSX
-  );
-
-/** The attributes (name -> the text of the value) of every JSX element with this tag in a file. */
-function elementsOf(file: string, tag: string): Array<Record<string, string>> {
-  const source = treeOf(file);
-  const found: Array<Record<string, string>> = [];
-  const visit = (node: ts.Node) => {
-    if (
-      (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) &&
-      node.tagName.getText(source) === tag
-    ) {
-      const attributes: Record<string, string> = {};
-      for (const attribute of node.attributes.properties) {
-        if (!ts.isJsxAttribute(attribute)) continue;
-        const value = attribute.initializer;
-        attributes[attribute.name.getText(source)] =
-          value && ts.isJsxExpression(value) ? (value.expression?.getText(source) ?? '') : '';
-      }
-      found.push(attributes);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
-  return found;
-}
-
-/** The text of the arguments of every call of a function with this name in a file. */
-function callsOf(file: string, callee: string): string[][] {
-  const source = treeOf(file);
-  const found: string[][] = [];
-  const visit = (node: ts.Node) => {
-    if (ts.isCallExpression(node) && node.expression.getText(source) === callee)
-      found.push(node.arguments.map((argument) => argument.getText(source)));
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
-  return found;
-}
-
 describe("Task 23 the shell's reload reaches every write", () => {
   it('the password step does the write with the reload it is given, and nothing else tells the dialog it is done but the flow', () => {
     expect(callsOf('ChangeSteps.tsx', 'runChange')).toEqual([

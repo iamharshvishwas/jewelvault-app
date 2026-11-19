@@ -62,6 +62,45 @@ export function TextField({
   );
 }
 
+/** A text of several lines (the description of a role): a plain text box, with the same look and the same sentence for what is wrong. */
+export function TextAreaField({
+  label,
+  value,
+  onChange,
+  error,
+  testId,
+  maxLength,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  error?: string;
+  testId: string;
+  maxLength?: number;
+}) {
+  const errorId = useId();
+  return (
+    <div>
+      <label className={LABEL}>
+        {label}
+        <textarea
+          data-testid={testId}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          maxLength={maxLength}
+          rows={3}
+          autoComplete="off"
+          autoCapitalize="sentences"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
+          className="input-field text-sm mt-1.5 font-normal min-h-20"
+        />
+      </label>
+      <FieldError id={errorId} error={error} />
+    </div>
+  );
+}
+
 /**
  * A choice of roles by their NAMES. The options are numbered by their place in the list, so that no role key is ever in the page: the key is what the screen keeps, the name is what the
  * person sees. A key that is not among the choices (a role switched off since) shows as nothing chosen.
