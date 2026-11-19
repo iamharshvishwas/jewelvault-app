@@ -42,6 +42,7 @@ import {
   roleEditTitle,
 } from '@/app/people-roles/lib/editWords';
 import { readRoleAgain } from '@/app/people-roles/lib/afterWrite';
+import { SCREEN_RELOADS } from '@/app/people-roles/lib/people';
 import {
   partlySaved,
   runRoleEdit,
@@ -506,15 +507,19 @@ describe('Task 25 editWords: the password step says exactly what will be saved',
     expect(roleEditTitle(edit({ type: 'name', value: 'Till' }))).toBe('Save changes to “Cashier”?');
   });
 
-  it('says how many people have the role, and that a tick change works on their very next click', () => {
+  // final review I1: ANY change of access (even turning a tick on) empties what the screens of the people who have the role hold and draws them again within a poll: a bill that is half made
+  // is gone. The step says so, in one sentence after the old words.
+  it('says how many people have the role, that a tick change works on their very next click, and that their screen reloads at once with what they have not saved lost', () => {
     expect(roleEditIntro(edit(tick('cashbook_all', true)))).toBe(
-      '3 people have this role. The change works on their very next click.'
+      '3 people have this role. The change works on their very next click. Their screen reloads at once: anything they have not saved is lost.'
     );
     expect(
       roleEditIntro(
         roleEditOf(run(seedOf(role({ people: 1 })), tick('cashbook_all', true)), CATALOGUE)
       )
-    ).toBe('1 person has this role. The change works on their very next click.');
+    ).toBe(
+      '1 person has this role. The change works on their very next click. Their screen reloads at once: anything they have not saved is lost.'
+    );
     expect(
       roleEditIntro(
         roleEditOf(run(seedOf(role({ people: 0 })), tick('cashbook_all', true)), CATALOGUE)
@@ -522,11 +527,21 @@ describe('Task 25 editWords: the password step says exactly what will be saved',
     ).toBe('Nobody has this role yet.');
   });
 
-  it('a change of the name or the description alone does not say that access changes', () => {
+  it('a change of the name or the description alone does not say that access changes, nor that a screen reloads', () => {
     expect(roleEditIntro(edit({ type: 'name', value: 'Till' }))).toBe('3 people have this role.');
     expect(roleEditIntro(edit({ type: 'description', value: 'x' }))).toBe(
       '3 people have this role.'
     );
+    expect(roleEditIntro(edit({ type: 'name', value: 'Till' }))).not.toContain(SCREEN_RELOADS);
+  });
+
+  it('the sentence of the screen that reloads is the one the Change role step says (one sentence, in one place), and is said once', () => {
+    expect(SCREEN_RELOADS).toBe(
+      'Their screen reloads at once: anything they have not saved is lost.'
+    );
+    const said = roleEditIntro(edit(tick('cashbook_all', true), tick('refund_give', true)));
+    expect(said.split(SCREEN_RELOADS)).toHaveLength(2);
+    expect(said.endsWith(SCREEN_RELOADS)).toBe(true);
   });
 
   it('turning on and turning off list the ticks by their words in catalogue order, the sensitive ones marked', () => {

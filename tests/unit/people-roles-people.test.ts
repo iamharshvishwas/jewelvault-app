@@ -28,6 +28,7 @@ import { copyText } from '@/app/people-roles/lib/copyText';
 import {
   EMAIL_TAKEN,
   ROLE_SWITCHED_OFF,
+  SCREEN_RELOADS,
   actionLabel,
   activeRoleChoices,
   editChanges,
@@ -338,12 +339,33 @@ describe('Task 23 the password step says exactly what will happen', () => {
       role: 'zk-cashier',
       roleName: 'Cashier',
     });
+    // final review I1: a change of access reloads the screen of everybody who has the role, and what they had not saved is gone (one sentence added after the old words)
     expect(changeSummary(change)).toEqual([
       'Change the role of Meena Shah to Cashier',
-      'The change works on their very next click.',
+      'The change works on their very next click. Their screen reloads at once: anything they have not saved is lost.',
     ]);
     expect(changeTitle(change)).toBe("Change this person's role?");
     expect(changeConfirmLabel(change)).toBe('Confirm and change role');
+  });
+
+  it('the step of a change of role says what it does to the screen of the person: the sentence is exactly the ruled one, once, after the old words, and no other step of the tab says it', () => {
+    expect(SCREEN_RELOADS).toBe(
+      'Their screen reloads at once: anything they have not saved is lost.'
+    );
+    const role = changeSummary(rolePersonChange(MEENA, 'zk-cashier', ROLES));
+    expect(role).toHaveLength(2);
+    expect(role[1].startsWith('The change works on their very next click. ')).toBe(true);
+    expect(role[1].endsWith(SCREEN_RELOADS)).toBe(true);
+    expect(role.join(' ').split(SCREEN_RELOADS)).toHaveLength(2);
+    // the other four say what they say, and nothing about a screen that reloads (a person who is switched off or reset is signed out, which they already say)
+    for (const other of [
+      newPersonChange({ full_name: 'M', email: 'm@x.co', role: 'zk-cashier' }, ROLES),
+      editPersonChange(MEENA, { full_name: 'Meena Joshi', email: 'new@example.test' }, ME_ID),
+      switchPersonChange(MEENA),
+      switchPersonChange(OLD_LOGIN),
+      resetPersonChange(MEENA),
+    ])
+      expect(changeSummary(other).join(' '), other.kind).not.toMatch(/reloads|have not saved/);
   });
 
   it('switching off and on', () => {

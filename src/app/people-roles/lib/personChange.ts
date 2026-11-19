@@ -5,6 +5,7 @@
 //   - the values are those that will be saved: the name without the spaces around it, the e-mail in lower case, the role by its name. A role is named in words and never by its key.
 import type { SuperPerson, SuperRole } from '@/lib/api/types';
 import {
+  SCREEN_RELOADS,
   editChanges,
   normalizeEmail,
   type EditValues,
@@ -95,7 +96,7 @@ export function changeSummary(c: PersonChange): string[] {
     case 'role':
       return [
         `Change the role of ${c.person.full_name} to ${c.roleName}`,
-        'The change works on their very next click.',
+        `The change works on their very next click. ${SCREEN_RELOADS}`,
       ];
     case 'switch':
       return c.active

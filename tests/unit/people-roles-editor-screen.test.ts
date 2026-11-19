@@ -963,7 +963,7 @@ describe('Task 25 the password step as it is drawn', () => {
   it('the summary says who has the role, then Turning on (the sensitive ones marked) and Turning off', () => {
     const html = draw(RoleEditSummary, { edit, catalogue: CATALOGUE });
     expect(plain(html)).toBe(
-      '3 people have this role. The change works on their very next click. Turning on See the cash book for all days Cancel a bill Sensitive Turning off Receive payments and settle fine'
+      '3 people have this role. The change works on their very next click. Their screen reloads at once: anything they have not saved is lost. Turning on See the cash book for all days Cancel a bill Sensitive Turning off Receive payments and settle fine'
     );
     expect(html.match(/>Sensitive</g)).toHaveLength(1);
     expect(html).toMatch(/Turning on<\/b>/);
@@ -980,7 +980,7 @@ describe('Task 25 the password step as it is drawn', () => {
       CATALOGUE
     );
     expect(plain(draw(RoleEditSummary, { edit: only, catalogue: CATALOGUE }))).toBe(
-      '3 people have this role. The change works on their very next click. Turning on See the cash book for all days Turning off Nothing New name: Till Description changed'
+      '3 people have this role. The change works on their very next click. Their screen reloads at once: anything they have not saved is lost. Turning on See the cash book for all days Turning off Nothing New name: Till Description changed'
     );
   });
 
@@ -1001,7 +1001,9 @@ describe('Task 25 the password step as it is drawn', () => {
     });
     const words = plain(html);
     expect(words).toContain('Save changes to “Cashier”?');
-    expect(words).toContain('3 people have this role. The change works on their very next click.');
+    expect(words).toContain(
+      '3 people have this role. The change works on their very next click. Their screen reloads at once: anything they have not saved is lost.'
+    );
     expect(words).toContain('Turning on See the cash book for all days Cancel a bill Sensitive');
     expect(words).toContain('Turning off Receive payments and settle fine');
     expect(words).toContain('Your password');

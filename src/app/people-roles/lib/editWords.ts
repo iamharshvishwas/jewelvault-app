@@ -5,6 +5,7 @@
 import type { TickKey } from '@/lib/access';
 import type { TickInfo } from '@/lib/api/types';
 import type { EditorInfo } from './editorDraft';
+import { SCREEN_RELOADS } from './people';
 import type { RoleEdit } from './roleEdit';
 import { peopleLine } from './roles';
 import { changesOf } from './tickEdit';
@@ -78,12 +79,17 @@ export function roleEditTitle(edit: RoleEdit): string {
   return `Save changes to “${edit.role.name}”?`;
 }
 
-/** Who has the role, and that a change of ticks works at once. A change of the name or the description does not change what anybody may do, so it does not say so. */
+/**
+ * Who has the role, that a change of ticks works at once, and what that does to their screen: it reloads, and what they had not saved is lost (`SCREEN_RELOADS`, final review of the
+ * website, Important I1). A change of the name or the description does not change what anybody may do, so it says none of that.
+ */
 export function roleEditIntro(edit: RoleEdit): string {
   const people = edit.role.people;
   if (people === 0) return 'Nobody has this role yet.';
   const who = `${peopleLine(people)} ${people === 1 ? 'has' : 'have'} this role.`;
-  return edit.ticks === undefined ? who : `${who} The change works on their very next click.`;
+  return edit.ticks === undefined
+    ? who
+    : `${who} The change works on their very next click. ${SCREEN_RELOADS}`;
 }
 
 /** One part of what is about to be saved: a list of ticks that are turned on or off, or one line about the name or the description. */

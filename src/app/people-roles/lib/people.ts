@@ -77,6 +77,12 @@ export const SAME_ROLE = 'This person already has that role. Choose a different 
 export const NOTHING_CHANGED_YET = 'Nothing has been changed yet.';
 /** What a taken e-mail says. It is the API's `email is already used by another user`, said as the rest of the screen speaks (final review of the website, Ruling AB (c)): the form cannot catch it, the database compares e-mails by its own collation. */
 export const EMAIL_TAKEN = 'Another person already has this e-mail.';
+/**
+ * What the screen of a person says when their access changes: ANY change of access (a new role for the person, a tick turned on or off for their role, even a tick turned ON) empties what
+ * their screen holds and draws it again within one poll (8 seconds, 30 on a hidden tab), so a bill that is half made or a form that is half filled is gone, with no message (final review of the
+ * website, Important I1, Ruling AB (d)). The two steps that change access say it: the Change role step and the password step of a role whose ticks change.
+ */
+export const SCREEN_RELOADS = 'Their screen reloads at once: anything they have not saved is lost.';
 /** What a role that is not active says: the API's `role is not an active role`, for a role that another browser switched off since the form was opened. */
 export const ROLE_SWITCHED_OFF = 'That role is switched off. Choose another role.';
 
