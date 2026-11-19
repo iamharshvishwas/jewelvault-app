@@ -1,4 +1,6 @@
 // WEB11 (PT-W11, unit half: "a biller sees none"; spec A4, X4, X5, X10, X11, X12, K1, K6, S7): the owner's actions are on the screens for the owner of a real build and for nobody else.
+// Task 20 of the access plan: each action is offered for its own tick (bill_cancel, bill_reissue, payment_void, refund_give, opening_balance), so a role that holds one of them has that one and
+// not the others; the three roles of today are unchanged (the owner holds all five, the biller and staff none).
 //
 //   - the Cancel and Re-issue buttons of a bill (the Invoices tab and the estimate): Cancel on every live bill, Re-issue on a live estimate (not on dues brought forward), neither on a
 //     cancelled bill; a cancelled bill says when and why, and which bill replaced it;
@@ -14,7 +16,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReactElement } from 'react';
 import type { LedgerEntry } from '@/lib/mockData';
 import { billRow, fill, id, receiptRow, type Shop } from './support/money-rows';
-import { sessionFor } from './support/access';
+import { TICK_KEYS, type TickKey } from '@/lib/access';
+import { sessionFor, type RoleSpec } from './support/access';
 
 const address = vi.hoisted(() => ({ search: '' }));
 vi.mock('next/navigation', () => ({
@@ -23,7 +26,7 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: () => undefined, replace: () => undefined }),
 }));
 
-type Who = 'owner' | 'biller' | 'staff' | null;
+type Who = RoleSpec | null;
 
 async function load(who: Who, { preview = false } = {}) {
   vi.resetModules();
@@ -281,5 +284,99 @@ describe("PT-W11 the customer card: Hand Money Back (X11) and Opening Balance (X
     const html = w.card();
     expect(count(html, 'open-refund')).toBe(0);
     expect(count(html, 'open-opening')).toBe(0);
+  });
+});
+
+describe('Task 20: each owner action follows its own tick on the screens', () => {
+  const only = (tick: TickKey): Who => ({ ticks: [tick] });
+
+  it('Cancel is bill_cancel and Re-issue is bill_reissue: a role with one of them has that button and not the other, on a bill, on the Invoices tab and on the estimate', async () => {
+    const canceller = await load(only('bill_cancel'));
+    const id = canceller.book.by.pending.bill.id;
+    expect(count(canceller.billActions(id), 'cancel-bill')).toBe(1);
+    expect(count(canceller.billActions(id), 'reissue-bill')).toBe(0);
+    const invoices = canceller.invoiceList();
+    expect(count(invoices, 'cancel-bill')).toBe(5);
+    expect(count(invoices, 'reissue-bill')).toBe(0);
+    expect(count(canceller.estimate(id), 'cancel-bill')).toBe(1);
+    expect(count(canceller.estimate(id), 'reissue-bill')).toBe(0);
+
+    const reissuer = await load(only('bill_reissue'));
+    const again = reissuer.book.by.pending.bill.id;
+    expect(count(reissuer.billActions(again), 'reissue-bill')).toBe(1);
+    expect(count(reissuer.billActions(again), 'cancel-bill')).toBe(0);
+    const list = reissuer.invoiceList();
+    expect(count(list, 'reissue-bill')).toBe(4); // the live estimates, not the opening balance
+    expect(count(list, 'cancel-bill')).toBe(0);
+  });
+
+  it('a bill with a button of its own: the role with only Re-issue has none on dues brought forward, and one with only Cancel has Cancel there', async () => {
+    const reissuer = await load(only('bill_reissue'));
+    expect(reissuer.billActions(reissuer.book.by.opening.bill.id)).toBe('');
+    const canceller = await load(only('bill_cancel'));
+    expect(count(canceller.billActions(canceller.book.by.opening.bill.id), 'cancel-bill')).toBe(1);
+  });
+
+  it('the other three ticks give no button on a bill: a role with only Void, Refund or Opening Balance sees none', async () => {
+    for (const tick of ['payment_void', 'refund_give', 'opening_balance'] as const) {
+      const w = await load(only(tick));
+      expect(w.billActions(w.book.by.pending.bill.id), tick).toBe('');
+      const invoices = w.invoiceList();
+      expect(count(invoices, 'invoice-row'), tick).toBe(6);
+      expect(count(invoices, 'cancel-bill'), tick).toBe(0);
+      expect(count(invoices, 'reissue-bill'), tick).toBe(0);
+    }
+  });
+
+  it('Void is payment_void: a role with only it has Void on each live receipt and each live refund, and the Action column; Cancel or a refund do not give it', async () => {
+    const voider = await load(only('payment_void'));
+    const live = voider.book.receipts.find((r) => r.status === 'active');
+    if (!live) throw new Error('the book needs a live receipt');
+    const refunds = [
+      voider.entry(voider.refund.id, {
+        id: `4:${voider.refund.id}`,
+        kind: 'Refund',
+        debit: 300,
+        credit: 0,
+      }),
+    ];
+    const html = voider.paymentsTab([voider.entry(live.id)], refunds);
+    expect(count(html, 'void-receipt')).toBe(1);
+    expect(count(html, 'void-refund')).toBe(1);
+    expect(html).toContain('Action');
+    for (const tick of ['bill_cancel', 'refund_give', 'opening_balance', 'bill_reissue'] as const) {
+      const w = await load(only(tick));
+      const other = w.paymentsTab(
+        [w.entry(live.id)],
+        [w.entry(w.refund.id, { id: `4:${w.refund.id}`, kind: 'Refund', debit: 300, credit: 0 })]
+      );
+      expect(count(other, 'void-receipt'), tick).toBe(0);
+      expect(count(other, 'void-refund'), tick).toBe(0);
+      expect(other, tick).not.toContain('Action');
+    }
+  });
+
+  it('Hand Money Back is refund_give and Opening Balance is opening_balance: each button on the customer card goes with its own tick', async () => {
+    const refunder = await load(only('refund_give'));
+    expect(count(refunder.card(), 'open-refund')).toBe(1);
+    expect(count(refunder.card(), 'open-opening')).toBe(0);
+    const opener = await load(only('opening_balance'));
+    expect(count(opener.card(), 'open-opening')).toBe(1);
+    expect(count(opener.card(), 'open-refund')).toBe(0);
+    for (const tick of ['payment_void', 'bill_cancel', 'bill_reissue'] as const) {
+      const w = await load(only(tick));
+      expect(count(w.card(), 'open-refund'), tick).toBe(0);
+      expect(count(w.card(), 'open-opening'), tick).toBe(0);
+    }
+    // Receive Payment is not one of the five: it is on the card for everybody, as before
+    expect(refunder.card()).toContain('Receive Payment');
+  });
+
+  it('a Super Admin has every one of them, like the owner', async () => {
+    const w = await load({ ticks: TICK_KEYS, superAdmin: true });
+    expect(count(w.billActions(w.book.by.pending.bill.id), 'cancel-bill')).toBe(1);
+    expect(count(w.billActions(w.book.by.pending.bill.id), 'reissue-bill')).toBe(1);
+    expect(count(w.card(), 'open-refund')).toBe(1);
+    expect(count(w.card(), 'open-opening')).toBe(1);
   });
 });

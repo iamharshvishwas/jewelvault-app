@@ -9,9 +9,10 @@ import {
 import type { HydrateState } from '@/lib/cache/hydrate';
 import type { PollState } from '@/lib/cache/poll';
 import { DOWNLOAD_FILES } from '@/lib/downloadEverything';
+import { PLAN_TICKS, holderFor, type RoleSpec } from './support/access';
 import { parseCsv } from './support/csv';
 import { billRow, customerRow } from './support/money-rows';
-import { categoryRow, settingRow, userRow, uuid } from './support/rows';
+import { categoryRow, settingRow, skuPrivateRow, skuRow, userRow, uuid } from './support/rows';
 import { readZipText } from './support/zip';
 
 // T-E04 / T-R05 (the screen half of Download everything, B3; task WEB12b): the flow behind the owner's button. It brings the screen up to date with a FRESH poll (one that starts after the press),
@@ -80,7 +81,7 @@ function fakePoller(order: string[]) {
   };
 }
 
-const OK_ROLE: string = 'owner';
+const OK_ROLE: RoleSpec | null = 'owner';
 
 interface Rig {
   server: DownloadServer;
@@ -90,7 +91,8 @@ interface Rig {
   saved: Array<{ zip: Uint8Array; filename: string }>;
   posts: Array<{ path: string; body: unknown }>;
   hydrate: { current: HydrateState['status'] };
-  role: { current: string | null };
+  /** Who is signed in, as the session says it: a built-in role, a custom set of ticks, or nobody. */
+  role: { current: RoleSpec | null };
   postAnswer: { current: () => Promise<unknown> };
   logoutHooks: Array<() => void>;
   deps: DownloadServerDeps;
@@ -107,7 +109,7 @@ function rig(over: Partial<DownloadServerDeps> = {}): Rig {
   const saved: Rig['saved'] = [];
   const posts: Rig['posts'] = [];
   const hydrate = { current: 'ready' as HydrateState['status'] };
-  const role = { current: OK_ROLE as string | null };
+  const role = { current: OK_ROLE as RoleSpec | null };
   const logoutHooks: Array<() => void> = [];
   const postAnswer = {
     current: async () => ({
@@ -125,7 +127,7 @@ function rig(over: Partial<DownloadServerDeps> = {}): Rig {
     cache,
     poller,
     hydrator: { getState: () => ({ status: hydrate.current }) as HydrateState },
-    role: () => role.current,
+    holder: () => (role.current === null ? null : holderFor(role.current)),
     save: (zip, filename) => {
       order.push('save');
       saved.push({ zip, filename });
@@ -271,16 +273,64 @@ describe('T-E04 a FRESH poll: one that starts after the press', () => {
 
 describe('T-E04 the refusals before anything is made', () => {
   it.each(['biller', 'staff', null] as const)(
-    'a %s is told that only the owner can do this, and nothing is polled, saved or posted',
+    'a %s is told that their role cannot do this, and nothing is polled, saved or posted',
     async (role) => {
       const r = rig();
       r.role.current = role;
       const state = await r.server.run();
       expect(state).toMatchObject({ status: 'failed', fileSaved: false });
-      expect((state as { message: string }).message).toMatch(/only the owner/i);
+      expect((state as { message: string }).message).toBe(
+        'Your role cannot use Download everything.'
+      );
       expect(r.order).toEqual([]);
     }
   );
+
+  it('the tick is the Download everything tick and no other: the Owner without it is refused, and so is a role that holds every other tick but it', async () => {
+    for (const who of [
+      { ticks: PLAN_TICKS.filter((tick) => tick !== 'download_all') },
+      { ticks: PLAN_TICKS.filter((tick) => tick !== 'download_all'), superAdmin: true },
+    ]) {
+      const r = rig();
+      r.role.current = who;
+      const state = await r.server.run();
+      expect(state, JSON.stringify(who.superAdmin)).toMatchObject({
+        status: 'failed',
+        fileSaved: false,
+      });
+      expect((state as { message: string }).message).toMatch(/your role cannot/i);
+      expect(r.order).toEqual([]);
+    }
+  });
+
+  it('a role with only the Download everything tick gets past the refusal: the books are polled, the file is saved and the record is posted, with no original weight in it', async () => {
+    const r = rig();
+    r.cache.merge('sku-private', [skuPrivateRow(1, '7.123')]);
+    r.role.current = { ticks: ['download_all'] };
+    const state = await r.server.run();
+    expect(state).toMatchObject({ status: 'done' });
+    expect(r.order).toEqual(['poll', 'save', 'post', 'reloadHealth']);
+    expect(r.saved).toHaveLength(1);
+    const text = readZipText(r.saved[0].zip);
+    for (const [name, content] of text) {
+      expect(content, name).not.toContain('original_net_weight');
+      expect(content, name).not.toContain('7.123');
+    }
+  });
+
+  it('a Super Admin holds every tick and is let through, and its file has the original weight', async () => {
+    const r = rig();
+    r.cache.merge('skus', [skuRow(1, 1)]);
+    r.cache.merge('sku-private', [skuPrivateRow(1, '7.123')]);
+    r.role.current = { ticks: PLAN_TICKS, superAdmin: true };
+    const state = await r.server.run();
+    expect(state).toMatchObject({ status: 'done' });
+    const skus = parseCsv(readZipText(r.saved[0].zip).get('skus.csv') ?? '');
+    expect(skus.header).toContain('original_net_weight');
+    expect(skus.rows.map((row) => row[skus.header.indexOf('original_net_weight')])).toContain(
+      '7.123'
+    );
+  });
 
   it('while the books are still loading nothing is made', async () => {
     const r = rig();

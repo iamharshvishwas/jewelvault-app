@@ -18,7 +18,7 @@ import { FiguresNote } from './ReasonDialog';
 
 // The refund form (X11; spec Y1, Y10, V2, V3, V4; task WEB11): money handed back to a customer out of the advance they hold. The amount cannot be more than the advance (the API decides on
 // the books as they stand after the customer is locked); the date is today; silver cannot be handed back in M1 (O24). This form is the only part of the screens that goes if X11 leaves
-// M1 for lack of calendar. The panel is drawn for the owner only (the card decides).
+// M1 for lack of calendar. The panel is drawn for a person who may give a refund (the card decides, by the tick of that call).
 
 interface RefundPanelProps {
   customerId: string;

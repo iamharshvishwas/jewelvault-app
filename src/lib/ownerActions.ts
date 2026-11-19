@@ -11,7 +11,11 @@
 //     refund first" and how much was handed back, a refund above the advance, a walk-in advance, an opening bill that cannot be re-issued. A refusal before any write ends "Nothing was
 //     changed."; an outcome that is not known says "Could not confirm that this was saved." and that the books are being read again (C17). The general sentences are src/lib/api/errorMap.ts.
 //
+//   - WHO IS OFFERED THEM. `ownerActionFlags` says which of the five a person is offered: each follows its own tick (plan: access and roles, Task 20; DESIGN 6.2, M12 to M16), so a role that
+//     holds one of them has that button and not the others. Today's owner holds all five; the biller and staff none.
+//
 // This file makes no network call and keeps nothing between calls.
+import { can, type Holder } from './access';
 import type {
   CancelBillResponse,
   CreateBillResponse,
@@ -37,6 +41,34 @@ import { assertBusinessDate, formatGrams, formatRupees, parseGrams, parseRupees 
 
 export const OWNER_ACTIONS = ['cancel', 'reissue', 'void', 'refund', 'opening'] as const;
 export type OwnerAction = (typeof OWNER_ACTIONS)[number];
+
+/** Which of the five actions a person is offered, each by the tick of the call it makes: Cancel a bill (X5), Re-issue (X10), Void a payment (X4), Give a refund (X11), Add an opening balance (X12). */
+export interface OwnerActionFlags {
+  /** Cancel a bill: `bill_cancel`. */
+  cancel: boolean;
+  /** Re-issue an estimate: `bill_reissue`. */
+  reissue: boolean;
+  /** Void a receipt or a refund: `payment_void`. */
+  voidPayment: boolean;
+  /** Hand money back: `refund_give`. */
+  refund: boolean;
+  /** Add an opening balance: `opening_balance`. */
+  openingBalance: boolean;
+}
+
+/**
+ * The actions a person is offered. A preview build has no server to send them to, so it offers none, whoever the person is. The API refuses the others anyway (JV_FORBIDDEN, the wall): the buttons
+ * are not drawn at all, not greyed out.
+ */
+export function ownerActionFlags(who: Holder | null, preview = false): OwnerActionFlags {
+  return {
+    cancel: !preview && can(who, 'bill_cancel'),
+    reissue: !preview && can(who, 'bill_reissue'),
+    voidPayment: !preview && can(who, 'payment_void'),
+    refund: !preview && can(who, 'refund_give'),
+    openingBalance: !preview && can(who, 'opening_balance'),
+  };
+}
 
 /**
  * X4, X5 and X10: the reason is optional (FB-D1: with the box empty the body has no `reason` and the API stores "No reason given"); a reason that is typed is 3 to 500 characters once
@@ -395,15 +427,15 @@ const gramsDetail = (details: Record<string, unknown> | undefined, key: string):
 
 const done = (text: string): string => `${text} ${NOTHING_CHANGED}`;
 
-const WHAT: Record<OwnerAction, { thing: string; doing: string; only: string }> = {
-  cancel: { thing: 'bill', doing: 'cancelling a bill', only: 'cancel a bill' },
-  reissue: { thing: 'bill', doing: 're-issuing a bill', only: 're-issue a bill' },
-  void: { thing: 'receipt', doing: 'voiding a receipt', only: 'void a receipt' },
-  refund: { thing: 'customer', doing: 'handing money back', only: 'hand money back' },
+const WHAT: Record<OwnerAction, { thing: string; doing: string; verb: string }> = {
+  cancel: { thing: 'bill', doing: 'cancelling a bill', verb: 'cancel a bill' },
+  reissue: { thing: 'bill', doing: 're-issuing a bill', verb: 're-issue a bill' },
+  void: { thing: 'receipt', doing: 'voiding a receipt', verb: 'void a receipt' },
+  refund: { thing: 'customer', doing: 'handing money back', verb: 'hand money back' },
   opening: {
     thing: 'customer',
     doing: 'adding an opening balance',
-    only: 'add an opening balance',
+    verb: 'add an opening balance',
   },
 };
 
@@ -425,7 +457,7 @@ function specificRefusal(
   switch (error.code) {
     case 'JV_FORBIDDEN':
       if (reason === 'inactive') return error.message;
-      return done(`Only the owner can ${WHAT[action].only}.`);
+      return done(`Your role cannot ${WHAT[action].verb}.`);
     case 'JV_NOT_FOUND':
       return done(`That ${WHAT[action].thing} was not found.`);
     case 'JV_CUSTOMER_ARCHIVED':
@@ -557,8 +589,8 @@ export function ownerActionFailure(error: unknown, context: ActionContext): Acti
 }
 
 export interface ReissueFailureContext {
-  /** The signed-in role. Only the owner may give a reason for cash over the limit (Z1). */
-  role: string | null;
+  /** The signed-in person. Only a person with the cash-over-limit tick may give a reason for cash over the limit (Z1). */
+  who: Holder | null;
   /** The old bill is the walk-in's (K5). */
   walkIn: boolean;
 }
@@ -573,7 +605,7 @@ export function reissueFailure(error: unknown, context: ReissueFailureContext): 
     if (specific !== null)
       return { message: specific, cashLimit: null, pieceIds: [], unconfirmed: false };
   }
-  const found = billSaveFailure(error, { role: context.role, walkIn: context.walkIn });
+  const found = billSaveFailure(error, { who: context.who, walkIn: context.walkIn });
   if (found.unconfirmed && isErrorLike(error)) return { ...found, message: unconfirmedHelp(error) };
   return found;
 }

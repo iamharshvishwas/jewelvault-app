@@ -3,11 +3,10 @@ import path from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import DesignTabs from '@/app/design-detail/components/DesignTabs';
-import ReportsClient from '@/app/reports/components/ReportsClient';
 import { canAccessPath } from '@/lib/access';
-import { PLAN_TICKS, holderFor, type RoleSpec } from './support/access';
+import { PLAN_TICKS, holderFor, sessionFor, type RoleSpec } from './support/access';
 import { inventoryExportRows } from '@/lib/inventoryExport';
 import type { Design, Sku } from '@/lib/mockData';
 
@@ -132,7 +131,20 @@ describe('T-E04 the sample Audit and Sales tabs of the design page are gone', ()
 });
 
 describe('T-E04 the Reports screen has no date controls and no export buttons (C15, O32)', () => {
-  const html = renderToStaticMarkup(React.createElement(ReportsClient));
+  // the screen shows the tabs the person's ticks allow (Task 20), so it is drawn for the owner, whose screen it is
+  let html = '';
+  beforeAll(async () => {
+    vi.resetModules();
+    vi.doMock('@/lib/authStore', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('@/lib/authStore')>()),
+      useSession: () => sessionFor('owner'),
+    }));
+    const { default: ReportsClient } = await import('@/app/reports/components/ReportsClient');
+    html = renderToStaticMarkup(React.createElement(ReportsClient));
+  });
+  afterAll(() => {
+    vi.doUnmock('@/lib/authStore');
+  });
 
   it('draws no date field and no Excel, CSV or PDF button, and says nothing of exports', () => {
     expect(html).not.toMatch(/type="date"/);

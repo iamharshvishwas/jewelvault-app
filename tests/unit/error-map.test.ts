@@ -24,8 +24,12 @@ import {
 import { ApiError } from '@/lib/api/client';
 import { ERROR_CODES } from '@/lib/api/types';
 import { OWNER_ACTIONS, ownerActionFailure, reissueFailure } from '@/lib/ownerActions';
+import { holderFor } from './support/access';
 
 afterEach(() => vi.restoreAllMocks());
+
+/** The person on the owner screens: the owner holds the five owner ticks (and the cash-over-limit tick). */
+const owner = holderFor('owner');
 
 /** The codes the client itself makes up when no S8 body arrived. */
 const CLIENT_CODES = ['NETWORK', 'GATEWAY', 'BAD_RESPONSE'] as const;
@@ -177,7 +181,7 @@ describe('PT-U11: the sentence on the owner screens, for every action and every 
         const error = failed(code, details);
         const found =
           action === 'reissue'
-            ? reissueFailure(error, { role: 'owner', walkIn: false })
+            ? reissueFailure(error, { who: owner, walkIn: false })
             : ownerActionFailure(error, { action, walkIn: false });
         expect(found.message, `${action} ${code}`).toMatch(PLAIN);
         expect(found.message, `${action} ${code}`).not.toMatch(NO_LEAK);
@@ -205,7 +209,7 @@ describe('PT-U11: the sentence on the owner screens, for every action and every 
       expect(found.message, action).toMatch(PLAIN);
       expect(found.message, action).not.toMatch(/Cannot read|TypeError/);
     }
-    expect(reissueFailure('boom', { role: 'owner', walkIn: false }).message).toMatch(PLAIN);
+    expect(reissueFailure('boom', { who: owner, walkIn: false }).message).toMatch(PLAIN);
   });
 
   it('X4: voiding a payment whose money was handed back says to void the refund first, with how much was handed back', () => {
@@ -231,6 +235,24 @@ describe('PT-U11: the sentence on the owner screens, for every action and every 
     expect(found.message).toContain(NOTHING_CHANGED);
   });
 
+  it('JV_FORBIDDEN says the role cannot do it, in the words of the action (rule E: it names the role, never the owner)', () => {
+    const WORDS: Record<(typeof OWNER_ACTIONS)[number], string> = {
+      cancel: 'cancel a bill',
+      reissue: 're-issue a bill',
+      void: 'void a receipt',
+      refund: 'hand money back',
+      opening: 'add an opening balance',
+    };
+    for (const action of OWNER_ACTIONS) {
+      const found =
+        action === 'reissue'
+          ? reissueFailure(failed('JV_FORBIDDEN'), { who: holderFor('biller'), walkIn: false })
+          : ownerActionFailure(failed('JV_FORBIDDEN'), { action, walkIn: false });
+      expect(found.message, action).toBe(`Your role cannot ${WORDS[action]}. Nothing was changed.`);
+      expect(found.unconfirmed, action).toBe(false);
+    }
+  });
+
   it('X5 and X4: an archived customer, a bill already cancelled and a receipt already void are said in words', () => {
     expect(ownerActionFailure(failed('JV_BILL_CANCELLED'), { action: 'cancel' }).message).toBe(
       'This bill is already cancelled. Nothing was changed.'
@@ -244,17 +266,17 @@ describe('PT-U11: the sentence on the owner screens, for every action and every 
   });
 
   it('X10: a bill that was cancelled or re-issued already, an opening bill, and the walk-in surplus each have their own sentence', () => {
-    const cancelled = reissueFailure(failed('JV_BILL_CANCELLED'), { role: 'owner', walkIn: false });
+    const cancelled = reissueFailure(failed('JV_BILL_CANCELLED'), { who: owner, walkIn: false });
     expect(cancelled.message).toMatch(/already cancelled or re-issued/);
     const opening = reissueFailure(failed('JV_NOT_ALLOWED', { reason: 'not_an_estimate' }), {
-      role: 'owner',
+      who: owner,
       walkIn: false,
     });
     expect(opening.message).toMatch(/opening balance/i);
     expect(opening.message).toMatch(/cancel it and add a new/i);
     const surplus = reissueFailure(
       failed('JV_NOT_ALLOWED', { reason: 'void_its_receipts_first', surplus: '400.00' }),
-      { role: 'owner', walkIn: true }
+      { who: owner, walkIn: true }
     );
     expect(surplus.message).toMatch(/void (those|the) receipts first/i);
     expect(surplus.message).toContain('₹400');
@@ -266,7 +288,7 @@ describe('PT-U11: the sentence on the owner screens, for every action and every 
         pieces: [{ sku_no: 'A-001', status: 'Sold' }],
         sku_ids: ['00000000-0000-4000-8000-0000000000aa'],
       }),
-      { role: 'owner', walkIn: false }
+      { who: owner, walkIn: false }
     );
     expect(piece.message).toContain('A-001 (Sold)');
     expect(piece.pieceIds).toEqual(['00000000-0000-4000-8000-0000000000aa']);
@@ -277,12 +299,12 @@ describe('PT-U11: the sentence on the owner screens, for every action and every 
         cash_today: '150000.00',
         this_call: '60000.00',
       }),
-      { role: 'owner', walkIn: false }
+      { who: owner, walkIn: false }
     );
-    expect(cash.cashLimit).toEqual({ ownerMayGiveReason: true });
+    expect(cash.cashLimit).toEqual({ mayGiveReason: true });
     const over = reissueFailure(
       failed('JV_OVERPAYMENT', { payments_total: '1200.00', grand_total: '1000.00' }),
-      { role: 'owner', walkIn: false }
+      { who: owner, walkIn: false }
     );
     expect(over.message).toMatch(/more than the bill/);
   });

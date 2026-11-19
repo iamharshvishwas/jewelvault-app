@@ -194,6 +194,7 @@ const objectOf = (value: unknown): Record<string, unknown> =>
     : {};
 const setting = (key: string): unknown => rowCache.get('settings', key)?.value;
 
+// TODO(task-22): the Users sample mapping (ROLE_LABEL, `canSeeOriginalWeight`, `canEditStock` below) goes with the Users list of SettingsClient, which the People & Roles screen replaces.
 const ROLE_LABEL: Record<UserRow['role'], UserSetting['role']> = {
   owner: 'Owner',
   biller: 'Billing Staff',

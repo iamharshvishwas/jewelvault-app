@@ -2,17 +2,22 @@
 
 import React, { useState } from 'react';
 import { Plus, Search } from 'lucide-react';
-import { useSession } from '@/lib/authStore';
 import { useBusinessToday } from '@/lib/businessClock';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { getOrders, type OrderView } from '@/lib/orderStore';
-import { ORDER_STATUSES, ORDER_STATUS_LABEL, type OrderStatus } from '@/lib/orderStatus';
+import {
+  ORDER_STATUSES,
+  ORDER_STATUS_LABEL,
+  orderBookAccess,
+  type OrderStatus,
+} from '@/lib/orderStatus';
+import { useHolder } from '@/lib/useAccess';
 import NewOrderForm from './NewOrderForm';
 import OrderCard from './OrderCard';
 
-// FB-F1 (FB-D8, Siddhi #13): the Order Book. Every role reads the list (the orders are in memory, kept fresh by the poll); the owner and the biller make orders and move them along. Tabs
-// filter by status, a search finds an order by its number or its words (and, for the owner and the biller, the customer). Staff see no customer, no New order and no status button
-// (ruling A4, F-extra-1): for them the customer is not even looked up.
+// FB-F1 (FB-D8, Siddhi #13): the Order Book. Every role reads the list (the orders are in memory, kept fresh by the poll); a person who may make and change orders (`order_edit`: the owner and the
+// biller) makes them and moves them along. Tabs filter by status, a search finds an order by its number or its words (and, for a person who may see customers, `customer_view`, the customer).
+// Without the customers there is no customer on a card and no New order or status button without order editing (ruling A4, F-extra-1: staff have neither): the customer is not even looked up.
 
 type Tab = 'all' | OrderStatus;
 const TABS: readonly Tab[] = ['all', ...ORDER_STATUSES];
@@ -28,10 +33,10 @@ function matches(order: OrderView, query: string): boolean {
 
 export default function OrderBookClient() {
   useRowCacheVersion('orders', 'customers');
-  const role = useSession().session?.role ?? null; // TODO(task-20): can() instead of the role key
+  const holder = useHolder();
   const today = useBusinessToday();
-  const canWrite = role === 'owner' || role === 'biller';
-  const orders = getOrders({ withCustomers: canWrite });
+  const access = orderBookAccess(holder);
+  const orders = getOrders({ withCustomers: access.customers });
   const [tab, setTab] = useState<Tab>('all');
   const [query, setQuery] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -50,7 +55,7 @@ export default function OrderBookClient() {
             {orders.length} {orders.length === 1 ? 'order' : 'orders'}
           </p>
         </div>
-        {canWrite && !showForm && (
+        {access.edit && !showForm && (
           <button
             type="button"
             className="btn-primary"
@@ -75,7 +80,7 @@ export default function OrderBookClient() {
         </p>
       )}
 
-      {canWrite && showForm && (
+      {access.edit && showForm && (
         <NewOrderForm
           onClose={() => setShowForm(false)}
           onSaved={(saved) => {
@@ -119,7 +124,7 @@ export default function OrderBookClient() {
           type="search"
           aria-label="Search orders"
           placeholder={
-            canWrite
+            access.customers
               ? 'Search by order number, customer or words…'
               : 'Search by order number or words…'
           }
@@ -139,7 +144,7 @@ export default function OrderBookClient() {
       ) : (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {shown.map((order) => (
-            <OrderCard key={order.id} order={order} role={role} today={today} />
+            <OrderCard key={order.id} order={order} holder={holder} today={today} />
           ))}
         </div>
       )}

@@ -5,9 +5,11 @@
 //     out again, so a line the owner does not touch is sent as it was), with the bill's own sale type, date, discount, additional charges and notes;
 //   - the pieces of the old bill are Sold; the cancel in the same transaction frees them, so the screen lets them be scanned again (`freedByCancel`); no other Sold piece can be;
 //   - the customer is the old bill's and cannot change (K6), so the screen shows it and sends none (buildReissueBody leaves it out);
-//   - only the owner re-issues, and only a live estimate: for anything else the screen says why, in a sentence, and shows no form.
+//   - only a person who holds the re-issue tick (`bill_reissue`: the owner among today's roles) re-issues, and only a live estimate: for anything else the screen says why, in a sentence, and
+//     shows no form.
 //
 // This file reads memory (the stores) and makes no network call.
+import { can, type Holder } from './access';
 import { getBillFacts, getBillSource, getCustomers } from './appStore';
 import {
   WALK_IN_ID,
@@ -58,11 +60,11 @@ const refused = (message: string, link: string | null = null): ReissueRefused =>
 /** A blank for 0.00, the way a new bill's fields start. */
 const blankIfZero = (text: string): string => (/[1-9]/.test(text) ? text : '');
 
-/** What the billing screen starts from to correct `billId`, or the sentence that says why it cannot. `role` is the signed-in role. */
-export function prepareReissue(billId: string, role: string | null): ReissueSetup {
+/** What the billing screen starts from to correct `billId`, or the sentence that says why it cannot. `who` is the signed-in person: re-issuing is "Re-issue a bill" (`bill_reissue`). */
+export function prepareReissue(billId: string, who: Holder | null): ReissueSetup {
   if (PREVIEW_MODE)
     return refused('Re-issuing needs the server, which this preview does not have.');
-  if (role !== 'owner') return refused('Only the owner can re-issue an estimate.');
+  if (!can(who, 'bill_reissue')) return refused('Your role cannot re-issue an estimate.');
   const facts = getBillFacts(billId);
   const source = getBillSource(billId);
   if (!facts || !source) return refused('That estimate was not found.');

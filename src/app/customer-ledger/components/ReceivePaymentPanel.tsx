@@ -12,8 +12,7 @@ import {
   savePayment,
   settleSilverFine as settleFineInPreview,
 } from '@/lib/appStore';
-import { useSession } from '@/lib/authStore';
-import { PAYMENT_MODES, WALK_IN_ID, inr } from '@/lib/billing';
+import { PAYMENT_MODES, WALK_IN_ID, cashReasonFor, inr } from '@/lib/billing';
 import { getPollState } from '@/lib/cache/poll';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import {
@@ -31,6 +30,7 @@ import {
 } from '@/lib/payments';
 import { PREVIEW_MODE } from '@/lib/previewMode';
 import { LIMITS, formatGrams, formatRupees, parseGrams, parseRupees } from '@/lib/pricing';
+import { useHolder } from '@/lib/useAccess';
 import { FineSaved, PaymentSaved } from './PaymentSaved';
 
 // The payment and silver-fine panel of the customer card (spec C5 (b), C6, C7, C13, C17, X2, X3, Y3, Y5, SF1, SF2, Z1, Z2, K5; task WEB09). It calls record_payment (X2) and settle_fine
@@ -80,7 +80,8 @@ const rupeesOfText = (text: string): number | null => {
 };
 
 export default function ReceivePaymentPanel({ customer, onClose }: ReceivePaymentPanelProps) {
-  const role = useSession().session?.role ?? null; // TODO(task-20): can() instead of the role key
+  // Z1: only a person who holds "Take cash over the limit" may give a reason for cash over the limit
+  const holder = useHolder();
   const walkIn = customer.id === WALK_IN_ID;
   const [kind, setKind] = useState<Kind>('Amount');
   // the walk-in's dues are many strangers' dues: it names its bill, so nothing is filled in for it
@@ -178,7 +179,9 @@ export default function ReceivePaymentPanel({ customer, onClose }: ReceivePaymen
     try {
       setDone(await call());
     } catch (error) {
-      setFailure(paymentSaveFailure(error, { role, walkIn, kind: fine ? 'fine' : 'payment' }));
+      setFailure(
+        paymentSaveFailure(error, { who: holder, walkIn, kind: fine ? 'fine' : 'payment' })
+      );
     } finally {
       inFlight.current = false;
       setSaving(false);
@@ -193,7 +196,7 @@ export default function ReceivePaymentPanel({ customer, onClose }: ReceivePaymen
       saveInPreview();
       return;
     }
-    const cashOverrideReason = role === 'owner' ? cashReason : '';
+    const cashOverrideReason = cashReasonFor(holder, cashReason);
     if (kind === 'Amount') {
       const built = buildPaymentBody({
         amount,
@@ -228,7 +231,7 @@ export default function ReceivePaymentPanel({ customer, onClose }: ReceivePaymen
     }
   };
 
-  const reasonShown = (failure?.cashLimit?.ownerMayGiveReason ?? false) || cashReason !== '';
+  const reasonShown = (failure?.cashLimit?.mayGiveReason ?? false) || cashReason !== '';
   const typedPaise = kind === 'Amount' ? rupeesOfText(amount) : null;
   const typedMg = (() => {
     if (!fine) return null;
@@ -467,7 +470,7 @@ export default function ReceivePaymentPanel({ customer, onClose }: ReceivePaymen
               </label>
             </div>
 
-            {/* Z1: the owner may give a reason for cash over the limit; a biller cannot, the owner enters that payment */}
+            {/* Z1: a person with the cash-over-limit tick (the owner) may give a reason for cash over the limit; a biller cannot, the owner enters that payment */}
             {reasonShown && (
               <div>
                 <label className="text-xs font-semibold text-foreground block mb-1.5">

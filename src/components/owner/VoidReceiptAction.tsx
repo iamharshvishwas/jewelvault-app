@@ -9,8 +9,8 @@ import { formatGrams } from '@/lib/pricing';
 import ReasonDialog from './ReasonDialog';
 import { useOwnerActions } from './useOwnerActions';
 
-// The owner's VOID of a receipt (X4; spec Y7, Y10, S7; task WEB11). A receipt is never deleted: it stays, tagged Voided, and the bills it paid owe that money again; money that was waiting
-// as an advance pays them. A payment whose money was already handed back as a refund cannot be voided until that refund is voided: the dialog explains it before the owner presses, and
+// The owner's VOID of a receipt (X4; spec Y7, Y10, S7; task WEB11). It is drawn for the tick of that call (Void a payment: the owner holds it), for a receipt and for a refund alike (a refund is a
+// receipt of its own kind). A receipt is never deleted: it stays, tagged Voided, and the bills it paid owe that money again; money that was waiting as an advance pays them. A payment whose money was already handed back as a refund cannot be voided until that refund is voided: the dialog explains it before the owner presses, and
 // the API's refusal ("Void the refund first", with how much was handed back) is said in words if it happens anyway.
 
 interface VoidReceiptActionProps {
@@ -59,7 +59,7 @@ export default function VoidReceiptAction({
   useRowCacheVersion('receipts', 'bills');
   const [open, setOpen] = useState(false);
   const facts = getReceiptFacts(receiptId);
-  if (!allowed || !facts) return null;
+  if (!allowed.voidPayment || !facts) return null;
 
   // the button goes as soon as the receipt is void, but the dialog stays until the owner closes it: it holds the answer (or the words of an outcome that could not be confirmed)
   return (

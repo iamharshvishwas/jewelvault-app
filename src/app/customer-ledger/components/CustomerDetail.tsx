@@ -53,8 +53,9 @@ import ReceivePaymentPanel from './ReceivePaymentPanel';
 // opening-balance bill is no purchase. The bills are the customer's rows of V1,
 // the ledger is V3 as the server sent it. The screen is drawn again when memory changes (a poll, a payment of this browser); the ledger, which is read from the server after the card opens and
 // again after a change, has no event of its own, so it is looked at once a second and drawn again only when it is another ledger.
-// The prototype's Delete buttons exist in a preview build only: a bill, a payment and a customer are never deleted on the API. WEB11: the owner (and nobody else) has "Hand money back" (X11)
-// and "Opening balance" (X12) here, a Void on each receipt of the Payments tab (X4) and Cancel and Re-issue on each bill of the Invoices tab (X5, X10).
+// The prototype's Delete buttons exist in a preview build only: a bill, a payment and a customer are never deleted on the API. WEB11: the owner (and nobody else among today's roles) has "Hand money
+// back" (X11) and "Opening balance" (X12) here, a Void on each receipt of the Payments tab (X4) and Cancel and Re-issue on each bill of the Invoices tab (X5, X10); since Task 20 of the access plan
+// each of them follows its own tick (Give a refund, Add an opening balance, Void a payment, Cancel a bill, Re-issue a bill).
 // FB-D1: "Print / Save PDF" asks the browser to print the customer's ledger. On paper the card is only its sheet (CustomerLedgerPrint, the rules `.ledger-card-root` and `.print-ledger-sheet` of
 // src/styles/tailwind.css), whichever tab is open. The sheet is a second copy of every row, so it is in the page only while something is printing (Wave 2 fix 1): the button draws it, and then
 // asks the browser to print; the browser's own print (Ctrl/Cmd+P, the menu) draws it at `beforeprint` and drops it at `afterprint`.
@@ -90,7 +91,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
   const [showPaymentPanel, setShowPaymentPanel] = useState(false);
   const [showRefundPanel, setShowRefundPanel] = useState(false);
   const [showOpeningPanel, setShowOpeningPanel] = useState(false);
-  const ownerActions = useOwnerActions();
+  const owner = useOwnerActions();
   const walkIn = customer.id === WALK_IN_ID;
   const [ledger, setLedger] = useState<LedgerEntry[]>(() => getLedgerForCustomer(customer.id));
   const [printing, setPrinting] = useState(false);
@@ -282,27 +283,27 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
               <Printer size={14} />
               Print / Save PDF
             </button>
-            {ownerActions && (
-              <>
-                <button
-                  type="button"
-                  data-testid="open-refund"
-                  onClick={() => setShowRefundPanel((p) => !p)}
-                  className="btn-secondary py-2"
-                >
-                  <Banknote size={14} />
-                  Hand Money Back
-                </button>
-                <button
-                  type="button"
-                  data-testid="open-opening"
-                  onClick={() => setShowOpeningPanel((p) => !p)}
-                  className="btn-secondary py-2"
-                >
-                  <FilePlus size={14} />
-                  Opening Balance
-                </button>
-              </>
+            {owner.refund && (
+              <button
+                type="button"
+                data-testid="open-refund"
+                onClick={() => setShowRefundPanel((p) => !p)}
+                className="btn-secondary py-2"
+              >
+                <Banknote size={14} />
+                Hand Money Back
+              </button>
+            )}
+            {owner.openingBalance && (
+              <button
+                type="button"
+                data-testid="open-opening"
+                onClick={() => setShowOpeningPanel((p) => !p)}
+                className="btn-secondary py-2"
+              >
+                <FilePlus size={14} />
+                Opening Balance
+              </button>
             )}
             {PREVIEW_MODE && (
               <button
@@ -338,7 +339,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
       {showPaymentPanel && (
         <ReceivePaymentPanel customer={customer} onClose={() => setShowPaymentPanel(false)} />
       )}
-      {ownerActions && showRefundPanel && (
+      {owner.refund && showRefundPanel && (
         <RefundPanel
           customerId={customer.id}
           customerName={customer.name}
@@ -346,7 +347,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
           onClose={() => setShowRefundPanel(false)}
         />
       )}
-      {ownerActions && showOpeningPanel && (
+      {owner.openingBalance && showOpeningPanel && (
         <OpeningBalancePanel
           customerId={customer.id}
           customerName={customer.name}

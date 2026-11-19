@@ -21,8 +21,6 @@ export type TimestampText = string;
 /** A business date in Asia/Kolkata: "2026-10-15". */
 export type DateText = string;
 
-export type Role = 'owner' | 'biller' | 'staff';
-
 // ------------------------------------------------------------------------------------------------ errors (S8, NODE-DESIGN 4.5)
 
 /** Every code the API answers with. A code that is not here is treated like JV_INTERNAL by the client. */

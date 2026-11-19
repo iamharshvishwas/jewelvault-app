@@ -2,7 +2,8 @@
 //
 // WHAT IT MAKES. One zip of CSV files built in the browser from the cache after a fresh poll (the flow is src/lib/cache/downloadServer.ts): customers, bills, bill items, receipts,
 // allocations, stock (designs and pieces), daily rates, categories, sub-categories, settings and the users' names and roles, plus `MANIFEST.csv` with the date and the row count of every file.
-// It is a readable copy of the books that the owner and her accountant can open if Hostinger is gone: it is not a database restore, and it holds no photos and no audit log.
+// It is a readable copy of the books that the owner and her accountant can open if Hostinger is gone: it is not a database restore, and it holds no photos and no audit log. Who may ask for it
+// is the tick "Download everything" (`download_all`, src/lib/cache/downloadServer.ts).
 //
 // THE NAMES. A file is named by the TABLE whose rows it holds (the twelve names of `DOWNLOAD_FILES` are the keys of `counts` in `POST /v1/owner/download-record`, API35), and its header row is
 // the DATABASE column names (the lists are the API's READ_COLUMNS, src/permissions/matrix.ts). That is the contract with the Mac tool `scripts/zip-balances.mjs` (T-R05's drill), which rebuilds
@@ -10,12 +11,14 @@
 // A null is an empty cell; a yes/no flag is 1 or 0 as in the database; a JSON column (tags, photo ids, a setting's value) is JSON text; money and weight are the exact text the books have.
 //
 // WHAT IT LEAVES OUT. Each file has an explicit list of columns, so a field a row happens to carry is never copied: a user row gives its id, name, role, active flag and stamp, and never an
-// e-mail address or a hash. The owner-only original weight is the last column of `skus.csv` for the owner and does not exist for anybody else (D9, D12, T-D03): the piece's weight lives in
-// its own table (`sku_private`), so it is joined here by the piece's id, and the other roles' rows for it are never read.
+// e-mail address or a hash. The original weight is the last column of `skus.csv` for a person who holds "See and enter the original (secret) weight" (`secret_weight`: the owner among today's
+// roles) and does not exist for anybody else (D9, D12, T-D03): the piece's weight lives in its own table (`sku_private`), so it is joined here by the piece's id, and the private rows are never
+// read for anybody else.
 //
 // THE FORMULA GUARD. A text cell that starts with =, +, -, @, a tab or a carriage return gets a single quote in front (`guardFormula` of exportUtils, the one guard of downloadCsv, downloadExcel
 // and this zip, RV1-9); a number is not touched. Which cells are numbers is decided by the COLUMN, not by what the text looks like: money, weight and counts are numbers (a signed one such as
 // a round-off of -0.40 stays a number), and a number column that holds anything else is guarded like text.
+import { can, type Holder } from './access';
 import type { SyncResource } from '@/lib/api/types';
 import { csvQuote, guardFormula } from './exportUtils';
 import { createZip } from './zipFile';
@@ -257,7 +260,7 @@ const SPECS: Readonly<Record<DownloadFile, FileSpec>> = {
   },
 };
 
-/** The owner-only weight: a column of skus.csv for the owner, joined from the piece's private row (D9, D12). */
+/** The original (secret) weight: a column of skus.csv for a person who holds `secret_weight`, joined from the piece's private row (D9, D12). */
 export const OWNER_ONLY_COLUMN = 'original_net_weight';
 
 /** The books are not in memory (the load has not finished, or the session ended): a zip of nothing would look like a copy and be none. */
@@ -319,8 +322,8 @@ function compareRows(
 // ---------------------------------------------------------------------------------------------- the build
 
 export interface DownloadInput {
-  /** The role of the person: the owner-only weight is written for the owner and for nobody else. */
-  role: string; // TODO(task-20): can() instead of the role key
+  /** The person asking: the original weight is written for a person who holds `secret_weight` and for nobody else. */
+  who: Holder | null;
   /** The rows of a resource as the cache holds them. */
   rows: (resource: SyncResource) => readonly object[];
   /** The business date (Asia/Kolkata, YYYY-MM-DD) of the moment: in the file name, the manifest and the record. */
@@ -343,7 +346,7 @@ export function downloadFilename(date: string): string {
 }
 
 export function buildDownload(input: DownloadInput): BuiltDownload {
-  const { role, rows, date, modified } = input;
+  const { who, rows, date, modified } = input;
   // the signed-in person is always among the users and the shop always has settings: if either is missing, the load did not finish
   if (rows('users').length === 0 || rows('settings').length === 0)
     throw new DownloadBooksNotLoaded();
@@ -356,7 +359,7 @@ export function buildDownload(input: DownloadInput): BuiltDownload {
     const spec = SPECS[file];
     const columns: Column[] = [...spec.columns];
     const privateWeight = new Map<string, unknown>();
-    if (file === 'skus' && role === 'owner') {
+    if (file === 'skus' && can(who, 'secret_weight')) {
       columns.push(n(OWNER_ONLY_COLUMN));
       for (const row of rows('sku-private') as Array<Record<string, unknown>>)
         privateWeight.set(String(row.sku_id), row.original_net_weight);
