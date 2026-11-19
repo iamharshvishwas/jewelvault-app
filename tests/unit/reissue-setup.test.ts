@@ -158,9 +158,14 @@ describe('PT-W11 the billing screen in re-issue mode starts from the bill it cor
     const { bill, lines } = estimate();
     ctx.rowCache.merge('bills', [bill]);
     ctx.rowCache.merge('bill-items', lines);
-    for (const who of [holderFor('biller'), holderFor('staff'), null]) {
+    // each person is labelled with their role (a holder printed as text is "[object Object]")
+    for (const [name, who] of [
+      ['biller', holderFor('biller')],
+      ['staff', holderFor('staff')],
+      ['nobody signed in', null],
+    ] as const) {
       const setup = ctx.reissue.prepareReissue(bill.id, who);
-      expect(setup.ok, String(who)).toBe(false);
+      expect(setup.ok, name).toBe(false);
       expect(!setup.ok && setup.message).toBe('Your role cannot re-issue an estimate.');
     }
   });

@@ -12,10 +12,11 @@
 //     changed."; an outcome that is not known says "Could not confirm that this was saved." and that the books are being read again (C17). The general sentences are src/lib/api/errorMap.ts.
 //
 //   - WHO IS OFFERED THEM. `ownerActionFlags` says which of the five a person is offered: each follows its own tick (plan: access and roles, Task 20; DESIGN 6.2, M12 to M16), so a role that
-//     holds one of them has that button and not the others. Today's owner holds all five; the biller and staff none.
+//     holds one of them has that button and not the others. Re-issue also needs the screen its link goes to, the billing screen (`/billing-pos`, which opens with "Make bills": Task 20b), so a role
+//     is never drawn a link to a page that is closed to it. Today's owner holds all five; the biller and staff none.
 //
 // This file makes no network call and keeps nothing between calls.
-import { can, type Holder } from './access';
+import { can, canAccessPath, type Holder } from './access';
 import type {
   CancelBillResponse,
   CreateBillResponse,
@@ -46,7 +47,7 @@ export type OwnerAction = (typeof OWNER_ACTIONS)[number];
 export interface OwnerActionFlags {
   /** Cancel a bill: `bill_cancel`. */
   cancel: boolean;
-  /** Re-issue an estimate: `bill_reissue`. */
+  /** Re-issue an estimate: `bill_reissue`, and the billing screen its link goes to (`bill_make`). */
   reissue: boolean;
   /** Void a receipt or a refund: `payment_void`. */
   voidPayment: boolean;
@@ -58,12 +59,13 @@ export interface OwnerActionFlags {
 
 /**
  * The actions a person is offered. A preview build has no server to send them to, so it offers none, whoever the person is. The API refuses the others anyway (JV_FORBIDDEN, the wall): the buttons
- * are not drawn at all, not greyed out.
+ * are not drawn at all, not greyed out. Re-issue is a link to the billing screen, so it is offered only to a person who may open that screen too: a role with `bill_reissue` and no `bill_make` (a role
+ * the API lets the Super Admin save) would otherwise be sent to a page that says "Not available for your role".
  */
 export function ownerActionFlags(who: Holder | null, preview = false): OwnerActionFlags {
   return {
     cancel: !preview && can(who, 'bill_cancel'),
-    reissue: !preview && can(who, 'bill_reissue'),
+    reissue: !preview && can(who, 'bill_reissue') && canAccessPath(who, '/billing-pos'),
     voidPayment: !preview && can(who, 'payment_void'),
     refund: !preview && can(who, 'refund_give'),
     openingBalance: !preview && can(who, 'opening_balance'),

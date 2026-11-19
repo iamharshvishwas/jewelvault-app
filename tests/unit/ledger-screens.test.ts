@@ -16,6 +16,7 @@ import ts from 'typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReactElement } from 'react';
 import { at, uuid } from './support/rows';
+import { sessionFor } from './support/access';
 import {
   allocationRow,
   balanceRow,
@@ -390,6 +391,12 @@ async function load({ preview = false } = {}) {
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.test');
   const server = new FakeMoneyApi();
   vi.stubGlobal('fetch', server.fetch);
+  // the card is the screen of a signed-in person (task 20b of the access plan: its money part follows `bill_view`, and nobody who is not known holds it): the Biller, who reads the customers and the bills;
+  // a preview build opens as the Owner (a render on the server side of React is given no session, so the person is stood in here too)
+  vi.doMock('@/lib/authStore', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/lib/authStore')>()),
+    useSession: () => sessionFor(preview ? 'owner' : 'biller'),
+  }));
   const [react, dom, cache, app, table, invoiceList, detail, estimate] = await Promise.all([
     import('react'),
     import('react-dom/server'),
@@ -434,6 +441,7 @@ async function load({ preview = false } = {}) {
 }
 
 afterEach(() => {
+  vi.doUnmock('@/lib/authStore');
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   address.search = '';

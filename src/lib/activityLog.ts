@@ -1,5 +1,5 @@
-// FB-D4 (Siddhi #12): the owner's activity log. `GET /v1/audit-log` gives the audit rows newest first, 200 to a page (src/lib/cache/booksServer.ts `readAuditPage`); this file turns a row into the
-// words the owner reads and holds the pages the screen has drawn.
+// FB-D4 (Siddhi #12): the Activity Log. `GET /v1/audit-log` gives the audit rows newest first, 200 to a page (src/lib/cache/booksServer.ts `readAuditPage`) to a person whose role holds "See the Activity
+// Log and health checks" (`activity_log`; among today's roles the owner alone); this file turns a row into the words that person reads and holds the pages the screen has drawn.
 //
 //   - `describeAudit`: when (India, `14 Nov 2026, 7:05 pm`), who (the user's name, `System` for an actor that is not a known user) and what, in plain words. A login, a logout and a change of
 //     password are `event` rows of the table `users`; a new bill is "New estimate <bill_no>" (dues brought forward, `doc_type` opening_balance: "Opening balance <bill_no>"), a receipt is worded by

@@ -269,13 +269,27 @@ describe("PT-W11 the customer card: Hand Money Back (X11) and Opening Balance (X
     expect(html).toContain('Receive Payment');
   });
 
-  for (const [name, who] of NOT_THE_OWNER) {
-    it(`${name} sees Receive Payment and neither of them`, async () => {
+  it('a biller sees Receive Payment and neither of them', async () => {
+    const w = await load('biller');
+    const html = w.card();
+    expect(html).toContain('Receive Payment');
+    expect(count(html, 'open-refund')).toBe(0);
+    expect(count(html, 'open-opening')).toBe(0);
+  });
+
+  // task 20b of the access plan: the money part of the card is for a person who reads the bills. Staff and a person who is not known read neither the customers nor the bills (they cannot open
+  // the screen); a card drawn for them has no money part at all, so none of its buttons, and says so
+  for (const [name, who] of [
+    ['a staff user', 'staff'],
+    ['a person whose role is not known', null],
+  ] as Array<[string, Who]>) {
+    it(`${name} has no money part on the card: no Receive Payment and neither of them, and one sentence that says so`, async () => {
       const w = await load(who);
       const html = w.card();
-      expect(html).toContain('Receive Payment');
+      expect(html).not.toContain('Receive Payment');
       expect(count(html, 'open-refund')).toBe(0);
       expect(count(html, 'open-opening')).toBe(0);
+      expect(html).toContain('Your role cannot see the money part of the ledger.');
     });
   }
 
@@ -289,6 +303,9 @@ describe("PT-W11 the customer card: Hand Money Back (X11) and Opening Balance (X
 
 describe('Task 20: each owner action follows its own tick on the screens', () => {
   const only = (tick: TickKey): Who => ({ ticks: [tick] });
+  // a role the API lets Siddhi save: the ticks with what they need (the customers and the bills; "Make bills" needs both). The money part of the card is the bills' (task 20b), and the Re-issue
+  // link goes to the billing screen, which opens with "Make bills": a role with only the tick would have no card figures and nowhere to send the person
+  const saved = (...list: TickKey[]): Who => ({ ticks: ['customer_view', 'bill_view', ...list] });
 
   it('Cancel is bill_cancel and Re-issue is bill_reissue: a role with one of them has that button and not the other, on a bill, on the Invoices tab and on the estimate', async () => {
     const canceller = await load(only('bill_cancel'));
@@ -301,7 +318,7 @@ describe('Task 20: each owner action follows its own tick on the screens', () =>
     expect(count(canceller.estimate(id), 'cancel-bill')).toBe(1);
     expect(count(canceller.estimate(id), 'reissue-bill')).toBe(0);
 
-    const reissuer = await load(only('bill_reissue'));
+    const reissuer = await load(saved('bill_reissue', 'bill_make'));
     const again = reissuer.book.by.pending.bill.id;
     expect(count(reissuer.billActions(again), 'reissue-bill')).toBe(1);
     expect(count(reissuer.billActions(again), 'cancel-bill')).toBe(0);
@@ -311,7 +328,7 @@ describe('Task 20: each owner action follows its own tick on the screens', () =>
   });
 
   it('a bill with a button of its own: the role with only Re-issue has none on dues brought forward, and one with only Cancel has Cancel there', async () => {
-    const reissuer = await load(only('bill_reissue'));
+    const reissuer = await load(saved('bill_reissue', 'bill_make'));
     expect(reissuer.billActions(reissuer.book.by.opening.bill.id)).toBe('');
     const canceller = await load(only('bill_cancel'));
     expect(count(canceller.billActions(canceller.book.by.opening.bill.id), 'cancel-bill')).toBe(1);
@@ -357,18 +374,18 @@ describe('Task 20: each owner action follows its own tick on the screens', () =>
   });
 
   it('Hand Money Back is refund_give and Opening Balance is opening_balance: each button on the customer card goes with its own tick', async () => {
-    const refunder = await load(only('refund_give'));
+    const refunder = await load(saved('refund_give'));
     expect(count(refunder.card(), 'open-refund')).toBe(1);
     expect(count(refunder.card(), 'open-opening')).toBe(0);
-    const opener = await load(only('opening_balance'));
+    const opener = await load(saved('opening_balance'));
     expect(count(opener.card(), 'open-opening')).toBe(1);
     expect(count(opener.card(), 'open-refund')).toBe(0);
     for (const tick of ['payment_void', 'bill_cancel', 'bill_reissue'] as const) {
-      const w = await load(only(tick));
+      const w = await load(saved(tick));
       expect(count(w.card(), 'open-refund'), tick).toBe(0);
       expect(count(w.card(), 'open-opening'), tick).toBe(0);
     }
-    // Receive Payment is not one of the five: it is on the card for everybody, as before
+    // Receive Payment is not one of the five: it is on the card for everybody who has the money part, as before
     expect(refunder.card()).toContain('Receive Payment');
   });
 

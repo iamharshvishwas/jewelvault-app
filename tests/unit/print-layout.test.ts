@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { at, uuid } from './support/rows';
+import { sessionFor } from './support/access';
 import { billRow, customerRow, fill, itemRow, shop, summaryRow } from './support/money-rows';
 import { FakeMoneyApi, ledgerRow, type LedgerWireRow } from './support/money-server';
 
@@ -122,6 +123,7 @@ async function world(
 }
 
 afterEach(() => {
+  vi.doUnmock('@/lib/authStore');
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   address.search = '';
@@ -397,6 +399,11 @@ async function ledgerWorld(
   vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.test');
   vi.doMock('@/lib/businessClock', () => ({ useBusinessToday: () => today }));
+  // the card is the screen of a signed-in person (task 20b of the access plan: its money part follows `bill_view`, and nobody who is not known holds it): the Biller, who reads the customers and the bills
+  vi.doMock('@/lib/authStore', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/lib/authStore')>()),
+    useSession: () => sessionFor('biller'),
+  }));
   const server = new FakeMoneyApi();
   vi.stubGlobal('fetch', server.fetch);
   server.ledgers.set(LEDGER_CUSTOMER, entries);

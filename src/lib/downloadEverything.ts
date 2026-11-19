@@ -261,7 +261,7 @@ const SPECS: Readonly<Record<DownloadFile, FileSpec>> = {
 };
 
 /** The original (secret) weight: a column of skus.csv for a person who holds `secret_weight`, joined from the piece's private row (D9, D12). */
-export const OWNER_ONLY_COLUMN = 'original_net_weight';
+export const SECRET_WEIGHT_COLUMN = 'original_net_weight';
 
 /** The books are not in memory (the load has not finished, or the session ended): a zip of nothing would look like a copy and be none. */
 export class DownloadBooksNotLoaded extends Error {
@@ -360,7 +360,7 @@ export function buildDownload(input: DownloadInput): BuiltDownload {
     const columns: Column[] = [...spec.columns];
     const privateWeight = new Map<string, unknown>();
     if (file === 'skus' && can(who, 'secret_weight')) {
-      columns.push(n(OWNER_ONLY_COLUMN));
+      columns.push(n(SECRET_WEIGHT_COLUMN));
       for (const row of rows('sku-private') as Array<Record<string, unknown>>)
         privateWeight.set(String(row.sku_id), row.original_net_weight);
     }
@@ -374,7 +374,7 @@ export function buildDownload(input: DownloadInput): BuiltDownload {
           columns.map((c) => {
             const name = nameOf(c);
             const value =
-              file === 'skus' && name === OWNER_ONLY_COLUMN
+              file === 'skus' && name === SECRET_WEIGHT_COLUMN
                 ? privateWeight.get(String(row.id))
                 : row[name];
             return cellText(kindOf(c), value);

@@ -8,6 +8,10 @@
 // Reports; the owner and the biller made orders, moved them along and saw the customer on them; the reason for cash over the limit was the owner's; staff read the list and nothing else), and
 // from tests/e2e/orders.spec.ts and owner-actions.spec.ts. They are NOT read from the code under test.
 //
+// Task 20b (controller ruling T) adds two things here: Re-issue is offered for its tick AND the billing screen its link goes to (`ownerActionFlags`), and the source guard at the end walks EVERY .ts and
+// .tsx file under the converted directories (it used to read a hand-written list of 19) and catches a role however it is spelled. The Customer Ledger's money part (`ledgerAccess`) and the links
+// of the ledger are in ledger-access.test.ts.
+//
 // Run: npm test -- tests/unit/money-access.test.ts
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -30,6 +34,7 @@ import { reportsAccess, type ReportsAccess } from '@/lib/reportsAccess';
 import { holderFor, sessionFor, type RoleSpec } from './support/access';
 import { customerRow } from './support/money-rows';
 import { at, uuid } from './support/rows';
+import { sourceText, sourcesUnder } from './support/sources';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: () => undefined, replace: () => undefined }),
@@ -104,10 +109,18 @@ describe("the owner's actions: the three roles of today get what they got", () =
     expect(ownerActionFlags(holderFor(SUPER_ADMIN), true)).toEqual(NO_ACTIONS);
   });
 
-  // the one action a role with this one tick is offered; every other tick offers none of them on its own
-  const ALONE: Partial<Record<TickKey, keyof OwnerActionFlags>> = {
+  // the tick of each of the five actions
+  const OPENS: Partial<Record<TickKey, keyof OwnerActionFlags>> = {
     bill_cancel: 'cancel',
     bill_reissue: 'reissue',
+    payment_void: 'voidPayment',
+    refund_give: 'refund',
+    opening_balance: 'openingBalance',
+  };
+  // the one action a role with this one tick is offered; every other tick offers none of them on its own. Re-issue is not among them: its link goes to the billing screen, which opens with
+  // bill_make, so the tick alone has nowhere to send the person (ruling T of the plan; see below)
+  const ALONE: Partial<Record<TickKey, keyof OwnerActionFlags>> = {
+    bill_cancel: 'cancel',
     payment_void: 'voidPayment',
     refund_give: 'refund',
     opening_balance: 'openingBalance',
@@ -122,7 +135,7 @@ describe("the owner's actions: the three roles of today get what they got", () =
   );
 
   it('the Owner with one of the five ticks taken away has the other four, and no tick but its own opens an action', () => {
-    for (const [tick, action] of Object.entries(ALONE) as Array<
+    for (const [tick, action] of Object.entries(OPENS) as Array<
       [TickKey, keyof OwnerActionFlags]
     >) {
       const flags = ownerActionFlags(holderFor(allBut(tick)));
@@ -133,6 +146,40 @@ describe("the owner's actions: the three roles of today get what they got", () =
       ).toBe(true);
     }
   });
+
+  // ruling T: the Re-issue link goes to /billing-pos, which opens only with bill_make (SCREENS of src/lib/access.ts). A role with exactly {bill_reissue, customer_view, bill_view} is a role the API
+  // lets Siddhi save, and it was drawn a link to a denied page.
+  it('Re-issue is the tick and the billing screen: the tick alone, or with what the API says it needs, offers no link to a screen that is closed', () => {
+    expect(canAccessPath(holderFor(ticks('bill_make')), '/billing-pos')).toBe(true);
+    expect(ownerActionFlags(holderFor(ticks('bill_reissue'))).reissue).toBe(false);
+    expect(
+      ownerActionFlags(holderFor(ticks('bill_reissue', 'customer_view', 'bill_view'))).reissue
+    ).toBe(false);
+    expect(ownerActionFlags(holderFor(ticks('bill_make'))).reissue).toBe(false);
+    expect(ownerActionFlags(holderFor(ticks('bill_reissue', 'bill_make'))).reissue).toBe(true);
+    expect(
+      ownerActionFlags(holderFor(ticks('bill_reissue', 'customer_view', 'bill_view', 'bill_make')))
+        .reissue
+    ).toBe(true);
+  });
+
+  it('the Owner still has all five and the Biller none; the Owner without the billing screen has the other four', () => {
+    expect(ownerActionFlags(holderFor('owner'))).toEqual(offering(...ACTIONS));
+    expect(ownerActionFlags(holderFor('biller'))).toEqual(NO_ACTIONS);
+    expect(ownerActionFlags(holderFor(allBut('bill_make')))).toEqual({
+      ...offering(...ACTIONS),
+      reissue: false,
+    });
+  });
+
+  it.each(TICK_KEYS)(
+    'Re-issue with %s added: offered only when that is the tick that opens the billing screen',
+    (tick) => {
+      expect(ownerActionFlags(holderFor(ticks('bill_reissue', tick))).reissue).toBe(
+        tick === 'bill_make'
+      );
+    }
+  );
 
   it('a role with no tick is offered none', () => {
     expect(ownerActionFlags(holderFor(ticks()))).toEqual(NO_ACTIONS);
@@ -542,31 +589,59 @@ describe('the Reports screen: the tabs are drawn for the person', () => {
 
 // ================================================================================================ the screens read no role
 
-describe('the billing, ledger, order, owner-action, report and download files read no role key and name no role', () => {
-  const SRC = path.resolve(__dirname, '../../src');
-  const FILES = [
+describe('the billing, ledger, order, owner-action, report, activity-log and download files read no role key and name no role', () => {
+  // EVERY .ts and .tsx under these directories is looked at (they are found by walking them, so the file added next week is looked at at once), and so are the libs that were converted
+  const DIRECTORIES = [
+    'app/billing-pos',
+    'app/customer-ledger',
+    'app/order-book',
+    'app/reports',
+    'app/activity-log',
+    'components/owner',
+  ];
+  const LIBS = [
     'lib/orderStatus.ts',
+    'lib/orderStore.ts',
     'lib/billing.ts',
     'lib/payments.ts',
     'lib/reissue.ts',
     'lib/ownerActions.ts',
+    'lib/ledgerAccess.ts',
+    'lib/ledgerView.ts',
     'lib/reportsAccess.ts',
+    'lib/activityLog.ts',
     'lib/downloadEverything.ts',
     'lib/cache/downloadServer.ts',
-    'components/owner/useOwnerActions.ts',
-    'components/owner/OwnerBillActions.tsx',
-    'components/owner/VoidReceiptAction.tsx',
-    'app/order-book/components/OrderBookClient.tsx',
-    'app/order-book/components/OrderCard.tsx',
-    'app/billing-pos/components/BillingPOSClient.tsx',
-    'app/billing-pos/components/BillingSummaryPanel.tsx',
-    'app/customer-ledger/components/ReceivePaymentPanel.tsx',
-    'app/customer-ledger/components/CustomerDetail.tsx',
-    'app/customer-ledger/components/CustomerPaymentsTab.tsx',
-    'app/reports/components/ReportsClient.tsx',
   ];
+  const FILES = [...new Set([...DIRECTORIES.flatMap(sourcesUnder), ...LIBS])].sort();
 
-  /** What a source text reads from a person's role: a property called `role`, and the three names of today's roles as text. A JSX `role="alert"` is an attribute, not a read. */
+  /** The names of today's three roles. */
+  const ROLE_NAMES = ['owner', 'biller', 'staff'];
+
+  /** A name that reads as a role when it is imported: `ROLE_OWNER`, `OWNER_ROLE`, `AuthRole`, `roles`, or just `OWNER` / `Biller` / `staff`. `useOwnerActions` and `OWNER_ACTIONS` are not roles. */
+  function roleLike(name: string): boolean {
+    if (ROLE_NAMES.includes(name.toLowerCase())) return true;
+    const words = name.split(/[_\s]+|(?<=[a-z0-9])(?=[A-Z])/).map((word) => word.toLowerCase());
+    return words.includes('role') || words.includes('roles');
+  }
+
+  /** The name a property is written with in a pattern (`role`, `'role'` or `['role']`), or null when it is computed. */
+  function propertyNameOf(name: ts.PropertyName | ts.BindingName | undefined): string | null {
+    if (name === undefined) return null;
+    if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) return name.text;
+    if (ts.isComputedPropertyName(name) && ts.isStringLiteralLike(name.expression))
+      return name.expression.text;
+    return null;
+  }
+
+  /**
+   * What a source text reads from a person's role, however it is spelled:
+   *   - a property called `role`: `x.role`, `x?.role`, `x['role']`, `x?.['role']`;
+   *   - a role taken out of an object: `const { role } = x`, `const { role: mine } = x`, `({ role }) => ...`;
+   *   - the name of one of today's roles as text: a string, a template with nothing in it, a piece of a template;
+   *   - an import named like a role (`ROLE_OWNER`, `AuthRole`).
+   * A JSX `role="alert"` is an attribute, not a read; comments and the words on screen are not looked at.
+   */
   function roleReadsOf(text: string, name: string): string[] {
     const source = ts.createSourceFile(
       name,
@@ -579,18 +654,75 @@ describe('the billing, ledger, order, owner-action, report and download files re
     const visit = (node: ts.Node) => {
       if (ts.isPropertyAccessExpression(node) && node.name.text === 'role')
         found.push(node.getText(source));
-      if (ts.isStringLiteralLike(node) && ['owner', 'biller', 'staff'].includes(node.text))
+      if (
+        ts.isElementAccessExpression(node) &&
+        ts.isStringLiteralLike(node.argumentExpression) &&
+        node.argumentExpression.text === 'role'
+      )
         found.push(node.getText(source));
+      if (
+        ts.isBindingElement(node) &&
+        ts.isObjectBindingPattern(node.parent) &&
+        propertyNameOf(node.propertyName ?? node.name) === 'role'
+      )
+        found.push(node.getText(source));
+      if (ts.isStringLiteralLike(node) && ROLE_NAMES.includes(node.text.trim()))
+        found.push(node.getText(source));
+      if (ts.isTemplateExpression(node))
+        for (const piece of [node.head, ...node.templateSpans.map((span) => span.literal)])
+          if (ROLE_NAMES.includes(piece.text.trim())) found.push(`\`${piece.text}\``);
+      if (
+        ts.isImportSpecifier(node) &&
+        [node.name, node.propertyName].some((n) => n && roleLike(n.text))
+      )
+        found.push(node.getText(source));
+      if (ts.isImportClause(node) && node.name && roleLike(node.name.text))
+        found.push(node.name.text);
+      if (ts.isNamespaceImport(node) && roleLike(node.name.text)) found.push(node.getText(source));
       ts.forEachChild(node, visit);
     };
     visit(source);
     return found;
   }
-  const roleReads = (file: string): string[] =>
-    roleReadsOf(readFileSync(path.join(SRC, file), 'utf8'), file);
+  const roleReads = (file: string): string[] => roleReadsOf(sourceText(file), file);
 
   it.each(FILES)('%s', (file) => {
     expect(roleReads(file)).toEqual([]);
+  });
+
+  it('looks at every file: each directory has some, the deep ones and the ones the old hand-written list left out are among them, and so is every file that list named', () => {
+    for (const directory of DIRECTORIES)
+      expect(sourcesUnder(directory).length, directory).toBeGreaterThan(0);
+    for (const file of [
+      'app/reports/components/charts/MonthlySalesChart.tsx', // a subdirectory
+      'app/customer-ledger/components/CustomerInvoiceList.tsx', // the old list did not name it
+      'app/activity-log/components/ActivityLogClient.tsx',
+      'components/owner/OpeningBalancePanel.tsx',
+      'lib/ledgerAccess.ts',
+    ])
+      expect(FILES, file).toContain(file);
+    for (const file of [
+      'lib/orderStatus.ts',
+      'lib/billing.ts',
+      'lib/payments.ts',
+      'lib/reissue.ts',
+      'lib/ownerActions.ts',
+      'lib/reportsAccess.ts',
+      'lib/downloadEverything.ts',
+      'lib/cache/downloadServer.ts',
+      'components/owner/useOwnerActions.ts',
+      'components/owner/OwnerBillActions.tsx',
+      'components/owner/VoidReceiptAction.tsx',
+      'app/order-book/components/OrderBookClient.tsx',
+      'app/order-book/components/OrderCard.tsx',
+      'app/billing-pos/components/BillingPOSClient.tsx',
+      'app/billing-pos/components/BillingSummaryPanel.tsx',
+      'app/customer-ledger/components/ReceivePaymentPanel.tsx',
+      'app/customer-ledger/components/CustomerDetail.tsx',
+      'app/customer-ledger/components/CustomerPaymentsTab.tsx',
+      'app/reports/components/ReportsClient.tsx',
+    ])
+      expect(FILES, file).toContain(file);
   });
 
   it('the checker sees a role when there is one (negative control)', () => {
@@ -599,6 +731,74 @@ describe('the billing, ledger, order, owner-action, report and download files re
       "'owner'",
     ]);
     expect(roleReadsOf('<p role="alert">Saved</p>;', 'x.tsx')).toEqual([]);
+  });
+
+  it("it sees a property called role however it is written: x?.role, x['role'], x?.['role'] and x[`role`]", () => {
+    expect(roleReadsOf('const mine = session?.role;', 'x.ts')).toEqual(['session?.role']);
+    expect(roleReadsOf("const mine = session['role'];", 'x.ts')).toEqual(["session['role']"]);
+    expect(roleReadsOf("const mine = session?.['role'];", 'x.ts')).toEqual(["session?.['role']"]);
+    expect(roleReadsOf('const mine = session[`role`];', 'x.ts')).toEqual(['session[`role`]']);
+  });
+
+  it('it sees a role taken out of an object: const { role } = x, with another name, with a quoted key, and in the parameters of a component', () => {
+    expect(roleReadsOf('const { role } = session;', 'x.ts')).toEqual(['role']);
+    expect(roleReadsOf('const { id, role } = session;', 'x.ts')).toEqual(['role']);
+    expect(roleReadsOf('const { role: mine, email } = session;', 'x.ts')).toEqual(['role: mine']);
+    expect(roleReadsOf("const { 'role': mine } = session;", 'x.ts')).toEqual(["'role': mine"]);
+    expect(roleReadsOf("const { ['role']: mine } = session;", 'x.ts')).toEqual(["['role']: mine"]);
+    expect(roleReadsOf('function Card({ role }: Props) { return null; }', 'x.tsx')).toEqual([
+      'role',
+    ]);
+    // a local that is called role and holds something else is not a read of the person's role
+    expect(roleReadsOf('const { holder: role } = props;', 'x.ts')).toEqual([]);
+  });
+
+  it('it sees the name of a role as text: a string, a template with nothing in it, and a piece of a template', () => {
+    expect(roleReadsOf("const who = 'biller';", 'x.ts')).toEqual(["'biller'"]);
+    expect(roleReadsOf('const who = "staff";', 'x.ts')).toEqual(['"staff"']);
+    expect(roleReadsOf('const who = `owner`;', 'x.ts')).toEqual(['`owner`']);
+    expect(roleReadsOf('const who = `${prefix}owner`;', 'x.ts')).toEqual(['`owner`']);
+    expect(roleReadsOf('const who = `staff${suffix}`;', 'x.ts')).toEqual(['`staff`']);
+    expect(roleReadsOf("type Who = 'owner' | 'biller' | 'staff';", 'x.ts')).toEqual([
+      "'owner'",
+      "'biller'",
+      "'staff'",
+    ]);
+  });
+
+  it('it sees an imported constant named like a role: ROLE_OWNER, with another name, by default, as a namespace, and a type called Role', () => {
+    expect(roleReadsOf("import { ROLE_OWNER } from '@/lib/roles';", 'x.ts')).toEqual([
+      'ROLE_OWNER',
+    ]);
+    expect(roleReadsOf("import { ROLE_OWNER as mine } from '@/lib/roles';", 'x.ts')).toEqual([
+      'ROLE_OWNER as mine',
+    ]);
+    expect(roleReadsOf("import { mine as OWNER_ROLE } from '@/lib/roles';", 'x.ts')).toEqual([
+      'mine as OWNER_ROLE',
+    ]);
+    expect(roleReadsOf("import OWNER from '@/lib/roles';", 'x.ts')).toEqual(['OWNER']);
+    expect(roleReadsOf("import * as roles from '@/lib/roles';", 'x.ts')).toEqual(['* as roles']);
+    expect(roleReadsOf("import type { AuthRole } from '@/lib/authStore';", 'x.ts')).toEqual([
+      'AuthRole',
+    ]);
+  });
+
+  it('and it leaves alone what only sounds like one: the owner actions, the words on screen, a prop called holder', () => {
+    expect(roleReadsOf("import { useOwnerActions } from './useOwnerActions';", 'x.ts')).toEqual([]);
+    expect(
+      roleReadsOf("import { OWNER_ACTIONS, type OwnerAction } from '@/lib/ownerActions';", 'x.ts')
+    ).toEqual([]);
+    expect(
+      roleReadsOf("import OwnerBillActions from '@/components/owner/OwnerBillActions';", 'x.tsx')
+    ).toEqual([]);
+    expect(
+      roleReadsOf('const { holder, status } = props; const mayRefund = owner.refund;', 'x.ts')
+    ).toEqual([]);
+    expect(roleReadsOf('const words = `Only the owner can ${what}`;', 'x.ts')).toEqual([]);
+    expect(roleReadsOf('const words = "The owner enters this payment.";', 'x.ts')).toEqual([]);
+    expect(roleReadsOf('// a comment about the owner, the biller and role.owner', 'x.ts')).toEqual(
+      []
+    );
   });
 });
 

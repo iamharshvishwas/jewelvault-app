@@ -24,7 +24,7 @@ import {
   type Shop,
 } from './support/money-rows';
 import { FakeBooksApi, totalRow } from './support/books-server';
-import { PLAN_TICKS, holderFor, type RoleSpec } from './support/access';
+import { PLAN_TICKS, holderFor, sessionFor, type RoleSpec } from './support/access';
 
 // ================================================================================================ the day, worked out by hand
 //
@@ -282,6 +282,12 @@ async function load({ preview = false, role = 'owner' as 'owner' | 'biller' } = 
   server.role = role;
   server.dailyTotals = [...CASH_BOOK];
   vi.stubGlobal('fetch', server.fetch);
+  // the customer card and the ledger page are the screens of a signed-in person (task 20b of the access plan: their money part follows `bill_view`, and nobody who is not known holds it): the person
+  // the server answers for; a preview build opens as the Owner (a render on the server side of React is given no session, so the person is stood in here too)
+  vi.doMock('@/lib/authStore', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/lib/authStore')>()),
+    useSession: () => sessionFor(preview ? 'owner' : role),
+  }));
   const [react, dom, cache, app, kpi, panels, sales, payments, evening, detail, ledgerClient] =
     await Promise.all([
       import('react'),
@@ -329,6 +335,7 @@ async function load({ preview = false, role = 'owner' as 'owner' | 'biller' } = 
 }
 
 afterEach(() => {
+  vi.doUnmock('@/lib/authStore');
   vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();

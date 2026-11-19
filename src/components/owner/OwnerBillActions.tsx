@@ -14,7 +14,7 @@ import { useOwnerActions } from './useOwnerActions';
 // books, marked Cancelled, with the reason), or re-issued, which cancels it and saves the corrected bill in one step, the money already received moving to the new one. Each button is drawn for
 // the tick of its own call (Cancel a bill, Re-issue a bill; the owner holds both), and only for a bill that is still active; a re-issue is offered for an estimate (dues brought forward have no
 // lines to correct: cancel them and add a new opening balance). The re-issue opens the billing screen with this bill's lines in it (`/billing-pos?reissue=<id>`), where the customer cannot be
-// changed.
+// changed; so the link is drawn only for a person who may open that screen (`ownerActionFlags`: the tick and "Make bills").
 
 interface OwnerBillActionsProps {
   billId: string;
