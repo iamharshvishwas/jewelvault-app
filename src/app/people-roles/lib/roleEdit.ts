@@ -9,15 +9,17 @@
 //     API's own sentence, except that a name another role has, which only the API can tell (an accent, a zero-width space), reads "Another role already has this name.": `roleRefusalWords`
 //     of roleWrite.ts, Task 24b). `saved` on `stale` and `refused` is the role after the FIRST write when that one went through and the second did not, else null; the screen takes it as the
 //     role it is editing from now on;
-//   - the lists are read again after every success, after anything that was written (the first write alone), and after an outcome nobody can vouch for. A refusal that wrote nothing reads
-//     nothing again, and a stale one does not either: the "Reload" button of the screen does that when she asks for it, since the edits on screen are hers until then;
+//   - the lists are read again after every success, after anything that was written (the first write alone), and after every failure but three kinds (final review of the website, Ruling AB;
+//     `afterWrite.ts`): a refusal that is no word about her password and not a stale one (a name that another browser took, a rule, a role that is not there) is often the proof that the list on
+//     screen is old, and an outcome nobody can vouch for may have gone through. A wrong password and the pause say nothing about the lists; a stale answer is the "Reload" button's: it
+//     reads them when she asks for it, since the edits on screen are hers until then;
 //   - when the first write went through the second can no longer be answered on the password step (the step would write the first part again): whatever refused the second is shown on
 //     the screen, with what was saved (`partlySaved` for a refusal, and for a role changed by someone else the screen puts `savedLine` before its own sentence).
 import type { TickKey } from '@/lib/access';
 import { isApiError, type ApiClient } from '@/lib/api/client';
 import { NOTHING_CHANGED } from '@/lib/api/errorMap';
 import type { SuperRole, SuperRoleAnswer } from '@/lib/api/types';
-import { failureOf, readAgain } from './afterWrite';
+import { failureOf, isPasswordRefusal, readAgain } from './afterWrite';
 import { roleRefusalWords } from './roleWrite';
 
 /** The part of the client the save uses. */
@@ -77,16 +79,7 @@ function roleOf(answer: SuperRoleAnswer): SuperRole {
   return role;
 }
 
-/** A refusal of the Super Admin's own password: the wrong one (a 422 on that field, never a 401), or the pause after five wrong ones. */
-function isPasswordRefusal(cause: unknown): boolean {
-  return (
-    isApiError(cause) &&
-    ((cause.code === 'JV_INVALID_INPUT' && cause.details.field === 'password') ||
-      cause.code === 'JV_RATE_LIMITED')
-  );
-}
-
-/** Does the save, then reads the lists again unless nothing was written. Never throws: a failure is the kind of the outcome. */
+/** Does the save, then reads the lists again, unless her password was refused or the role is stale (see the header). Never throws: a failure is the kind of the outcome. */
 export async function runRoleEdit(
   writes: RoleEditWrites,
   reload: () => Promise<void>,
@@ -128,14 +121,15 @@ export async function runRoleEdit(
   } catch (cause) {
     const failure = failureOf(cause);
     const sentence = roleRefusalWords(cause, failure.error);
-    // something was written, or nobody can say that nothing was: the lists are read again
-    if (saved !== null || failure.reread) await readAgain(reload);
-    if (isApiError(cause) && cause.code === 'JV_STALE') return { kind: 'stale', saved };
+    const stale = isApiError(cause) && cause.code === 'JV_STALE';
+    // something was written, or the failure is no word about her password and not a stale answer (the Reload button's): the lists are read again
+    if (saved !== null || (failure.reread && !stale)) await readAgain(reload);
+    if (stale) return { kind: 'stale', saved };
     if (saved === null && isPasswordRefusal(cause))
       return { kind: 'password', error: failure.error };
     return {
       kind: 'refused',
-      error: saved === null ? sentence : partlySaved(edit, sentence, !failure.reread),
+      error: saved === null ? sentence : partlySaved(edit, sentence, failure.nothingChanged),
       saved,
     };
   }

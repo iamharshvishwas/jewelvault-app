@@ -37,6 +37,7 @@ import { PHONE, expectNoSidewaysScroll, expectTappable } from './phone';
 //   8  P8: a role with no ticks: its person signs in and meets only the screens that everybody has, and no error line anywhere
 //   9  a phone, 375 x 812: People as cards, the dialogs, Roles, Edit role with its Save bar, and the page never scrolls sideways
 //  10  the Owner's Activity Log tells the Super Admin's changes in words
+//  11  a role switched off in another browser while the Add person form is open (final review of the website, I2): the refusal reads the lists again, the form no longer offers the role
 //
 // THE PASSWORD. The Super Admin's own password asks for itself again on every write (R9). It comes from `process.env` (through `e2eLogin`) and is typed into the field by the keyboard: Playwright
 // writes the text of `fill` and `type` into the log of a failed action, the keyboard it does not (`typeSecret`). A test never prints it, never compares it and never puts it in a title.
@@ -1408,6 +1409,117 @@ test.describe("the Activity Log tells the Super Admin's changes", () => {
         .evaluateAll((trs) => trs.map((tr) => (tr.textContent ?? '').replace(/\s+/g, ' ').trim()));
       expect(ours.length).toBeGreaterThanOrEqual(lines.length);
       for (const text of ours) expect(text).not.toMatch(/_|undefined|\bnull\b|\bNaN\b/);
+    } finally {
+      await second.close();
+    }
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ 11: a role switched off in another browser while Add person is open
+
+test.describe('a role switched off in another browser while the Add person form is open', () => {
+  test('two browsers of the Super Admin: the second fills Add person with a role, the first switches that role off, the second confirms: the step says that the role is switched off, the lists were read again, Cancel brings the form back without that role, and another role goes through', async ({
+    page,
+    browser,
+  }) => {
+    const superAdmin = e2eLogin('super');
+    const GONE = `Cashier gone ${RUN}`;
+    const person: NewPerson = {
+      fullName: `Dev Anand ${RUN}`,
+      email: `dev-${RUN}@jv-e2e.test`,
+      role: GONE,
+    };
+
+    // the first browser: a copy of the Staff role, which nobody holds (a role that people hold cannot be switched off)
+    await signInAs(page, superAdmin);
+    await openPeopleAndRoles(page);
+    await openRolesTab(page);
+    await copyRole(page, { from: 'Staff', name: GONE, password: superAdmin.password });
+    expect((await roleFromApi(page, GONE)).people, 'nobody holds the new role').toBe(0);
+
+    const second = await otherBrowser(browser);
+    try {
+      // the second browser (its own session, its own lists, read AFTER the role was made): the form offers the role, and she chooses it
+      await signInAs(second.page, superAdmin);
+      await openPeopleAndRoles(second.page);
+      const superCalls: string[] = [];
+      second.page.on('request', (request) => {
+        const url = new URL(request.url());
+        if (url.pathname.startsWith('/v1/super/'))
+          superCalls.push(`${request.method()} ${url.pathname}`);
+      });
+      await second.page.getByTestId('add-person').click();
+      const form = second.page.getByTestId('add-person-dialog');
+      await expect(form).toBeVisible();
+      await form.getByTestId('add-person-name').fill(person.fullName);
+      await form.getByTestId('add-person-email').fill(person.email);
+      const choices = form.getByTestId('add-person-role');
+      await choices.selectOption({ label: GONE });
+      await expect(choices.locator('option:checked')).toHaveText(GONE);
+
+      // the first browser switches the role off meanwhile
+      await page.getByRole('button', { name: `Switch off ${GONE}`, exact: true }).click();
+      const switching = page.getByTestId('confirm-password-dialog');
+      await expect(switching).toContainText(`Switch off the role ${GONE}`);
+      await confirmWithPassword(page, superAdmin.password);
+      await expect(switching).toHaveCount(0);
+      await expect(roleRow(page, GONE)).toContainText('Switched off');
+      expect((await roleFromApi(page, GONE)).active, 'the role is switched off').toBe(false);
+
+      // the second browser still offers it: it goes on to the password step and confirms
+      await form.getByTestId('add-person-continue').click();
+      const step = second.page.getByTestId('confirm-password-dialog');
+      await expect(step).toContainText(`Add ${person.fullName} (${person.email}) as ${GONE}`);
+      superCalls.length = 0;
+      await confirmWithPassword(second.page, superAdmin.password);
+
+      // refused, in the API's words (Task 26 part 2 found them stiff; they are mapped in the next commit of the final wave): the step stays, and nobody was added
+      await expect(step.getByTestId('confirm-password-error')).toHaveText(
+        /role is not an active role\. Nothing was changed\.$/
+      );
+      await expect(step).toBeVisible();
+      expect(
+        (await peopleFromApi(page)).filter((one) => one.email === person.email),
+        'nobody was added'
+      ).toEqual([]);
+      // the write went once (nothing sent it again), and the lists were read again BEFORE the step answered: the answer is on screen, so the two reads are done
+      expect(superCalls[0], 'the write is the first call').toBe('POST /v1/super/people');
+      expect(
+        superCalls.filter((call) => call.startsWith('POST')),
+        'writes sent'
+      ).toHaveLength(1);
+      expect(superCalls.slice(1).sort(), 'what was read after the refusal').toEqual([
+        'GET /v1/super/people',
+        'GET /v1/super/roles',
+      ]);
+
+      // Cancel brings the form back with what was typed, and the role is no longer offered (nothing is chosen)
+      await step.getByTestId('confirm-password-cancel').click();
+      await expect(step).toHaveCount(0);
+      await expect(form).toBeVisible();
+      await expect(form.getByTestId('add-person-name')).toHaveValue(person.fullName);
+      await expect(form.getByTestId('add-person-email')).toHaveValue(person.email);
+      await expect(choices.locator('option', { hasText: GONE })).toHaveCount(0);
+      await expect(choices.locator('option:checked')).toHaveText('Choose a role');
+      await expect(choices.locator('option', { hasText: 'Staff' })).toHaveCount(1);
+
+      // another role: the same form goes through, to the temporary password (which a test never prints)
+      await choices.selectOption({ label: 'Staff' });
+      await form.getByTestId('add-person-continue').click();
+      await expect(step).toContainText(`Add ${person.fullName} (${person.email}) as Staff`);
+      await confirmWithPassword(second.page, superAdmin.password);
+      await expect(second.page.getByRole('heading', { name: 'Person added' })).toBeVisible();
+      await closeTemporaryPassword(second.page);
+      const row = second.page.getByTestId('person-row').filter({ hasText: person.email });
+      await expect(row).toHaveCount(1);
+      await expect(row).toContainText('Staff');
+      const added = (await peopleFromApi(second.page)).filter((one) => one.email === person.email);
+      expect(added, 'the person was made once').toHaveLength(1);
+      expect(added[0]).toMatchObject({
+        full_name: person.fullName,
+        role_name: 'Staff',
+        active: true,
+      });
     } finally {
       await second.close();
     }

@@ -1,8 +1,9 @@
 // The five writes of the People tab (plan: access and roles, Task 23; API Task 14): each is one call of the client with the Super Admin's own password in its body (R9), and after it the
 // lists are read again. Plain TypeScript with no React: the client and the reload are passed in, so the unit tests give it stubs.
 //   - the password goes to the one call and nowhere else: not into the address (the id is the only part of it), not into what this returns, not into any message;
-//   - a write that was refused with a sentence that says nothing was changed (a wrong password, the pause, a taken e-mail, a stale change) reads nothing again: nothing happened. Any other
-//     failure, and every success, reads the lists again: a write whose outcome nobody can vouch for may have gone through;
+//   - the lists are read again after every success and after every failure but the two about her own password (a wrong one, the pause): a refusal is often the proof that the list on screen
+//     is old (a role that another browser switched off is still offered by the forms; a person made by an answer that was lost is not in the list, and their e-mail is "already used"), and
+//     a write whose outcome nobody can vouch for may have gone through. The step answers after the lists have been read (`afterWrite.ts`, final review of the website, Ruling AB);
 //   - the API's own sentence is shown as the client made it. A failure that is not the client's (a bug, a lost connection) is "Could not confirm that this was saved." (`failureOf` of
 //     afterWrite.ts, which the Roles tab uses too);
 //   - adding a person and resetting a password answer with a temporary password, shown once by the dialog. An answer without it is the one thing that is spelled out here: the person
@@ -107,7 +108,7 @@ async function send(
 }
 
 /**
- * Does the write, then reads the lists again unless nothing was written. Never throws: a failure is the `error` of the outcome, and a read of the lists that fails is not a failure of the
+ * Does the write, then reads the lists again, unless her password was refused (see the header). Never throws: a failure is the `error` of the outcome, and a read of the lists that fails is not a failure of the
  * write (the temporary password of a person who was just made must reach the screen whatever the lists do).
  */
 export async function runChange(

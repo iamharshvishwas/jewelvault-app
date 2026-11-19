@@ -53,6 +53,7 @@ import {
   type PeopleWrites,
   type TemporaryPassword,
 } from '@/app/people-roles/lib/personWrite';
+import { createSuperStore } from '@/app/people-roles/lib/superStore';
 import type { SuperView } from '@/app/people-roles/lib/useSuper';
 import { ApiError } from '@/lib/api/client';
 import { UNCONFIRMED_MESSAGE } from '@/lib/api/errorMap';
@@ -617,7 +618,41 @@ describe('Task 23 runChange: the lists are read again after a write', () => {
     expect(log).toEqual(['write', 'reload']);
   });
 
-  it("a refusal that says nothing was written (a taken e-mail, a wrong password, a pause, a stale change) shows the API's sentence and reads nothing again", async () => {
+  // Final review of the website (important finding I2, Ruling AB (b)): the old rule here was "a refusal that says nothing was written reads nothing again". It was wrong for this tab: the
+  // refusal is often the PROOF that the list on screen is old (a role that another browser switched off is still offered, and refused again at every try; a person made by an answer that was
+  // lost is not in the list, and the e-mail is "already used"). Every refusal but the two about her own password reads the lists again, before the step answers.
+  const CALL = {
+    add: 'superAddPerson',
+    edit: 'superEditPerson',
+    role: 'superSetPersonRole',
+    switch: 'superSetPersonActive',
+    reset: 'superResetPassword',
+  } as const;
+
+  it("a wrong password and the pause are the step's to show: nothing was written, no list can be the reason, so the lists are not read again (all five writes)", async () => {
+    for (const refused of [
+      refusal('JV_INVALID_INPUT', 422, 'Your password is not correct.', { field: 'password' }),
+      refusal('JV_RATE_LIMITED', 429, 'Too many wrong passwords. Try again in 15 minutes.'),
+    ]) {
+      for (const [kind, build] of kinds) {
+        const { writes, reload } = fakeWrites();
+        (writes[CALL[kind]] as ReturnType<typeof vi.fn>).mockRejectedValueOnce(refused);
+        const outcome = await runChange(
+          writes as unknown as PeopleWrites,
+          reload,
+          build(),
+          PASSWORD
+        );
+        expect(outcome, `${kind}: ${refused.message}`).toEqual({
+          error: refused.message,
+          temporary: null,
+        });
+        expect(reload, `${kind}: ${refused.message}`).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it('every other refusal reads the lists again BEFORE the step answers, and shows the sentence as it was (all five writes)', async () => {
     for (const refused of [
       refusal(
         'JV_INVALID_INPUT',
@@ -625,24 +660,42 @@ describe('Task 23 runChange: the lists are read again after a write', () => {
         'email is already used by another user. Nothing was changed.',
         { field: 'email' }
       ),
-      refusal('JV_INVALID_INPUT', 422, 'Your password is not correct.', { field: 'password' }),
-      refusal('JV_RATE_LIMITED', 429, 'Too many wrong passwords. Try again in 15 minutes.'),
+      refusal('JV_INVALID_INPUT', 422, 'role is not an active role. Nothing was changed.', {
+        field: 'role',
+      }),
+      refusal('JV_INVALID_INPUT', 422, 'full_name is required. Nothing was changed.', {
+        field: 'full_name',
+      }),
       refusal(
         'JV_NOT_ALLOWED',
         409,
         'Its role is switched off. Change the role first. Nothing was changed.'
       ),
+      refusal('JV_STALE', 409, 'This was changed by someone else. Reload and try again.'),
+      refusal('JV_FORBIDDEN', 403, 'You are not allowed to do this. Nothing was changed.'),
+      refusal('JV_NOT_FOUND', 404, 'That record was not found. Nothing was changed.'),
     ]) {
-      const { writes, reload } = fakeWrites();
-      writes.superSetPersonActive.mockRejectedValueOnce(refused);
-      const outcome = await runChange(
-        writes as unknown as PeopleWrites,
-        reload,
-        switchPersonChange(OLD_LOGIN),
-        PASSWORD
-      );
-      expect(outcome).toEqual({ error: refused.message, temporary: null });
-      expect(reload).not.toHaveBeenCalled();
+      for (const [kind, build] of kinds) {
+        const { writes, reload } = fakeWrites();
+        let listsRead = false;
+        reload.mockImplementation(async () => {
+          await Promise.resolve();
+          listsRead = true;
+        });
+        (writes[CALL[kind]] as ReturnType<typeof vi.fn>).mockRejectedValueOnce(refused);
+        const outcome = await runChange(
+          writes as unknown as PeopleWrites,
+          reload,
+          build(),
+          PASSWORD
+        );
+        expect(outcome, `${kind}: ${refused.message}`).toEqual({
+          error: refused.message,
+          temporary: null,
+        });
+        expect(reload, `${kind}: ${refused.message}`).toHaveBeenCalledTimes(1);
+        expect(listsRead, `${kind}: the answer waited for the lists`).toBe(true);
+      }
     }
   });
 
@@ -742,6 +795,117 @@ describe('Task 23 runChange: the lists are read again after a write', () => {
       PASSWORD
     );
     expect(outcome).toEqual({ error: UNCONFIRMED_MESSAGE, temporary: null });
+  });
+});
+
+// ================================================================================================ after a refusal the lists say what the API says now
+
+describe('Final review I2: what the lists show after a refusal (the real store, a stub of the API)', () => {
+  /** The API as it is NOW (the arrays change under the screen, as another browser or a lost answer would change them) and the store that reads it, as the screen does. */
+  async function screenOver(
+    people: SuperPerson[],
+    roles: SuperRole[]
+  ): Promise<{
+    server: { people: SuperPerson[]; roles: SuperRole[] };
+    store: ReturnType<typeof createSuperStore>;
+  }> {
+    const server = { people: [...people], roles: [...roles] };
+    const store = createSuperStore({
+      superTicks: async () => ({ groups: [], ticks: [] }),
+      superPeople: async () => ({ people: [...server.people] }),
+      superRoles: async () => ({ roles: [...server.roles] }),
+    });
+    await store.open();
+    return { server, store };
+  }
+  const keysOf = (roles: SuperRole[]) => activeRoleChoices(roles).map((one) => one.key);
+
+  it('a role that another browser switched off is offered by the Add person form until the refusal: after it the form no longer offers it', async () => {
+    const { server, store } = await screenOver([SIDDHI], [R_OWNER, R_CASHIER, R_KEEPER]);
+    const values = { full_name: 'Meena Shah', email: 'meena@example.test', role: 'zk-cashier' };
+    const asked = newPersonChange(values, activeRoleChoices(store.state().roles));
+    expect(keysOf(store.state().roles)).toContain('zk-cashier');
+
+    // the other browser switches the role off; the form here still offers it, and the write is refused
+    server.roles = server.roles.map((one) =>
+      one.key === 'zk-cashier' ? { ...one, active: false } : one
+    );
+    const { writes } = fakeWrites();
+    writes.superAddPerson.mockRejectedValueOnce(
+      refusal('JV_INVALID_INPUT', 422, 'role is not an active role. Nothing was changed.', {
+        field: 'role',
+      })
+    );
+    const outcome = await runChange(
+      writes as unknown as PeopleWrites,
+      store.reload,
+      asked,
+      PASSWORD
+    );
+    expect(outcome.error).toMatch(/role is not an active role/);
+    // what the form is given now: the role is gone, the others stay, and nobody was added
+    expect(keysOf(store.state().roles)).toEqual(['owner', 'zk-keeper']);
+    expect(store.state().people.map((one) => one.email)).toEqual([SIDDHI.email]);
+  });
+
+  it('the same for Change role: the role switched off is no choice any more once the refusal has been answered', async () => {
+    const { server, store } = await screenOver([ANITA], [R_OWNER, R_CASHIER, R_KEEPER]);
+    const asked = rolePersonChange(ANITA, 'zk-keeper', activeRoleChoices(store.state().roles));
+    server.roles = server.roles.map((one) =>
+      one.key === 'zk-keeper' ? { ...one, active: false } : one
+    );
+    const { writes } = fakeWrites();
+    writes.superSetPersonRole.mockRejectedValueOnce(
+      refusal('JV_INVALID_INPUT', 422, 'role is not an active role. Nothing was changed.', {
+        field: 'role',
+      })
+    );
+    await runChange(writes as unknown as PeopleWrites, store.reload, asked, PASSWORD);
+    expect(keysOf(store.state().roles)).toEqual(['owner', 'zk-cashier']);
+  });
+
+  it('a person made by an answer that was lost is in the list after it: the screen shows who is there, and the sentence says it could not be confirmed', async () => {
+    const { server, store } = await screenOver([SIDDHI], [R_OWNER, R_CASHIER]);
+    const lost = new ApiError({
+      code: 'GATEWAY',
+      status: 502,
+      message: UNCONFIRMED_MESSAGE,
+      write: true,
+    });
+    const { writes } = fakeWrites();
+    // the API commits, and the answer never arrives
+    writes.superAddPerson.mockImplementationOnce(async (body: SuperAddPersonBody) => {
+      server.people.push(
+        person({ full_name: body.full_name, email: body.email, role: 'zk-cashier' })
+      );
+      throw lost;
+    });
+    const outcome = await runChange(
+      writes as unknown as PeopleWrites,
+      store.reload,
+      newPersonChange(
+        { full_name: 'Meena Shah', email: 'meena@example.test', role: 'zk-cashier' },
+        activeRoleChoices(store.state().roles)
+      ),
+      PASSWORD
+    );
+    expect(outcome).toEqual({ error: UNCONFIRMED_MESSAGE, temporary: null });
+    expect(writes.superAddPerson).toHaveBeenCalledTimes(1);
+    expect(store.state().people.map((one) => one.email)).toEqual([
+      SIDDHI.email,
+      'meena@example.test',
+    ]);
+  });
+
+  it('a wrong password does not read the lists: nothing about them can have changed the answer', async () => {
+    const { store } = await screenOver([SIDDHI], [R_OWNER, R_CASHIER]);
+    const reads = vi.fn(store.reload);
+    const { writes } = fakeWrites();
+    writes.superSetPersonActive.mockRejectedValueOnce(
+      refusal('JV_INVALID_INPUT', 422, 'Your password is not correct.', { field: 'password' })
+    );
+    await runChange(writes as unknown as PeopleWrites, reads, switchPersonChange(ANITA), PASSWORD);
+    expect(reads).not.toHaveBeenCalled();
   });
 });
 

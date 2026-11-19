@@ -827,7 +827,7 @@ describe('Task 25 runRoleEdit: the calls, their order and their bodies', () => {
 });
 
 describe('Task 25 runRoleEdit: what goes wrong', () => {
-  it('a refusal of the first write because another role has the name (the clash the form cannot catch, an accent) reads "Another role already has this name.", writes nothing else, saves nothing and reads nothing again', async () => {
+  it('a refusal of the first write because another role has the name (the clash the form cannot catch, an accent) reads "Another role already has this name.", writes nothing else, saves nothing and reads the lists again (the role that has the name may be new to this screen)', async () => {
     const { writes, reload } = fakeWrites();
     writes.superEditRole.mockRejectedValueOnce(
       refusal(
@@ -846,7 +846,7 @@ describe('Task 25 runRoleEdit: what goes wrong', () => {
       saved: null,
     });
     expect(writes.superSetRoleTicks).not.toHaveBeenCalled();
-    expect(reload).not.toHaveBeenCalled();
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 
   it("every other refusal on the name stays in the API's words, closing words of the client and all", async () => {
@@ -908,9 +908,10 @@ describe('Task 25 runRoleEdit: what goes wrong', () => {
     );
     const outcome = await runRoleEdit(writes, reload, editOf(...TICKS), PASSWORD);
     expect(outcome).toEqual({ kind: 'refused', error: sentence, saved: null });
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it('the Owner refusal and any other rule are shown as the API says them', async () => {
+  it('the Owner refusal and any other rule are shown as the API says them, and the lists are read again (the people count or the role itself may be old)', async () => {
     const { writes, reload } = fakeWrites();
     const sentence = 'The Owner role is fixed and cannot be changed. Nothing was changed.';
     writes.superEditRole.mockRejectedValueOnce(refusal('JV_NOT_ALLOWED', 409, sentence));
@@ -919,7 +920,72 @@ describe('Task 25 runRoleEdit: what goes wrong', () => {
       error: sentence,
       saved: null,
     });
-    expect(reload).not.toHaveBeenCalled();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  // Final review of the website (important finding I2, Ruling AB (b)): the lists are read again after every refusal of a save but three kinds: her own password (a wrong one, the pause), which
+  // say nothing about the lists, and a stale one, which is the Reload button's to answer (the edits on screen are hers until she presses it).
+  it('every refusal of a save but the password ones and the stale one reads the lists again, once, BEFORE the outcome, for either write; it keeps the API sentence and saves nothing', async () => {
+    for (const refused of [
+      refusal(
+        'JV_INVALID_INPUT',
+        422,
+        'name must contain a letter or a number. Nothing was changed.',
+        {
+          field: 'name',
+        }
+      ),
+      refusal(
+        'JV_INVALID_INPUT',
+        422,
+        'ticks contains a tick this version does not know. Nothing was changed.',
+        {
+          field: 'ticks',
+        }
+      ),
+      refusal('JV_NOT_ALLOWED', 409, 'The Owner role is fixed. Nothing was changed.'),
+      refusal('JV_FORBIDDEN', 403, 'You are not allowed to do this. Nothing was changed.'),
+      refusal('JV_NOT_FOUND', 404, 'That record was not found. Nothing was changed.'),
+    ]) {
+      for (const [call, edit] of [
+        ['superEditRole', editOf(NAME)],
+        ['superSetRoleTicks', editOf(...TICKS)],
+      ] as const) {
+        const { writes, reload } = fakeWrites();
+        let listsRead = false;
+        reload.mockImplementation(async () => {
+          await Promise.resolve();
+          listsRead = true;
+        });
+        writes[call].mockRejectedValueOnce(refused);
+        const outcome = await runRoleEdit(writes, reload, edit, PASSWORD);
+        expect(outcome, `${call}: ${refused.message}`).toEqual({
+          kind: 'refused',
+          error: refused.message,
+          saved: null,
+        });
+        expect(reload, `${call}: ${refused.message}`).toHaveBeenCalledTimes(1);
+        expect(listsRead, `${call}: the outcome waited for the lists`).toBe(true);
+      }
+    }
+  });
+
+  it('a wrong password, the pause and a stale answer read nothing (for either write): the first two say nothing about the lists, the third is answered by the Reload button', async () => {
+    for (const refused of [
+      refusal('JV_INVALID_INPUT', 422, 'Your password is not correct.', { field: 'password' }),
+      refusal('JV_RATE_LIMITED', 429, 'Too many wrong passwords. Try again in 15 minutes.'),
+      refusal('JV_STALE', 409, 'This was changed by someone else. Reload and try again.'),
+    ]) {
+      for (const [call, edit] of [
+        ['superEditRole', editOf(NAME)],
+        ['superSetRoleTicks', editOf(...TICKS)],
+      ] as const) {
+        const { writes, reload } = fakeWrites();
+        writes[call].mockRejectedValueOnce(refused);
+        await runRoleEdit(writes, reload, edit, PASSWORD);
+        expect(reload, `${call}: ${refused.message}`).not.toHaveBeenCalled();
+      }
+    }
   });
 
   it('a stale answer to the first write: the role was changed by someone else, nothing was saved, nothing is read again (the Reload button does that)', async () => {

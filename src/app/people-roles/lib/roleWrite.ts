@@ -5,8 +5,9 @@
 //   - the switch names the `updated_at` the role was listed with (R9): a role changed in another tab since is refused as stale. Nothing was written, but the row on screen is old, so the lists
 //     are read again and the outcome says `stale`: the password step ends there (Task 24b) and the tab says why. A retry on the same step would name the old stamp and be refused for ever;
 //     starting the change again from the fresh row would be wrong, since the switch goes the OTHER way from the way the row is (another browser may have switched the role already);
-//   - a rule's refusal (a role that people have cannot be switched off) reads the lists again too: the people count of the row may be old, since giving a person the role in another tab does
-//     not change the role's own stamp. Every other refusal that says nothing was written reads nothing again, and every success and every outcome nobody can vouch for reads again;
+//   - the lists are read again after every success and after every failure but the two about her own password (a wrong one, the pause; `afterWrite.ts`, final review of the website, Ruling AB):
+//     a rule's refusal (a role that people have cannot be switched off: the people count of the row may be old, since giving a person the role in another tab does not change the role's own
+//     stamp), a name that another browser has just taken (the form compares with the lists it holds), and an outcome nobody can vouch for (a role made by an answer that was lost is in the list);
 //   - the API's own sentence is shown as the client made it (`failureOf` of afterWrite.ts: "The Owner role is fixed ..." is the API's own), with one exception, `roleRefusalWords`: the
 //     one clash of names the form cannot catch is said in the form's own plain words (Task 24b).
 import { isApiError, type ApiClient } from '@/lib/api/client';
@@ -27,9 +28,6 @@ export interface RoleOutcome {
    */
   stale?: true;
 }
-
-/** Refusals that wrote nothing but prove that the list on screen is old: a role changed by someone else, and a rule (the people count of the row moved). */
-const LIST_IS_OLD = ['JV_STALE', 'JV_NOT_ALLOWED'] as const;
 
 /** How the API's sentence for a name that another role has ends (API Task 13, src/super/roles.ts: `name is already used by another role`). */
 const NAME_CLASH_ENDING = 'is already used by another role';
@@ -71,7 +69,7 @@ async function send(writes: RoleWrites, change: RoleChange, password: string): P
   }
 }
 
-/** Does the write, then reads the lists again unless nothing was written. Never throws: a failure is the `error` of the outcome. */
+/** Does the write, then reads the lists again, unless her password was refused (see the header). Never throws: a failure is the `error` of the outcome. */
 export async function runRoleChange(
   writes: RoleWrites,
   reload: () => Promise<void>,
@@ -83,7 +81,7 @@ export async function runRoleChange(
   try {
     await send(writes, change, password);
   } catch (cause) {
-    const failure = failureOf(cause, LIST_IS_OLD);
+    const failure = failureOf(cause);
     outcome = {
       error: roleRefusalWords(cause, failure.error),
       ...(isApiError(cause) && cause.code === 'JV_STALE' ? { stale: true as const } : {}),

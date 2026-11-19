@@ -3,7 +3,9 @@
 //   - the Super Admin's own password is asked again for every write (R9): it travels in the body and nowhere else (never in the address, never in a header), and it is in
 //     no message, no log line and no error of a call that failed;
 //   - the words of a refusal of such a write: a wrong password, the pause after five wrong ones, a role changed by someone else, and the API's own sentence for the rest.
-//     They belong to the writes that carry the password: the same refusal on any other call keeps the words it always had.
+//     They belong to the writes that carry the password: the same refusal on any other call keeps the words it always had;
+//   - the nine writes are NEVER tried again by the client (final review, Ruling AB): they carry no Idempotency-Key, so a second try of a write that had gone through would be refused for a
+//     clash with its own work ("email is already used by another user" for a person that was just made). The first answer is the answer, whatever it is; every other call keeps its retries.
 //
 // The passwords of these tests are made up as the tests start and never printed.
 //
@@ -38,9 +40,16 @@ const refusal = (
   details: Record<string, unknown> = {},
   headers: Record<string, string> = {}
 ) => json(status, { error: { code, message, details }, request_id: 'req-super-1' }, headers);
+/** What a proxy answers while the app is being started or the gateway gives up: no JV_ body, not JSON. */
+const html = (status: number) =>
+  new Response('<html><body>Bad gateway</body></html>', {
+    status,
+    headers: { 'content-type': 'text/html' },
+  });
 
 function make(...replies: Array<Response | Error>) {
   const calls: Call[] = [];
+  const waits: number[] = [];
   const stubbed = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
     calls.push({
       url: String(input),
@@ -57,9 +66,11 @@ function make(...replies: Array<Response | Error>) {
   const client = createApiClient({
     baseUrl: BASE,
     fetch: stubbed as unknown as typeof globalThis.fetch,
-    sleep: async () => undefined,
+    sleep: async (ms) => {
+      waits.push(ms);
+    },
   });
-  return { client, calls };
+  return { client, calls, waits };
 }
 
 /** The ApiError of a call that should be refused, or a failed test. */
@@ -574,5 +585,149 @@ describe('the password is in no message, no log line and no error of a call that
     expect(String(error)).not.toContain(password);
     expect(JSON.stringify(error, Object.getOwnPropertyNames(error))).not.toContain(password);
     expect(everythingPrinted()).not.toContain(password);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ the nine writes are never tried again
+
+// Final review of the website (important finding I2, Ruling AB (a)): a gateway answer, a page that is not JSON and a JV_BUSY make the client of any other call wait and try again, with the same
+// Idempotency-Key. The nine writes have no key (the API offers none for them), so a try after a write that had GONE THROUGH is a second write: an Add person that had committed was refused
+// "email is already used by another user. Nothing was changed." (false: the person exists, the temporary password was lost with the answer, and the list did not show them). The first answer is
+// the answer. What an unclear answer leaves the screen is "Could not confirm that this was saved." and a read of the lists, which show what happened.
+describe('the nine writes are never tried again by the client', () => {
+  // what a gateway, a proxy or a half-started app answers: no JV_ body, so an ordinary call waits 1, 2, 4, 8 and 15 seconds and tries again, five times
+  const NOT_FROM_THE_API: Array<[string, number, () => Response]> = [
+    ['a 502 page', 502, () => html(502)],
+    ['a 503 page', 503, () => html(503)],
+    ['a 504 page', 504, () => html(504)],
+    ['a 502 with JSON that is not an S8 body', 502, () => json(502, { message: 'Bad gateway' })],
+    [
+      'a 200 that is not JSON (a proxy page)',
+      200,
+      () => new Response('Welcome', { status: 200, headers: { 'content-type': 'text/plain' } }),
+    ],
+    ['an empty 200', 200, () => new Response('', { status: 200 })],
+  ];
+
+  it('the client has the three reads and these nine writes, and no tenth: a new write has to be added to this list, and so to every test below', () => {
+    const { client } = make(json(200, {}));
+    expect(Object.keys(client).filter((name) => name.startsWith('super'))).toEqual(
+      expect.arrayContaining([...WRITES.map((one) => one.name)])
+    );
+    expect(
+      Object.keys(client)
+        .filter((name) => name.startsWith('super'))
+        .sort()
+    ).toEqual(['superPeople', 'superRoles', 'superTicks', ...WRITES.map((one) => one.name)].sort());
+  });
+
+  describe.each(WRITES)('$name', (one) => {
+    it.each(NOT_FROM_THE_API)(
+      'meets %s: one try, no wait, and the answer is "Could not confirm that this was saved."',
+      async (_name, status, bad) => {
+        // the second answer would be a success: the first one is the answer
+        const { client, calls, waits } = make(bad(), json(200, one.answer));
+        const reread = vi.fn();
+        client.onUnconfirmedSave(reread);
+        const error = await failure(one.run(client, madeUpPassword()));
+        expect(calls).toHaveLength(1);
+        expect(waits).toEqual([]);
+        expect(error.code).toBe('GATEWAY');
+        expect(error.status).toBe(status);
+        expect(error.message).toBe('Could not confirm that this was saved.');
+        expect(error.unconfirmed).toBe(true);
+        expect(error.nothingChanged).toBe(false);
+        // there is no key to send again, and none was sent
+        expect(error.idempotencyKey).toBeNull();
+        expect(calls[0].headers.has('idempotency-key')).toBe(false);
+        expect(reread).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('meets a JV_BUSY from the API: one try, no wait (the API never promises that nothing was changed), "Could not confirm that this was saved."', async () => {
+      const { client, calls, waits } = make(
+        refusal(503, 'JV_BUSY', 'The service is busy.', {}, { 'Retry-After': '1' }),
+        json(200, one.answer)
+      );
+      const error = await failure(one.run(client, madeUpPassword()));
+      expect(calls).toHaveLength(1);
+      expect(waits).toEqual([]);
+      expect(error.code).toBe('JV_BUSY');
+      expect(error.message).toBe('Could not confirm that this was saved.');
+      expect(error.unconfirmed).toBe(true);
+    });
+
+    it('is still finished once for the poller, and a good answer after the gateway one is a call of its own', async () => {
+      const { client, calls } = make(html(502), json(200, one.answer));
+      const done = vi.fn();
+      client.onWriteFinished(done);
+      await failure(one.run(client, madeUpPassword()));
+      expect(done).toHaveBeenCalledTimes(1);
+      expect(client.getConnectionStatus()).toBe('waking');
+      // the next call (the lists, read again) is the stub's second answer: the first did not use it up
+      await expect(one.run(client, madeUpPassword())).resolves.toEqual(one.answer);
+      expect(calls).toHaveLength(2);
+      expect(client.getConnectionStatus()).toBe('ok');
+    });
+  });
+
+  it('a refusal of the API and a wrong password are answered as before (they were never retried), and no answer is kept to be sent again', async () => {
+    for (const one of WRITES) {
+      const wrong = make(
+        refusal(422, 'JV_INVALID_INPUT', 'password is not correct', { field: 'password' }),
+        json(200, one.answer)
+      );
+      const error = await failure(one.run(wrong.client, madeUpPassword()));
+      expect(error.message, one.name).toBe('Your password is not correct.');
+      expect(wrong.calls, one.name).toHaveLength(1);
+    }
+  });
+
+  describe('every other call keeps its retries, exactly', () => {
+    it('a read of People & Roles that meets a gateway answer waits and tries again', async () => {
+      for (const [name, answer] of [
+        ['superTicks', TICKS],
+        ['superPeople', { people: [person] }],
+        ['superRoles', { roles: [role] }],
+      ] as const) {
+        const { client, calls, waits } = make(html(502), html(504), json(200, answer));
+        await expect(client[name]()).resolves.toEqual(answer);
+        expect(calls, name).toHaveLength(3);
+        expect(waits, name).toEqual([1000, 2000]);
+      }
+    });
+
+    it('a read of People & Roles that meets a JV_BUSY is tried once more', async () => {
+      const { client, calls, waits } = make(
+        refusal(503, 'JV_BUSY', 'busy', {}, { 'Retry-After': '1' }),
+        json(200, { roles: [role] })
+      );
+      await expect(client.superRoles()).resolves.toEqual({ roles: [role] });
+      expect(calls).toHaveLength(2);
+      expect(waits).toEqual([1000]);
+    });
+
+    it('a write of any other screen keeps its retries and its Idempotency-Key through all of them', async () => {
+      const gateway = make(html(502), html(503), json(201, { customer: { id: 'c1' } }));
+      await expect(
+        gateway.client.post('/v1/customers', { name: 'A' }, { idempotent: true })
+      ).resolves.toEqual({ customer: { id: 'c1' } });
+      expect(gateway.calls).toHaveLength(3);
+      expect(gateway.waits).toEqual([1000, 2000]);
+      expect(new Set(gateway.calls.map((call) => call.headers.get('idempotency-key'))).size).toBe(
+        1
+      );
+      expect(gateway.calls[0].headers.get('idempotency-key')).not.toBeNull();
+
+      const busy = make(refusal(503, 'JV_BUSY', 'busy', {}, { 'Retry-After': '1' }), json(200, {}));
+      await busy.client.patch('/v1/designs/x', { changes: {} }, { idempotent: true });
+      expect(busy.calls).toHaveLength(2);
+    });
+
+    it('a call to a super address that is not one of the nine writes (an ordinary request) is retried too: only the nine say they are not', async () => {
+      const { client, calls } = make(html(502), json(200, { ok: true }));
+      await client.get('/v1/super/anything');
+      expect(calls).toHaveLength(2);
+    });
   });
 });

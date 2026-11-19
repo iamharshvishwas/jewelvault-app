@@ -23,7 +23,7 @@ import { PeopleRolesView } from '@/app/people-roles/components/PeopleRolesClient
 import RolesTab, { RolesTabView } from '@/app/people-roles/components/RolesTab';
 import StaleNotice from '@/app/people-roles/components/StaleNotice';
 import SwitchRoleDialog from '@/app/people-roles/components/SwitchRoleDialog';
-import { failureOf, readAgain } from '@/app/people-roles/lib/afterWrite';
+import { failureOf, isPasswordRefusal, readAgain } from '@/app/people-roles/lib/afterWrite';
 import {
   newRoleChange,
   roleChangeConfirmLabel,
@@ -47,6 +47,7 @@ import {
   validateNewRole,
 } from '@/app/people-roles/lib/roles';
 import { roleRefusalWords, runRoleChange, type RoleWrites } from '@/app/people-roles/lib/roleWrite';
+import { createSuperStore } from '@/app/people-roles/lib/superStore';
 import type { SuperView } from '@/app/people-roles/lib/useSuper';
 import { ApiError } from '@/lib/api/client';
 import { ROLE_CHANGED_MESSAGE, UNCONFIRMED_MESSAGE } from '@/lib/api/errorMap';
@@ -509,24 +510,59 @@ describe('Task 24 runRoleChange: the lists are read again after a write', () => 
     expect(log).toEqual(['write', 'reload']);
   });
 
-  it("a refusal that says nothing was written and has nothing to do with an old list (a wrong password, the pause, a name that is not accepted, not allowed) shows the API's sentence untouched and reads nothing again", async () => {
+  // Final review of the website (important finding I2, Ruling AB (b)): the old rule of this test was "a refusal that has nothing to do with an old list reads nothing again". A refusal
+  // proves that the list on screen is old as often as it proves anything: a name that another browser has just taken, a role that someone else changed. Every refusal but the two about her
+  // own password reads the lists again, before the step answers.
+  it("a wrong password and the pause are the step's to show: nothing was written, no list can be the reason, so the lists are not read again", async () => {
     for (const refused of [
       refusal('JV_INVALID_INPUT', 422, 'Your password is not correct.', { field: 'password' }),
       refusal('JV_RATE_LIMITED', 429, 'Too many wrong passwords. Try again in 15 minutes.'),
+    ]) {
+      for (const change of [
+        newRoleChange({ copy_of: 'owner', name: 'Copy', description: '' }, ROLES),
+        switchRoleChange(R_BILLER),
+      ]) {
+        const { writes, reload: read } = fakeWrites();
+        writes.superCreateRole.mockRejectedValueOnce(refused);
+        writes.superSetRoleActive.mockRejectedValueOnce(refused);
+        const outcome = await runRoleChange(writes, read, change, PASSWORD);
+        expect(outcome, `${change.kind}: ${refused.message}`).toEqual({ error: refused.message });
+        expect(read, `${change.kind}: ${refused.message}`).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it("every other refusal (a name that is not accepted, forbidden, not found, not allowed, a name taken) shows the API's sentence untouched and reads the lists again BEFORE the step answers", async () => {
+    for (const refused of [
       refusal(
         'JV_INVALID_INPUT',
         422,
         'name must contain a letter or a number. Nothing was changed.',
         { field: 'name' }
       ),
+      refusal('JV_INVALID_INPUT', 422, 'copy_of is not a role. Nothing was changed.', {
+        field: 'copy_of',
+      }),
       refusal('JV_FORBIDDEN', 403, 'You are not allowed to do this. Nothing was changed.'),
+      refusal('JV_NOT_FOUND', 404, 'That record was not found. Nothing was changed.'),
     ]) {
-      const { writes, reload: read } = fakeWrites();
-      writes.superCreateRole.mockRejectedValueOnce(refused);
-      const change = newRoleChange({ copy_of: 'owner', name: 'Copy', description: '' }, ROLES);
-      const outcome = await runRoleChange(writes, read, change, PASSWORD);
-      expect(outcome, refused.message).toEqual({ error: refused.message });
-      expect(read, refused.message).not.toHaveBeenCalled();
+      for (const change of [
+        newRoleChange({ copy_of: 'owner', name: 'Copy', description: '' }, ROLES),
+        switchRoleChange(R_BILLER),
+      ]) {
+        const { writes, reload: read } = fakeWrites();
+        let listsRead = false;
+        read.mockImplementation(async () => {
+          await Promise.resolve();
+          listsRead = true;
+        });
+        writes.superCreateRole.mockRejectedValueOnce(refused);
+        writes.superSetRoleActive.mockRejectedValueOnce(refused);
+        const outcome = await runRoleChange(writes, read, change, PASSWORD);
+        expect(outcome, `${change.kind}: ${refused.message}`).toEqual({ error: refused.message });
+        expect(read, `${change.kind}: ${refused.message}`).toHaveBeenCalledTimes(1);
+        expect(listsRead, `${change.kind}: the answer waited for the lists`).toBe(true);
+      }
     }
   });
 
@@ -588,13 +624,75 @@ describe('Task 24 what a failed write says (shared with the People tab)', () => 
     expect(failureOf('boom').error).toBe(UNCONFIRMED_MESSAGE);
   });
 
-  it('the lists are read again after everything but a refusal that wrote nothing; the codes given are read again as well', () => {
-    expect(failureOf(refusal('JV_INVALID_INPUT', 422, 'x')).reread).toBe(false);
-    expect(failureOf(refusal('JV_STALE', 409, 'x')).reread).toBe(false);
-    expect(failureOf(refusal('JV_STALE', 409, 'x'), ['JV_STALE']).reread).toBe(true);
-    expect(failureOf(refusal('JV_INVALID_INPUT', 422, 'x'), ['JV_STALE']).reread).toBe(false);
-    expect(failureOf(refusal('JV_INTERNAL', 500, 'x')).reread).toBe(true);
-    expect(failureOf(new TypeError('Failed to fetch')).reread).toBe(true);
+  it('the lists are read again after EVERY failure but the two about her own password (a wrong one, the pause)', () => {
+    const on = (field: string) => refusal('JV_INVALID_INPUT', 422, 'x', { field });
+    for (const [cause, reread] of [
+      [on('password'), false],
+      [refusal('JV_RATE_LIMITED', 429, 'x'), false],
+      [on('email'), true],
+      [on('role'), true],
+      [on('name'), true],
+      [refusal('JV_INVALID_INPUT', 422, 'x'), true],
+      [refusal('JV_NOT_ALLOWED', 409, 'x'), true],
+      [refusal('JV_STALE', 409, 'x'), true],
+      [refusal('JV_FORBIDDEN', 403, 'x'), true],
+      [refusal('JV_NOT_FOUND', 404, 'x'), true],
+      [refusal('JV_INTERNAL', 500, 'x'), true],
+      [refusal('JV_BUSY', 503, 'x'), true],
+      [refusal('GATEWAY', 502, 'x'), true],
+      [refusal('NETWORK', 0, 'x'), true],
+      [new TypeError('Failed to fetch'), true],
+      ['boom', true],
+    ] as const)
+      expect(failureOf(cause).reread, JSON.stringify(String(cause))).toBe(reread);
+  });
+
+  it('isPasswordRefusal: a 422 on `password` and a 429, and nothing else', () => {
+    expect(isPasswordRefusal(refusal('JV_INVALID_INPUT', 422, 'x', { field: 'password' }))).toBe(
+      true
+    );
+    expect(isPasswordRefusal(refusal('JV_RATE_LIMITED', 429, 'x'))).toBe(true);
+    for (const other of [
+      refusal('JV_INVALID_INPUT', 422, 'x', { field: 'passwords' }),
+      refusal('JV_INVALID_INPUT', 422, 'x', {}),
+      refusal('JV_FORBIDDEN', 403, 'x', { field: 'password' }),
+      refusal('JV_STALE', 409, 'x'),
+      new TypeError('Failed to fetch'),
+      undefined,
+      'password',
+    ])
+      expect(isPasswordRefusal(other), String(other)).toBe(false);
+  });
+
+  it('failureOf says what the failure leaves the screen: nothing was written (a refusal of the API), or nobody can say (anything else), and whether the sentence is the "could not confirm" one', () => {
+    expect(failureOf(refusal('JV_NOT_ALLOWED', 409, 'Nope.'))).toEqual({
+      error: 'Nope.',
+      reread: true,
+      nothingChanged: true,
+      unconfirmed: false,
+    });
+    expect(failureOf(refusal('JV_INVALID_INPUT', 422, 'x', { field: 'password' }))).toMatchObject({
+      reread: false,
+      nothingChanged: true,
+      unconfirmed: false,
+    });
+    for (const lost of [
+      refusal('JV_INTERNAL', 500, UNCONFIRMED_MESSAGE),
+      refusal('GATEWAY', 502, UNCONFIRMED_MESSAGE),
+      refusal('JV_INTERNAL', 500, ''),
+      new TypeError('Failed to fetch'),
+      'boom',
+    ])
+      expect(failureOf(lost), String(lost)).toEqual({
+        error: UNCONFIRMED_MESSAGE,
+        reread: true,
+        nothingChanged: false,
+        unconfirmed: true,
+      });
+    // the server being unreachable is not "could not confirm": the API itself said it did nothing
+    expect(
+      failureOf(refusal('JV_UNAVAILABLE', 503, 'Cannot reach the server. Try again in a minute.'))
+    ).toMatchObject({ reread: true, unconfirmed: false });
   });
 
   it('readAgain never throws, whatever the read does', async () => {
@@ -607,6 +705,88 @@ describe('Task 24 what a failed write says (shared with the People tab)', () => 
         throw new Error('no');
       })
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('Final review I2: what the lists show after a refusal on the Roles tab (the real store, a stub of the API)', () => {
+  async function screenOver(roles: SuperRole[]) {
+    const server = { roles: [...roles] };
+    const store = createSuperStore({
+      superTicks: async () => ({ groups: [], ticks: [] }),
+      superPeople: async () => ({ people: [] }),
+      superRoles: async () => ({ roles: [...server.roles] }),
+    });
+    await store.open();
+    return { server, store };
+  }
+
+  it('a name that another browser has just taken: the form cannot know it, the API refuses it, and once the lists are read again the form says it too', async () => {
+    const { server, store } = await screenOver([R_OWNER, R_BILLER]);
+    const values = { copy_of: 'zk-biller', name: 'Counter', description: '' };
+    expect(validateNewRole(values, store.state().roles)).toEqual({});
+
+    server.roles.push(role({ key: 'zk-counter', name: 'Counter', people: 0 }));
+    const { writes } = fakeWrites();
+    writes.superCreateRole.mockRejectedValueOnce(
+      refusal(
+        'JV_INVALID_INPUT',
+        422,
+        'name is already used by another role. Nothing was changed.',
+        {
+          field: 'name',
+        }
+      )
+    );
+    const outcome = await runRoleChange(
+      writes,
+      store.reload,
+      newRoleChange(values, store.state().roles),
+      PASSWORD
+    );
+    expect(outcome).toEqual({ error: NAME_TAKEN });
+    expect(validateNewRole(values, store.state().roles)).toEqual({ name: NAME_TAKEN });
+  });
+
+  it('a role made by an answer that was lost is in the list after it, and the sentence says it could not be confirmed', async () => {
+    const { server, store } = await screenOver([R_OWNER, R_BILLER]);
+    const { writes } = fakeWrites();
+    writes.superCreateRole.mockImplementationOnce(async (body: SuperCreateRoleBody) => {
+      // the API commits, and the answer never arrives
+      server.roles.push(role({ key: 'zk-lost', name: body.name, people: 0 }));
+      throw new ApiError({
+        code: 'GATEWAY',
+        status: 502,
+        message: UNCONFIRMED_MESSAGE,
+        write: true,
+      });
+    });
+    const outcome = await runRoleChange(
+      writes,
+      store.reload,
+      newRoleChange({ copy_of: 'zk-biller', name: 'Night till', description: '' }, ROLES),
+      PASSWORD
+    );
+    expect(outcome).toEqual({ error: UNCONFIRMED_MESSAGE });
+    expect(writes.superCreateRole).toHaveBeenCalledTimes(1);
+    expect(store.state().roles.map((one) => one.name)).toEqual(['Owner', 'Biller', 'Night till']);
+  });
+
+  it('a role that someone else gave people: the refusal reads the lists again, so the row shows the people and no longer offers Switch off', async () => {
+    const { server, store } = await screenOver([R_OWNER, R_BILLER]);
+    expect(canSwitchOff(store.state().roles[1])).toBe(true);
+    server.roles = server.roles.map((one) =>
+      one.key === 'zk-biller' ? { ...one, people: 2 } : one
+    );
+    const { writes } = fakeWrites();
+    writes.superSetRoleActive.mockRejectedValueOnce(
+      refusal(
+        'JV_NOT_ALLOWED',
+        409,
+        '2 people still have this role. Move them to another role first.'
+      )
+    );
+    await runRoleChange(writes, store.reload, switchRoleChange(R_BILLER), PASSWORD);
+    expect(canSwitchOff(store.state().roles[1])).toBe(false);
   });
 });
 
@@ -1297,12 +1477,12 @@ describe('Task 24b runRoleChange: the clash of names says it in plain words, and
   const newRole = () =>
     newRoleChange({ copy_of: 'zk-biller', name: 'Cashiér', description: '' }, ROLES);
 
-  it('a new role whose name only differs by an accent: the API refuses it on `name`, and the step reads "Another role already has this name." (the lists are not read again: nothing was written)', async () => {
+  it('a new role whose name only differs by an accent: the API refuses it on `name`, and the step reads "Another role already has this name." (the lists are read again: the role that has the name may be new to this screen)', async () => {
     const { writes, reload: read } = fakeWrites();
     writes.superCreateRole.mockRejectedValueOnce(clash());
     const outcome = await runRoleChange(writes, read, newRole(), PASSWORD);
     expect(outcome).toEqual({ error: 'Another role already has this name.' });
-    expect(read).not.toHaveBeenCalled();
+    expect(read).toHaveBeenCalledTimes(1);
   });
 
   it('the other refusals of a create are still the API words, and no refusal of a create is stale (a create names no stamp)', async () => {
