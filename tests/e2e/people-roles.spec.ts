@@ -7,7 +7,7 @@ import {
   type Page,
   type Request,
 } from '@playwright/test';
-import { SCREENS, TICK_KEYS, TICK_LABELS } from '../../src/lib/access';
+import { TICK_KEYS, TICK_LABELS } from '../../src/lib/access';
 import type {
   MeResponse,
   MeUser,
@@ -32,7 +32,9 @@ import { PHONE, expectNoSidewaysScroll, expectTappable } from './phone';
 //   (part 2 of Task 26: the people writes of API Task 14 are in the lane's API)
 //   6  add a person with a role: the temporary password is shown once and is nowhere in the page afterwards; in a second browser context that person signs in, changes the password and gets
 //      the menu of the role
-//   7  P6: the Super Admin takes "Make bills and estimates" (and the Order Book) away from a role while its person is signed in: at the next poll the menu loses them, the screen the person
+//   7a P6, write-only: the Super Admin turns off ONLY "Make bills and estimates" (a tick no table depends on) while its person is signed in: the poll is answered 200 with another access text,
+//      the menu and the screen follow, nothing is refused, and the hydrate that follows asks for exactly the tables of before
+//   7b P6, read-changing: the Super Admin takes "Make bills and estimates" (and the Order Book) away from a role while its person is signed in: at the next poll the menu loses them, the screen the person
 //      is on becomes the closed-screen card, and the next hydrate asks for nothing the person may not read
 //   8  P8: a role with no ticks: its person signs in and meets only the screens that everybody has, and no error line anywhere
 //   9  a phone, 375 x 812: People as cards, the dialogs, Roles, Edit role with its Save bar, and the page never scrolls sideways
@@ -42,6 +44,13 @@ import { PHONE, expectNoSidewaysScroll, expectTappable } from './phone';
 //
 // THE PASSWORD. The Super Admin's own password asks for itself again on every write (R9). It comes from `process.env` (through `e2eLogin`) and is typed into the field by the keyboard: Playwright
 // writes the text of `fill` and `type` into the log of a failed action, the keyboard it does not (`typeSecret`). A test never prints it, never compares it and never puts it in a title.
+// Nor does it assert on an element that holds one, or on a container that holds the temporary password: a failing `toContainText` prints the whole text it was given (twice) and a failing
+// `toBeVisible` prints the element it found, `<code ...>PASSWORD</code>`, so the sentences of the dialog are asserted on the elements that hold them (`getByText`, a heading) and the element of
+// the password is only counted (`toHaveCount`), which prints a number.
+// What no test can keep out of a file: a typed password still lands in `playwright-report/` (the HTML reporter, always on in `playwright.config.ts`, records `page.keyboard.type(secret)` as a
+// step titled `Type "<secret>"`, even in a test that passes), `trace: 'on-first-retry'` (CI only) stores typed text, and `error-context.md` in `test-results/` holds the visible text of the page
+// at a failure (the temporary password dialog, while it is on screen). All of them are git-ignored folders and hold throw-away lane passwords, gone with their lane; the runs of the final wave
+// use `--reporter=line` or `--reporter=line,json`, which leave the HTML report out.
 //
 // THE DATA. Roles and people are never deleted (S7), so what a test makes stays in the lane until the lane is taken down. The tests of part 1 name their roles by hand ("Cashier", "Stale probe");
 // the tests of part 2 add `RUN`, a few letters and digits made when the file is loaded, to every role and person they make, and none of them leans on what another test made (a test run alone
@@ -254,8 +263,9 @@ async function addPersonUntilShown(
   await confirmWithPassword(page, superPassword);
   expect((await created).status(), 'POST /v1/super/people answers 201').toBe(201);
 
+  // waits by counting the element that holds the password: a failing `toBeVisible` on it would print `<code ...>PASSWORD</code>`
   const dialog = page.getByTestId('temporary-password-dialog');
-  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId('temporary-password')).toHaveCount(1);
   return ((await dialog.getByTestId('temporary-password').textContent()) ?? '').trim();
 }
 
@@ -839,12 +849,15 @@ test.describe('a person added from the People tab', () => {
     // People tab: + Add person, the form, the password step, and then the temporary password
     const listed = (await peopleFromApi(page)).length;
     const temporary = await addPersonUntilShown(page, person, superAdmin.password);
+    // each line asserts on an element that holds no password (the sentences, the heading), or counts the one that does: see "THE PASSWORD" at the top of the file
     const dialog = page.getByTestId('temporary-password-dialog');
     await expect(dialog.getByRole('heading', { name: 'Person added' })).toBeVisible();
-    await expect(dialog).toContainText(
-      `${person.fullName} can now sign in with ${person.email} and this temporary password.`
-    );
-    await expect(dialog).toContainText('It is shown only once.');
+    await expect(
+      dialog.getByText(
+        `${person.fullName} can now sign in with ${person.email} and this temporary password.`
+      )
+    ).toBeVisible();
+    await expect(dialog.getByText('It is shown only once.')).toBeVisible();
     // the API made four groups of four (a check that does not print the password when it fails)
     expect(
       /^[A-Za-z0-9]{4}(-[A-Za-z0-9]{4}){3}$/.test(temporary),
@@ -854,8 +867,8 @@ test.describe('a person added from the People tab', () => {
     await expect(dialog.getByRole('button')).toHaveText(['Copy', 'I have copied it']);
     await page.keyboard.press('Escape');
     await page.mouse.click(4, 4);
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByTestId('temporary-password')).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Person added' })).toBeVisible();
+    await expect(dialog.getByTestId('temporary-password')).toHaveCount(1);
     // the tabs are locked meanwhile: a change of tab would lose a password that is shown once
     await expect(page.getByRole('tab', { name: 'Roles' })).toBeDisabled();
     await closeTemporaryPassword(page);
@@ -927,6 +940,10 @@ test.describe('a person added from the People tab', () => {
       await expect(bar.locator('a[href="/people-roles"]')).toHaveCount(0);
       await bar.getByRole('link', { name: 'New Estimate' }).click();
       await expect(second.page).toHaveURL(/\/billing-pos\/?$/);
+      // the billing screen itself is on screen (its heading), and not only the absence of the closed-screen card
+      await expect(
+        second.page.getByRole('heading', { level: 1, name: 'New Estimate' })
+      ).toBeVisible();
       await expect(second.page.getByText('Not available for your role')).toHaveCount(0);
       // `me` says the same: the ticks of the role, and no Super Admin flag
       const me = await meOf(second.page);
@@ -941,7 +958,131 @@ test.describe('a person added from the People tab', () => {
   });
 });
 
-// ------------------------------------------------------------------------------------------------ 7: P6, a tick taken away while its person is signed in
+// ------------------------------------------------------------------------------------------------ 7a: P6, the first phase: a tick that no table depends on
+
+test.describe('a tick that changes no table, taken away while its person is signed in', () => {
+  test('P6, write-only: the Super Admin turns off ONLY "Make bills and estimates"; the signed-in person loses New Estimate and Saved Estimates at the next poll and the Order Book stays, the poll is answered 200 with another access text (no call is refused), the screen they stand on becomes the closed-screen card, and the hydrate that follows asks for exactly the tables of before', async ({
+    page,
+    browser,
+  }) => {
+    const superAdmin = e2eLogin('super');
+    const CASHIER = `Cashier P6 write ${RUN}`;
+    const person: NewPerson = {
+      fullName: `Kavita Desai ${RUN}`,
+      email: `kavita-${RUN}@jv-e2e.test`,
+      role: CASHIER,
+    };
+    const chosen = newPassword();
+
+    // the Super Admin: a copy of the Biller (it makes bills and sees the Order Book), and a person who has it
+    await signInAs(page, superAdmin);
+    await openPeopleAndRoles(page);
+    await openRolesTab(page);
+    await copyRole(page, { from: 'Biller', name: CASHIER, password: superAdmin.password });
+    const temporary = await addPerson(page, person, superAdmin.password);
+
+    const second = await otherBrowser(browser);
+    try {
+      const asked = trackSync(second.page);
+      const thrown = trackPageErrors(second.page);
+      const refused = trackRefused(second.page);
+      // what each poll of the person was answered: its status and the access text it carried (a poll is not a page of a hydrate, `trackSync` leaves it out)
+      const polls: Array<{ status: number; access: string | null }> = [];
+      second.page.on('response', async (response) => {
+        if (new URL(response.url()).pathname !== '/v1/sync/poll') return;
+        const body = (await response.json().catch(() => null)) as { access?: unknown } | null;
+        polls.push({
+          status: response.status(),
+          access: typeof body?.access === 'string' ? body.access : null,
+        });
+      });
+      await firstSignIn(second.page, person, temporary, chosen);
+      const bar = aside(second.page);
+      await bar.getByRole('link', { name: 'New Estimate' }).click();
+      await expect(second.page).toHaveURL(/\/billing-pos\/?$/);
+      await expect(
+        second.page.getByRole('heading', { level: 1, name: 'New Estimate' })
+      ).toBeVisible();
+      await expect(second.page.getByText('Not available for your role')).toHaveCount(0);
+      await expect(bar.locator('a[href="/estimate"]')).toBeVisible();
+      await expect(bar.locator('a[href="/order-book"]')).toBeVisible();
+
+      // what the person may read now, and the tables the hydrate of the sign-in asked for: exactly those (a list that is not empty)
+      const before = await meOf(second.page);
+      expect(before.permissions).toEqual(expect.arrayContaining(['bill_make', 'order_view']));
+      expect(before.reads.length, 'tables the person may read').toBeGreaterThan(0);
+      expect(resourcesOf(asked), 'tables of the first hydrate').toEqual([...before.reads].sort());
+      expect(asked.every((call) => call.status === 200)).toBe(true);
+
+      // The Super Admin turns off "Make bills and estimates" and NOTHING ELSE. No read depends on that tick, so what the person may read does not change: the change comes to them through
+      // the poll's access text alone, and not through a refusal of a call.
+      await page.getByRole('tab', { name: 'Roles' }).click();
+      await page.getByRole('button', { name: `Edit ${CASHIER}`, exact: true }).click();
+      await expect(page.getByTestId('edit-role-name')).toHaveValue(CASHIER);
+      await toggleTick(page, 'Make bills and estimates');
+      await expect(tickBox(page, 'Make bills and estimates')).not.toBeChecked();
+      await expect(page.getByTestId('edit-role-banner')).toContainText('1 change not saved yet');
+      const mark = asked.length; // the calls from here on belong to what follows the change
+      await page.getByTestId('edit-role-head-save').click();
+      await confirmWithPassword(page, superAdmin.password);
+      await expect(page.getByTestId('edit-role-saved')).toHaveText('Saved.');
+      const saved = await roleFromApi(page, CASHIER);
+      expect(saved.ticks).not.toContain('bill_make');
+      expect(saved.ticks, 'the Order Book is still on').toContain('order_view');
+
+      // at the next poll (a state, not a pause): a poll answered 200 with an access text that is not the one `me` gave before ...
+      await expect
+        .poll(
+          () =>
+            polls.some(
+              (poll) => poll.status === 200 && poll.access !== null && poll.access !== before.access
+            ),
+          { message: 'a poll answered 200 with another access text', timeout: 45_000 }
+        )
+        .toBe(true);
+      // ... and the screen the person stands on is the closed-screen card, at the same address
+      const closed = second.page.getByRole('heading', {
+        level: 1,
+        name: 'Not available for your role',
+      });
+      await expect(closed).toBeVisible({ timeout: 45_000 });
+      await expect(second.page).toHaveURL(/\/billing-pos\/?$/);
+      // the menu: no New Estimate and no Saved Estimates; the Order Book, which the person may still read, stays
+      await expect(bar.locator('a[href="/billing-pos"]')).toHaveCount(0);
+      await expect(bar.locator('a[href="/estimate"]')).toHaveCount(0);
+      await expect(bar.locator('a[href="/order-book"]')).toBeVisible();
+
+      // `me`: another access text, the same tables to read (the change was no change of what may be read)
+      const after = await meOf(second.page);
+      expect(after.permissions).not.toContain('bill_make');
+      expect(after.permissions).toContain('order_view');
+      expect(after.access, 'the access text of `me`').not.toBe(before.access);
+      expect([...after.reads].sort(), 'tables the person may read now').toEqual(
+        [...before.reads].sort()
+      );
+      // the hydrate that followed asked for exactly those tables, and all of it was answered
+      await expect
+        .poll(
+          () => {
+            const followed = asked.slice(mark);
+            return followed.length > 0 && followed.every((call) => call.status !== null)
+              ? resourcesOf(followed)
+              : null;
+          },
+          { message: 'tables of the hydrate that followed the change', timeout: 30_000 }
+        )
+        .toEqual([...before.reads].sort());
+      expect(asked.slice(mark).every((call) => call.status === 200)).toBe(true);
+      // no call of the person was refused, from the first sign-in to now: the change did not travel as a 403
+      expect(refused, 'calls of the person that were refused').toEqual([]);
+      expect(thrown, "errors thrown in the person's page").toEqual([]);
+    } finally {
+      await second.close();
+    }
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ 7b: P6, a tick taken away while its person is signed in
 
 test.describe('a tick taken away while its person is signed in', () => {
   test('P6: the Super Admin turns "Make bills and estimates" off for Cashier; the signed-in person loses Billing in the menu at the next poll, /billing-pos shows the closed-screen card (Not available for your role) with a way back to the dashboard, and the next hydrate asks only for what they may read', async ({
@@ -974,6 +1115,10 @@ test.describe('a tick taken away while its person is signed in', () => {
       const bar = aside(second.page);
       await bar.getByRole('link', { name: 'New Estimate' }).click();
       await expect(second.page).toHaveURL(/\/billing-pos\/?$/);
+      // the billing screen itself is on screen (its heading), and not only the absence of the closed-screen card
+      await expect(
+        second.page.getByRole('heading', { level: 1, name: 'New Estimate' })
+      ).toBeVisible();
       await expect(second.page.getByText('Not available for your role')).toHaveCount(0);
       await expect(bar.locator('a[href="/order-book"]')).toBeVisible();
 
@@ -1080,8 +1225,18 @@ test.describe('a tick taken away while its person is signed in', () => {
 
 // ------------------------------------------------------------------------------------------------ 8: P8, a role with no ticks
 
-/** The screens that everybody who is signed in has: no tick opens them (`open` in the route table of the website). */
-const OPEN_PATHS = SCREENS.filter((screen) => 'open' in screen.rule).map((screen) => screen.path);
+/**
+ * The screens that everybody who is signed in has, whatever the role: Dashboard, Inventory, Design detail, Print tags and the Stock catalogue (the always-on list of the plan). They are written
+ * out here and NOT read from the route table of the website (`SCREENS` of src/lib/access.ts): a list read from the code under test only echoes it, and a screen closed by mistake would drop out
+ * of the list and out of this test together.
+ */
+const OPEN_PATHS = [
+  '/',
+  '/inventory-management',
+  '/design-detail',
+  '/print-tags',
+  '/stock-catalogue',
+];
 
 test.describe('a role with no ticks', () => {
   test('P8: a role with no ticks: the person signs in and sees only the always-on screens with no error banner', async ({
@@ -1183,6 +1338,19 @@ test.describe('a role with no ticks', () => {
         await expect(second.page.locator('main')).not.toBeEmpty();
         await expectNoErrorShown(second.page, path);
       }
+      // Every `goto` above starts the application again, and with it the poller, whose first poll is 8 seconds away: the loop never lives through one. The dashboard once more, until a poll
+      // has been answered (the poller asks for the tables of `me.reads` only, so 200), and only then: nothing says that something went wrong and nothing was refused
+      const polled = second.page.waitForResponse(
+        (response) => new URL(response.url()).pathname === '/v1/sync/poll',
+        { timeout: 45_000 }
+      );
+      await second.page.goto('/');
+      expect(
+        (await polled).status(),
+        'the answer to the first poll of a person with no ticks'
+      ).toBe(200);
+      await expect(second.page.getByRole('heading', { level: 1 })).toBeVisible();
+      await expectNoErrorShown(second.page, 'the dashboard, after a poll');
       expect(thrown, "errors thrown in the person's page").toEqual([]);
       expect(refused, 'calls to the API that were refused').toEqual([]);
     } finally {
