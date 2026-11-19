@@ -4,13 +4,14 @@
 //   - the lists are read again after every success and after every failure but the two about her own password (a wrong one, the pause): a refusal is often the proof that the list on screen
 //     is old (a role that another browser switched off is still offered by the forms; a person made by an answer that was lost is not in the list, and their e-mail is "already used"), and
 //     a write whose outcome nobody can vouch for may have gone through. The step answers after the lists have been read (`afterWrite.ts`, final review of the website, Ruling AB);
-//   - the API's own sentence is shown as the client made it. A failure that is not the client's (a bug, a lost connection) is "Could not confirm that this was saved." (`failureOf` of
-//     afterWrite.ts, which the Roles tab uses too);
+//   - the API's own sentence is shown as the client made it, except two that read like a log line and are said in plain words (`personRefusalWords`: a taken e-mail, a role that is switched off).
+//     A failure that is not the client's (a bug, a lost connection) is "Could not confirm that this was saved." (`failureOf` of afterWrite.ts, which the Roles tab uses too);
 //   - adding a person and resetting a password answer with a temporary password, shown once by the dialog. An answer without it is the one thing that is spelled out here: the person
 //     was made (or the password was reset), nothing can be shown, and the way on is another reset.
-import type { ApiClient } from '@/lib/api/client';
+import { isApiError, type ApiClient } from '@/lib/api/client';
 import type { SuperNewPersonAnswer, SuperResetAnswer } from '@/lib/api/types';
-import { failureOf, readAgain } from './afterWrite';
+import { apiPartOf, failureOf, readAgain } from './afterWrite';
+import { EMAIL_TAKEN, ROLE_SWITCHED_OFF } from './people';
 import type { PersonChange } from './personChange';
 
 /** The part of the client the five writes use. */
@@ -41,6 +42,27 @@ export interface ChangeOutcome {
 }
 
 const DONE: ChangeOutcome = { error: null, temporary: null };
+
+/** How the API's sentence for a taken e-mail ends (API Task 14, src/admin/routes.ts: `email is already used by another user`; an edit refuses it the same way). */
+const EMAIL_CLASH_ENDING = 'is already used by another user';
+/** How the API's sentence for a role that is switched off, or that is not there, ends (src/permissions/roleStore.ts: `role is not an active role`). */
+const ROLE_OFF_ENDING = 'is not an active role';
+
+/**
+ * The words for the refusal of a people write, given the sentence that `failureOf` made of it: that sentence, except for the two sentences of the API that begin with its own lower-case field
+ * word and read like a log line (final review of the website, Ruling AB (c); Task 26 part 2 met both in the real browser): a 422 on `email` whose sentence ends with `is already used by
+ * another user` reads "Another person already has this e-mail.", and a 422 on `role` whose sentence ends with `is not an active role` reads "That role is switched off. Choose another
+ * role.". The form cannot catch either (the e-mail is compared by the database, the role may have been switched off in another browser since the form was opened). Only these, only on
+ * their own field: every other refusal keeps the API's words, and so does the same sentence on another field or under another code. The END of the sentence counts (as in `roleRefusalWords`),
+ * so a sentence that merely contains the words is left alone.
+ */
+export function personRefusalWords(cause: unknown, sentence: string): string {
+  if (!isApiError(cause) || cause.code !== 'JV_INVALID_INPUT') return sentence;
+  const said = apiPartOf(sentence);
+  if (cause.details.field === 'email' && said.endsWith(EMAIL_CLASH_ENDING)) return EMAIL_TAKEN;
+  if (cause.details.field === 'role' && said.endsWith(ROLE_OFF_ENDING)) return ROLE_SWITCHED_OFF;
+  return sentence;
+}
 
 const NO_TEMPORARY_PASSWORD = {
   add: 'The person was added, but the temporary password could not be read. Use "Reset password" to get a new one.',
@@ -123,7 +145,7 @@ export async function runChange(
     outcome = await send(writes, change, password);
   } catch (cause) {
     const failure = failureOf(cause);
-    outcome = { error: failure.error, temporary: null };
+    outcome = { error: personRefusalWords(cause, failure.error), temporary: null };
     reread = failure.reread;
   }
   if (reread) await readAgain(reload);

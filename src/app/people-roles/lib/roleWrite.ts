@@ -11,8 +11,7 @@
 //   - the API's own sentence is shown as the client made it (`failureOf` of afterWrite.ts: "The Owner role is fixed ..." is the API's own), with one exception, `roleRefusalWords`: the
 //     one clash of names the form cannot catch is said in the form's own plain words (Task 24b).
 import { isApiError, type ApiClient } from '@/lib/api/client';
-import { NOTHING_CHANGED } from '@/lib/api/errorMap';
-import { failureOf, readAgain } from './afterWrite';
+import { apiPartOf, failureOf, readAgain } from './afterWrite';
 import type { RoleChange } from './roleChange';
 import { NAME_TAKEN } from './roles';
 
@@ -41,11 +40,7 @@ const NAME_CLASH_ENDING = 'is already used by another role';
 export function roleRefusalWords(cause: unknown, sentence: string): string {
   if (!isApiError(cause) || cause.code !== 'JV_INVALID_INPUT' || cause.details.field !== 'name')
     return sentence;
-  const said = sentence.trim();
-  const apiPart = said.endsWith(NOTHING_CHANGED)
-    ? said.slice(0, said.length - NOTHING_CHANGED.length)
-    : said;
-  return apiPart.trim().replace(/\.$/, '').endsWith(NAME_CLASH_ENDING) ? NAME_TAKEN : sentence;
+  return apiPartOf(sentence).endsWith(NAME_CLASH_ENDING) ? NAME_TAKEN : sentence;
 }
 
 async function send(writes: RoleWrites, change: RoleChange, password: string): Promise<void> {

@@ -26,6 +26,8 @@ import SwitchPersonDialog from '@/app/people-roles/components/SwitchPersonDialog
 import TemporaryPasswordDialog from '@/app/people-roles/components/TemporaryPasswordDialog';
 import { copyText } from '@/app/people-roles/lib/copyText';
 import {
+  EMAIL_TAKEN,
+  ROLE_SWITCHED_OFF,
   actionLabel,
   activeRoleChoices,
   editChanges,
@@ -49,6 +51,7 @@ import {
 } from '@/app/people-roles/lib/personChange';
 import { CONFIRMING, flowReducer, openIfFree } from '@/app/people-roles/lib/personFlow';
 import {
+  personRefusalWords,
   runChange,
   type PeopleWrites,
   type TemporaryPassword,
@@ -652,29 +655,50 @@ describe('Task 23 runChange: the lists are read again after a write', () => {
     }
   });
 
-  it('every other refusal reads the lists again BEFORE the step answers, and shows the sentence as it was (all five writes)', async () => {
-    for (const refused of [
-      refusal(
-        'JV_INVALID_INPUT',
-        422,
-        'email is already used by another user. Nothing was changed.',
-        { field: 'email' }
-      ),
-      refusal('JV_INVALID_INPUT', 422, 'role is not an active role. Nothing was changed.', {
-        field: 'role',
-      }),
-      refusal('JV_INVALID_INPUT', 422, 'full_name is required. Nothing was changed.', {
-        field: 'full_name',
-      }),
-      refusal(
-        'JV_NOT_ALLOWED',
-        409,
-        'Its role is switched off. Change the role first. Nothing was changed.'
-      ),
-      refusal('JV_STALE', 409, 'This was changed by someone else. Reload and try again.'),
-      refusal('JV_FORBIDDEN', 403, 'You are not allowed to do this. Nothing was changed.'),
-      refusal('JV_NOT_FOUND', 404, 'That record was not found. Nothing was changed.'),
-    ]) {
+  it('every other refusal reads the lists again BEFORE the step answers, and shows the sentence as it was, or in plain words where `personRefusalWords` has them (all five writes)', async () => {
+    for (const [refused, shown] of [
+      [
+        refusal(
+          'JV_INVALID_INPUT',
+          422,
+          'email is already used by another user. Nothing was changed.',
+          { field: 'email' }
+        ),
+        EMAIL_TAKEN,
+      ],
+      [
+        refusal('JV_INVALID_INPUT', 422, 'role is not an active role. Nothing was changed.', {
+          field: 'role',
+        }),
+        ROLE_SWITCHED_OFF,
+      ],
+      [
+        refusal('JV_INVALID_INPUT', 422, 'full_name is required. Nothing was changed.', {
+          field: 'full_name',
+        }),
+        'full_name is required. Nothing was changed.',
+      ],
+      [
+        refusal(
+          'JV_NOT_ALLOWED',
+          409,
+          'Its role is switched off. Change the role first. Nothing was changed.'
+        ),
+        'Its role is switched off. Change the role first. Nothing was changed.',
+      ],
+      [
+        refusal('JV_STALE', 409, 'This was changed by someone else. Reload and try again.'),
+        'This was changed by someone else. Reload and try again.',
+      ],
+      [
+        refusal('JV_FORBIDDEN', 403, 'You are not allowed to do this. Nothing was changed.'),
+        'You are not allowed to do this. Nothing was changed.',
+      ],
+      [
+        refusal('JV_NOT_FOUND', 404, 'That record was not found. Nothing was changed.'),
+        'That record was not found. Nothing was changed.',
+      ],
+    ] as const) {
       for (const [kind, build] of kinds) {
         const { writes, reload } = fakeWrites();
         let listsRead = false;
@@ -689,10 +713,7 @@ describe('Task 23 runChange: the lists are read again after a write', () => {
           build(),
           PASSWORD
         );
-        expect(outcome, `${kind}: ${refused.message}`).toEqual({
-          error: refused.message,
-          temporary: null,
-        });
+        expect(outcome, `${kind}: ${refused.message}`).toEqual({ error: shown, temporary: null });
         expect(reload, `${kind}: ${refused.message}`).toHaveBeenCalledTimes(1);
         expect(listsRead, `${kind}: the answer waited for the lists`).toBe(true);
       }
@@ -798,6 +819,177 @@ describe('Task 23 runChange: the lists are read again after a write', () => {
   });
 });
 
+// ================================================================================================ plain words for the two sentences the form cannot catch
+
+// Task 26 part 2 met them in the real browser (final review of the website, Ruling AB (c)): "email is already used by another user. Nothing was changed." and "role is not an active role.
+// Nothing was changed." begin with the API's own lower-case field word ("email": the screen's own label is "E-mail") and read like a log line. They are said as the rest of the screen speaks,
+// as `roleRefusalWords` does for a name that another role has. Only these two sentences, only on their own field: every other refusal keeps the API's words.
+describe('Final review: personRefusalWords, the two API sentences of the people writes in plain words', () => {
+  const EMAIL_WORDS = 'email is already used by another user';
+  const ROLE_WORDS = 'role is not an active role';
+  const on = (field: string | null, message: string, code = 'JV_INVALID_INPUT') =>
+    refusal(code, code === 'JV_FORBIDDEN' ? 403 : 422, message, field === null ? {} : { field });
+  const words = (cause: ApiError) => personRefusalWords(cause, cause.message);
+
+  it('the exact sentence of the API for a taken e-mail, as the client words it (a 422 on `email`), reads "Another person already has this e-mail." with nothing after it', () => {
+    expect(words(on('email', `${EMAIL_WORDS}. Nothing was changed.`))).toBe(
+      'Another person already has this e-mail.'
+    );
+  });
+
+  it('the exact sentence of the API for a role that is not active (a 422 on `role`) reads "That role is switched off. Choose another role."', () => {
+    expect(words(on('role', `${ROLE_WORDS}. Nothing was changed.`))).toBe(
+      'That role is switched off. Choose another role.'
+    );
+  });
+
+  it('the words are the constants of the screen, one sentence each wherever it is said', () => {
+    expect(EMAIL_TAKEN).toBe('Another person already has this e-mail.');
+    expect(ROLE_SWITCHED_OFF).toBe('That role is switched off. Choose another role.');
+  });
+
+  it('it is the end of the sentence that counts: the closing words of the client, the full stop, the capital of the first word and spaces around make no difference', () => {
+    for (const message of [
+      EMAIL_WORDS,
+      `${EMAIL_WORDS}.`,
+      `${EMAIL_WORDS}. Nothing was changed.`,
+      `Email is already used by another user. Nothing was changed.`,
+      `  ${EMAIL_WORDS}. Nothing was changed.  `,
+    ])
+      expect(words(on('email', message)), message).toBe(EMAIL_TAKEN);
+    for (const message of [
+      ROLE_WORDS,
+      `${ROLE_WORDS}.`,
+      `${ROLE_WORDS}. Nothing was changed.`,
+      `Role is not an active role. Nothing was changed.`,
+      `  ${ROLE_WORDS}. Nothing was changed.  `,
+    ])
+      expect(words(on('role', message)), message).toBe(ROLE_SWITCHED_OFF);
+  });
+
+  it('a sentence that only contains the words, or goes on after them, is not the clash: it has to END with them', () => {
+    for (const message of [
+      `${EMAIL_WORDS}. Use another one. Nothing was changed.`,
+      `${EMAIL_WORDS} account. Nothing was changed.`,
+      'another user is already used by email. Nothing was changed.',
+      'email is already used. Nothing was changed.',
+      'email must be at most 254 characters. Nothing was changed.',
+    ])
+      expect(words(on('email', message)), message).toBe(message);
+    for (const message of [
+      `${ROLE_WORDS} yet. Nothing was changed.`,
+      `${ROLE_WORDS}s. Nothing was changed.`,
+      'an active role is not role. Nothing was changed.',
+      'role is not a role. Nothing was changed.',
+      'role is required. Nothing was changed.',
+    ])
+      expect(words(on('role', message)), message).toBe(message);
+  });
+
+  it("each sentence is mapped on its own field only: the e-mail's words on `role`, and the role's on `email`, on another field or on none, stay the API's", () => {
+    const email = `${EMAIL_WORDS}. Nothing was changed.`;
+    const role = `${ROLE_WORDS}. Nothing was changed.`;
+    for (const [field, message] of [
+      ['role', email],
+      ['email', role],
+      ['full_name', email],
+      ['full_name', role],
+      ['name', email],
+      ['copy_of', role],
+      [null, email],
+      [null, role],
+    ] as const)
+      expect(words(on(field, message)), `${field}: ${message}`).toBe(message);
+  });
+
+  it("only a 422 (JV_INVALID_INPUT) is mapped: the same words under another code stay the API's", () => {
+    for (const code of [
+      'JV_NOT_ALLOWED',
+      'JV_FORBIDDEN',
+      'JV_STALE',
+      'JV_NOT_FOUND',
+      'JV_INTERNAL',
+    ]) {
+      const email = `${EMAIL_WORDS}. Nothing was changed.`;
+      const role = `${ROLE_WORDS}. Nothing was changed.`;
+      expect(words(on('email', email, code)), code).toBe(email);
+      expect(words(on('role', role, code)), code).toBe(role);
+    }
+  });
+
+  it('every other sentence of a 422 is left as it is, and so is a wrong password', () => {
+    for (const [field, message] of [
+      ['password', 'Your password is not correct.'],
+      ['email', 'email must be at most 254 characters. Nothing was changed.'],
+      ['full_name', 'full_name is required. Nothing was changed.'],
+      ['changes', 'changes needs at least one change. Nothing was changed.'],
+    ] as const)
+      expect(words(on(field, message)), message).toBe(message);
+  });
+
+  it('whatever did not come from the API is left as it is', () => {
+    expect(personRefusalWords(new TypeError('Failed to fetch'), UNCONFIRMED_MESSAGE)).toBe(
+      UNCONFIRMED_MESSAGE
+    );
+    expect(personRefusalWords('boom', UNCONFIRMED_MESSAGE)).toBe(UNCONFIRMED_MESSAGE);
+    expect(personRefusalWords(undefined, `${EMAIL_WORDS}. Nothing was changed.`)).toBe(
+      `${EMAIL_WORDS}. Nothing was changed.`
+    );
+  });
+
+  it('the writer shows the words: a taken e-mail on Add and on Edit, a role that is not active on Add and on Change role; the lists are read again each time', async () => {
+    const taken = () =>
+      refusal('JV_INVALID_INPUT', 422, `${EMAIL_WORDS}. Nothing was changed.`, { field: 'email' });
+    const off = () =>
+      refusal('JV_INVALID_INPUT', 422, `${ROLE_WORDS}. Nothing was changed.`, { field: 'role' });
+    for (const [call, build, cause, shown] of [
+      [
+        'superAddPerson',
+        () => newPersonChange({ full_name: 'M', email: 'm@x.co', role: 'zk-cashier' }, ROLES),
+        taken(),
+        EMAIL_TAKEN,
+      ],
+      [
+        'superEditPerson',
+        () => editPersonChange(MEENA, { full_name: 'Meena Shah', email: 'x@example.test' }, ME_ID),
+        taken(),
+        EMAIL_TAKEN,
+      ],
+      [
+        'superAddPerson',
+        () => newPersonChange({ full_name: 'M', email: 'm@x.co', role: 'zk-cashier' }, ROLES),
+        off(),
+        ROLE_SWITCHED_OFF,
+      ],
+      [
+        'superSetPersonRole',
+        () => rolePersonChange(MEENA, 'zk-cashier', ROLES),
+        off(),
+        ROLE_SWITCHED_OFF,
+      ],
+    ] as const) {
+      const { writes, reload } = fakeWrites();
+      (writes[call] as ReturnType<typeof vi.fn>).mockRejectedValueOnce(cause);
+      const outcome = await runChange(writes as unknown as PeopleWrites, reload, build(), PASSWORD);
+      expect(outcome, `${call}: ${shown}`).toEqual({ error: shown, temporary: null });
+      expect(reload, `${call}: ${shown}`).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("errorMap.ts and the client are untouched by the words: the same refusal of another call keeps the API's sentence", async () => {
+    // the generic words of a 422 on another call (errorMap.ts) are not these: the mapping is the writer's alone
+    const { plainMessage } = await import('@/lib/api/errorMap');
+    expect(
+      plainMessage('JV_INVALID_INPUT', {
+        write: true,
+        serverMessage: 'email is already used by another user',
+        details: { field: 'email' },
+        confirmsPassword: true,
+      })
+    ).toBe('email is already used by another user. Nothing was changed.');
+  });
+});
+
 // ================================================================================================ after a refusal the lists say what the API says now
 
 describe('Final review I2: what the lists show after a refusal (the real store, a stub of the API)', () => {
@@ -842,7 +1034,7 @@ describe('Final review I2: what the lists show after a refusal (the real store, 
       asked,
       PASSWORD
     );
-    expect(outcome.error).toMatch(/role is not an active role/);
+    expect(outcome.error).toBe(ROLE_SWITCHED_OFF);
     // what the form is given now: the role is gone, the others stay, and nobody was added
     expect(keysOf(store.state().roles)).toEqual(['owner', 'zk-keeper']);
     expect(store.state().people.map((one) => one.email)).toEqual([SIDDHI.email]);

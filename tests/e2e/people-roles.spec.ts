@@ -37,7 +37,8 @@ import { PHONE, expectNoSidewaysScroll, expectTappable } from './phone';
 //   8  P8: a role with no ticks: its person signs in and meets only the screens that everybody has, and no error line anywhere
 //   9  a phone, 375 x 812: People as cards, the dialogs, Roles, Edit role with its Save bar, and the page never scrolls sideways
 //  10  the Owner's Activity Log tells the Super Admin's changes in words
-//  11  a role switched off in another browser while the Add person form is open (final review of the website, I2): the refusal reads the lists again, the form no longer offers the role
+//  11  a role switched off in another browser while the Add person form is open (final review of the website, I2): the step says so in plain words, the refusal reads the lists again, the form
+//      no longer offers the role
 //
 // THE PASSWORD. The Super Admin's own password asks for itself again on every write (R9). It comes from `process.env` (through `e2eLogin`) and is typed into the field by the keyboard: Playwright
 // writes the text of `fill` and `type` into the log of a failed action, the keyboard it does not (`typeSecret`). A test never prints it, never compares it and never puts it in a title.
@@ -889,8 +890,8 @@ test.describe('a person added from the People tab', () => {
       []
     );
 
-    // the same e-mail again, in capitals (the form cannot tell that it is taken, the API can): refused on the password step, in the API's words with "Nothing was changed." after them; the
-    // step stays, Cancel brings the form back with what was typed, and nobody was added
+    // the same e-mail again, in capitals (the form cannot tell that it is taken, the API can): refused on the password step, in plain words (the API's own, "email is already used by another
+    // user. Nothing was changed.", read like a log line: Task 26 part 2); the step stays, Cancel brings the form back with what was typed, and nobody was added
     await page.getByTestId('add-person').click();
     const again = page.getByTestId('add-person-dialog');
     await again.getByTestId('add-person-name').fill(`Another ${RUN}`);
@@ -901,7 +902,7 @@ test.describe('a person added from the People tab', () => {
     await expect(step).toBeVisible();
     await confirmWithPassword(page, superAdmin.password);
     await expect(step.getByTestId('confirm-password-error')).toHaveText(
-      /already used by another user\. Nothing was changed\.$/
+      'Another person already has this e-mail.'
     );
     await expect(step).toBeVisible();
     await step.getByTestId('confirm-password-cancel').click();
@@ -1473,9 +1474,9 @@ test.describe('a role switched off in another browser while the Add person form 
       superCalls.length = 0;
       await confirmWithPassword(second.page, superAdmin.password);
 
-      // refused, in the API's words (Task 26 part 2 found them stiff; they are mapped in the next commit of the final wave): the step stays, and nobody was added
+      // refused, in plain words (the API's own, "role is not an active role. Nothing was changed.", read like a log line: Task 26 part 2): the step stays, and nobody was added
       await expect(step.getByTestId('confirm-password-error')).toHaveText(
-        /role is not an active role\. Nothing was changed\.$/
+        'That role is switched off. Choose another role.'
       );
       await expect(step).toBeVisible();
       expect(

@@ -11,7 +11,7 @@
 //     person who was just made) must not be lost behind it;
 //   - `readRoleAgain` is for the Reload of the Edit role screen (Task 24b): it reads the one role itself and says when it could not.
 import { isApiError, type ApiClient } from '@/lib/api/client';
-import { UNCONFIRMED_MESSAGE } from '@/lib/api/errorMap';
+import { NOTHING_CHANGED, UNCONFIRMED_MESSAGE } from '@/lib/api/errorMap';
 import type { SuperRole } from '@/lib/api/types';
 
 export interface Failure {
@@ -32,6 +32,18 @@ export function isPasswordRefusal(cause: unknown): boolean {
     ((cause.code === 'JV_INVALID_INPUT' && cause.details.field === 'password') ||
       cause.code === 'JV_RATE_LIMITED')
   );
+}
+
+/**
+ * The API's own part of a refusal sentence, as the client made it: without the closing " Nothing was changed." that the client adds to a refusal of a write, and without the final full stop.
+ * The words that map a sentence (`roleRefusalWords`, `personRefusalWords`) look at how this part ENDS, so that a sentence that merely contains their words is left alone.
+ */
+export function apiPartOf(sentence: string): string {
+  const said = sentence.trim();
+  const part = said.endsWith(NOTHING_CHANGED)
+    ? said.slice(0, said.length - NOTHING_CHANGED.length)
+    : said;
+  return part.trim().replace(/\.$/, '');
 }
 
 /** What a write that threw says, and whether the lists are read again (see the header). */

@@ -75,6 +75,10 @@ export const EMAIL_INVALID = 'Enter an e-mail address such as name@example.com.'
 export const ROLE_REQUIRED = 'Choose a role.';
 export const SAME_ROLE = 'This person already has that role. Choose a different one.';
 export const NOTHING_CHANGED_YET = 'Nothing has been changed yet.';
+/** What a taken e-mail says. It is the API's `email is already used by another user`, said as the rest of the screen speaks (final review of the website, Ruling AB (c)): the form cannot catch it, the database compares e-mails by its own collation. */
+export const EMAIL_TAKEN = 'Another person already has this e-mail.';
+/** What a role that is not active says: the API's `role is not an active role`, for a role that another browser switched off since the form was opened. */
+export const ROLE_SWITCHED_OFF = 'That role is switched off. Choose another role.';
 
 /** An e-mail as the API keeps it: without the spaces around it, in lower case. */
 export function normalizeEmail(text: string): string {
