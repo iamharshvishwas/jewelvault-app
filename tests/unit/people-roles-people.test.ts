@@ -1037,6 +1037,7 @@ describe('Task 23 the tab inside the screen', () => {
         people,
         roles: ROLES,
         reload: async () => undefined,
+        onBusy: noop,
       })
     );
   }

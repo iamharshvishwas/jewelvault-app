@@ -10,7 +10,9 @@ import RoleSteps from './RoleSteps';
 // "+ New role" and "Copy" (plan: access and roles, Task 24): a form with the role to start from, the name and what the role is for; then the password step. Copy is the same form with the role
 // of the row chosen to start from; the name is left empty (nothing is suggested). The new role gets the same ticks as the one it starts from; changing them is the Edit button, afterwards.
 //   - the roles to start from are all of them, the Owner and the switched-off ones too, by their names (`startFromChoices`), as the API takes a copy of any role;
-//   - the form checks what the API checks, so a mistake is shown here and not after the password was typed (`validateNewRole`);
+//   - the form checks what the API checks (a name of 1 to 40 characters with a letter or a number in it, a description of 200 at most) and whether another role has the name already, from the
+//     roles it holds, so a mistake is shown here and not after the password was typed (`validateNewRole`). The API stays the authority: it also ignores accents, and its own sentence is
+//     shown as it comes;
 //   - "Cancel" on the password step brings the form back with everything typed, so that a refusal of the API (a name that another role has) is mended on the form and not typed again.
 
 export default function NewRoleDialog({
@@ -46,7 +48,7 @@ export default function NewRoleDialog({
   const submit = () => {
     // a role that is not listed any more is no choice
     const from = choices.some((r) => r.key === values.copy_of) ? values.copy_of : '';
-    const found = validateNewRole({ ...values, copy_of: from });
+    const found = validateNewRole({ ...values, copy_of: from }, roles);
     setErrors(found);
     if (Object.keys(found).length === 0)
       setChange(newRoleChange({ ...values, copy_of: from }, roles));
@@ -71,6 +73,7 @@ export default function NewRoleDialog({
         value={values.copy_of}
         onChange={set('copy_of')}
         error={errors.copy_of}
+        required
       />
       <TextField
         label="Name"
@@ -80,6 +83,7 @@ export default function NewRoleDialog({
         onChange={set('name')}
         error={errors.name}
         maxLength={40}
+        required
       />
       <TextAreaField
         label="Description (optional)"
@@ -88,6 +92,7 @@ export default function NewRoleDialog({
         onChange={set('description')}
         error={errors.description}
         maxLength={200}
+        required={false}
       />
     </FormDialog>
   );

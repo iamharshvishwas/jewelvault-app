@@ -6,8 +6,9 @@ import { X } from 'lucide-react';
 // with the fields of the form in it. Nothing is saved here: the button goes on to the password step, which says so under the fields.
 //   - Escape closes it, anywhere on the page (the same as ConfirmPasswordDialog). The caller shows this INSTEAD of the password step, never together with it, so the two never listen
 //     for Escape at the same time;
-//   - the cursor is in the first field that is still empty when it opens, or in the first field when none is (`firstToFill`): "Copy" opens New role with the role to start from already
-//     chosen, and letters typed into a drop-down list would change its choice instead of going into the name.
+//   - the cursor is in the first REQUIRED field that is still empty when it opens, or in the first field when none is (`firstToFill`): "Copy" opens New role with the role to start from
+//     already chosen, and letters typed into a drop-down list would change its choice instead of going into the name; and after "Cancel" on the password step the form is back with all
+//     it needs filled in, where an empty optional field (the description) must not take the cursor. Which fields are required is what the fields say (`aria-required`, see FormFields).
 
 export interface FormDialogProps {
   /** Prefix of the test ids: `add-person` gives `add-person-dialog`. */
@@ -25,9 +26,15 @@ export interface FormDialogProps {
 
 const PASSWORD_NEXT = 'Next, you will be asked for your password.';
 
-/** Which control gets the cursor when a form opens, given the values the controls hold now: the first one that is empty, else the first one. */
-export function firstToFill(values: readonly string[]): number {
-  const empty = values.findIndex((value) => value === '');
+/**
+ * Which control gets the cursor when a form opens, given the values the controls hold now and which of them are required: the first required one that is empty, else the first one.
+ * Without the marks every control counts as required.
+ */
+export function firstToFill(
+  values: readonly string[],
+  required: readonly boolean[] = values.map(() => true)
+): number {
+  const empty = values.findIndex((value, place) => value === '' && required[place] !== false);
   return empty === -1 ? 0 : empty;
 }
 
@@ -49,7 +56,12 @@ export default function FormDialog({
         'input, select, textarea'
       ) ?? []
     );
-    controls[firstToFill(controls.map((control) => control.value))]?.focus();
+    controls[
+      firstToFill(
+        controls.map((control) => control.value),
+        controls.map((control) => control.getAttribute('aria-required') === 'true')
+      )
+    ]?.focus();
   }, []);
 
   useEffect(() => {

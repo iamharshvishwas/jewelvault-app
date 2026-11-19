@@ -14,6 +14,9 @@ import path from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import AddPersonDialog from '@/app/people-roles/components/AddPersonDialog';
+import ChangeRoleDialog from '@/app/people-roles/components/ChangeRoleDialog';
+import EditPersonDialog from '@/app/people-roles/components/EditPersonDialog';
 import { firstToFill } from '@/app/people-roles/components/FormDialog';
 import NewRoleDialog from '@/app/people-roles/components/NewRoleDialog';
 import { PeopleRolesView } from '@/app/people-roles/components/PeopleRolesClient';
@@ -46,6 +49,7 @@ import { ApiError } from '@/lib/api/client';
 import { ROLE_CHANGED_MESSAGE, UNCONFIRMED_MESSAGE } from '@/lib/api/errorMap';
 import type {
   SuperCreateRoleBody,
+  SuperPerson,
   SuperRole,
   SuperRoleActiveBody,
   SuperRoleAnswer,
@@ -1056,6 +1060,154 @@ describe('Task 24 no opener can replace the dialog that is open', () => {
 
   it('Edit does not go to the editor while a dialog is open: the call sits under a check that nothing is open', () => {
     expect(conditionsAround('RolesTab.tsx', 'onEdit')).toEqual([['open === null']]);
+  });
+});
+
+// ================================================================================================ the Task 24 review (Task 25, Part A)
+
+describe('Task 25 review: validateNewRole checks the name as far as the screen can know', () => {
+  const errorFor = (name: string, roles?: readonly SuperRole[]) =>
+    validateNewRole({ copy_of: 'zk-biller', name }, roles).name;
+
+  it('a name needs a letter or a number: dashes, dots and other marks alone are refused in plain words, before any password is asked', () => {
+    for (const name of ['---', '···', '- . -', '()', '_ _', '***', '—'])
+      expect(errorFor(name), name).toBe('Name needs a letter or a number.');
+    expect(validateNewRole({ copy_of: 'zk-biller', name: '---' })).toEqual({
+      name: 'Name needs a letter or a number.',
+    });
+  });
+
+  it('one letter or number is enough, in any script, with marks around it', () => {
+    for (const name of ['A', '7', 'A-1', '--a--', 'Ñandú', 'रोकड़िया', '日本語', '٣'])
+      expect(errorFor(name), name).toBeUndefined();
+  });
+
+  it('an empty name is "required", a long one is "too long": the letter rule does not add a second message', () => {
+    expect(errorFor('   ')).toBe('Name is required.');
+    expect(errorFor('-'.repeat(41))).toBe('Name is 40 characters at most.');
+    expect(errorFor('-'.repeat(40))).toBe('Name needs a letter or a number.');
+  });
+
+  it('a name that another role already has is refused: capitals, and spaces around and inside it, make no other name', () => {
+    for (const name of [
+      'Cashier',
+      'cashier',
+      'CASHIER',
+      '  Cashier  ',
+      'Stock   keeper',
+      'stock keeper',
+      ' sTOCK \t keeper ',
+    ])
+      expect(errorFor(name, ROLES), name).toBe('Another role already has this name.');
+  });
+
+  it('both sides are compared the same way: a role whose name was kept with extra spaces or capitals is the name it reads as', () => {
+    const odd = [role({ key: 'zk-odd', name: '  Night   SHIFT ' })];
+    expect(errorFor('night shift', odd)).toBe('Another role already has this name.');
+    expect(errorFor('Night Shift 2', odd)).toBeUndefined();
+  });
+
+  it('the Owner and the roles that are switched off count too: the API keeps one name for every row it has', () => {
+    expect(errorFor('owner', ROLES)).toBe('Another role already has this name.');
+    expect(errorFor('Old Role', ROLES)).toBe('Another role already has this name.');
+  });
+
+  it('a name that only looks like another is not refused here: the API (which also ignores accents) is the one that decides', () => {
+    expect(errorFor('Cashiers', ROLES)).toBeUndefined();
+    expect(errorFor('Cáshier', ROLES)).toBeUndefined();
+    expect(errorFor('Stock Keeper 2', ROLES)).toBeUndefined();
+  });
+
+  it('without the roles (no second argument, or none held) nothing is compared', () => {
+    expect(errorFor('Cashier')).toBeUndefined();
+    expect(errorFor('Cashier', [])).toBeUndefined();
+  });
+
+  it('the roles are not changed by the check', () => {
+    const before = JSON.stringify(ROLES);
+    validateNewRole({ copy_of: 'zk-biller', name: 'Cashier' }, ROLES);
+    expect(JSON.stringify(ROLES)).toBe(before);
+  });
+
+  it('the other fields are checked as before when the roles are given', () => {
+    expect(validateNewRole({ copy_of: '', name: 'Fresh' }, ROLES)).toEqual({
+      copy_of: 'Choose a role to start from.',
+    });
+    expect(
+      validateNewRole({ copy_of: 'zk-biller', name: 'Fresh', description: 'a'.repeat(201) }, ROLES)
+    ).toEqual({ description: 'Description is 200 characters at most.' });
+  });
+
+  it('the New role form hands the roles it holds to the check', () => {
+    expect(callsOf('NewRoleDialog.tsx', 'validateNewRole')).toEqual([
+      ['{ ...values, copy_of: from }', 'roles'],
+    ]);
+  });
+});
+
+describe('Task 25 review: the cursor goes to the first empty REQUIRED field', () => {
+  it('firstToFill: an empty optional field does not take the cursor from the required ones', () => {
+    // New role after Cancel on the password step: the role to start from and the name are filled, the description is empty
+    expect(firstToFill(['1', 'Cashier', ''], [true, true, false])).toBe(0);
+    expect(firstToFill(['1', '', ''], [true, true, false])).toBe(1); // Copy: the name is next
+    expect(firstToFill(['', '', ''], [true, true, false])).toBe(0); // + New role
+    expect(firstToFill(['1', 'Cashier', 'Makes bills'], [true, true, false])).toBe(0);
+    expect(firstToFill(['1', '', ''], [true, false, true])).toBe(2);
+    expect(firstToFill(['', 'x'], [false, true])).toBe(0); // nothing required is empty: the first control
+  });
+
+  it('with no marks given every control counts as required, as before', () => {
+    expect(firstToFill(['1', '', ''])).toBe(1);
+    expect(firstToFill(['1', 'Cashier', ''])).toBe(2);
+    expect(firstToFill(['1', 'Cashier'])).toBe(0);
+  });
+
+  const SOMEONE: SuperPerson = {
+    id: '00000000-0000-4000-8000-000000000001',
+    full_name: 'Meena Shah',
+    email: 'meena@example.test',
+    role: 'zk-cashier',
+    role_name: 'Cashier',
+    active: true,
+    is_super_admin: false,
+    last_login_at: null,
+    updated_at: STAMP,
+  };
+  const required = (html: string, testId: string) =>
+    /aria-required="true"/.test(
+      html.match(new RegExp(`<(?:input|select|textarea)[^>]*data-testid="${testId}"[^>]*>`))?.[0] ??
+        ''
+    );
+
+  it('the New role form marks the role to start from and the name as required, and the description as not', () => {
+    const html = draw(NewRoleDialog, { roles: ROLES, copyOf: '', reload, onClose: noop });
+    expect(required(html, 'new-role-from')).toBe(true);
+    expect(required(html, 'new-role-name')).toBe(true);
+    expect(required(html, 'new-role-description')).toBe(false);
+  });
+
+  it('the forms of the People tab mark all their fields as required', () => {
+    const add = draw(AddPersonDialog, { roles: ROLES, reload, onClose: noop });
+    for (const id of ['add-person-name', 'add-person-email', 'add-person-role'])
+      expect(required(add, id), id).toBe(true);
+    const edit = draw(EditPersonDialog, {
+      person: SOMEONE,
+      meId: 'someone-else',
+      reload,
+      onClose: noop,
+    });
+    for (const id of ['edit-person-name', 'edit-person-email'])
+      expect(required(edit, id), id).toBe(true);
+    const change = draw(ChangeRoleDialog, { person: SOMEONE, roles: ROLES, reload, onClose: noop });
+    expect(required(change, 'change-role-role')).toBe(true);
+  });
+
+  it('the frame of the forms gives firstToFill the values and the marks of its controls', () => {
+    const calls = callsOf('FormDialog.tsx', 'firstToFill');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toHaveLength(2);
+    expect(calls[0][0]).toContain('control.value');
+    expect(calls[0][1]).toContain('aria-required');
   });
 });
 

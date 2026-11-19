@@ -13,6 +13,9 @@ import RolesTab from './RolesTab';
 // a read failed. The bodies of the tabs are given what has been loaded as props, and call `reload` after each write: the People tab is Task 23 (`PeopleTab`), the Roles tab is
 // Task 24 (`RolesTab`; its Edit button is wired to the editor by Task 25). The route gate (AppLayout) opens the screen for the Super Admin alone (`superAdmin` in SCREENS of
 // src/lib/access.ts); the check here keeps the screen from reading anything for a person it is not for.
+//   - only one tab body is drawn, so changing tabs unmounts the other one and what it held is gone. A body that holds something that must not be lost (a dialog is open: a temporary
+//     password that is shown once, a form that was filled; or, for the editor, edits that are not saved) says so with `onBusy`, and the shell locks the tab strip meanwhile: the tab
+//     buttons are disabled and a press on one leads nowhere (`nextTab`). Nothing traps the keyboard behind an overlay, so a press with the keyboard is possible and must not do harm.
 
 export type PeopleRolesTab = 'people' | 'roles';
 
@@ -28,20 +31,40 @@ export interface TabBodyProps {
   roles: SuperRole[];
   /** Reads the people and the roles again: called after every write. */
   reload: () => Promise<void>;
+  /**
+   * Tells the shell whether the body is busy: it holds something that a change of tab would lose. A body calls it with `true` while it has a dialog open (or unsaved edits), with
+   * `false` otherwise, and with `false` when it goes away.
+   */
+  onBusy: (busy: boolean) => void;
+}
+
+/** Which tab a press on a tab button leads to: the one asked for, unless a body is busy, then the one the screen is on. */
+export function nextTab(
+  current: PeopleRolesTab,
+  requested: PeopleRolesTab,
+  busy: boolean
+): PeopleRolesTab {
+  return busy ? current : requested;
 }
 
 // TODO(task-25): open the editor
 const openEditor = () => undefined;
 
-/** The screen as the store holds it now (drawn from the view it is given: the container below gives it the store's). */
+const ignore = () => undefined;
+
+/** The screen as the store holds it now (drawn from the view it is given: the container below gives it the store's). `busy` is what the bodies last said with `onBusy`. */
 export function PeopleRolesView({
   view,
   tab,
   onTab,
+  busy = false,
+  onBusy = ignore,
 }: {
   view: SuperView;
   tab: PeopleRolesTab;
   onTab: (tab: PeopleRolesTab) => void;
+  busy?: boolean;
+  onBusy?: (busy: boolean) => void;
 }) {
   const { status, error, ticks, people, roles, reload } = view;
   return (
@@ -96,9 +119,11 @@ export function PeopleRolesView({
                 id={`people-roles-tab-${id}`}
                 aria-selected={tab === id}
                 aria-controls="people-roles-panel"
+                disabled={busy}
+                aria-disabled={busy ? true : undefined}
                 onClick={() => onTab(id)}
-                className={`px-4 py-3 text-sm transition-colors whitespace-nowrap ${
-                  tab === id ? 'tab-active' : 'tab-inactive'
+                className={`px-4 py-3 text-sm transition-colors whitespace-nowrap disabled:cursor-not-allowed ${
+                  tab === id ? 'tab-active' : busy ? 'tab-inactive opacity-50' : 'tab-inactive'
                 }`}
               >
                 {label}
@@ -112,13 +137,20 @@ export function PeopleRolesView({
             className="pt-4"
           >
             {tab === 'people' ? (
-              <PeopleTab ticks={ticks} people={people} roles={roles} reload={reload} />
+              <PeopleTab
+                ticks={ticks}
+                people={people}
+                roles={roles}
+                reload={reload}
+                onBusy={onBusy}
+              />
             ) : (
               <RolesTab
                 ticks={ticks}
                 people={people}
                 roles={roles}
                 reload={reload}
+                onBusy={onBusy}
                 onEdit={openEditor}
               />
             )}
@@ -132,7 +164,16 @@ export function PeopleRolesView({
 function PeopleRolesScreen() {
   const view = useSuper();
   const [tab, setTab] = useState<PeopleRolesTab>('people');
-  return <PeopleRolesView view={view} tab={tab} onTab={setTab} />;
+  const [busy, setBusy] = useState(false);
+  return (
+    <PeopleRolesView
+      view={view}
+      tab={tab}
+      onTab={(requested) => setTab((current) => nextTab(current, requested, busy))}
+      busy={busy}
+      onBusy={setBusy}
+    />
+  );
 }
 
 export default function PeopleRolesClient() {

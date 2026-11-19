@@ -60,6 +60,7 @@ export default function AddPersonDialog({
         onChange={set('full_name')}
         error={errors.full_name}
         maxLength={120}
+        required
       />
       <TextField
         label="E-mail"
@@ -70,6 +71,7 @@ export default function AddPersonDialog({
         onChange={set('email')}
         error={errors.email}
         maxLength={254}
+        required
       />
       <RoleSelect
         label="Role"
@@ -78,6 +80,7 @@ export default function AddPersonDialog({
         value={values.role}
         onChange={set('role')}
         error={errors.role}
+        required
       />
     </FormDialog>
   );

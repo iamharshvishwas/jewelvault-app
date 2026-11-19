@@ -1,5 +1,5 @@
 'use client';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import type { SuperRole } from '@/lib/api/types';
 import { openIfFree } from '../lib/personFlow';
 import { ROLES_NOTE, dialogFor, type RoleAction, type RolesDialog } from '../lib/roles';
@@ -14,7 +14,8 @@ import SwitchRoleDialog from './SwitchRoleDialog';
 //   - Edit opens no dialog: it goes to the screen of the role, which the shell opens (`onEdit`, Task 25);
 //   - the button is drawn at the top of the panel, under the tabs, like "+ Add person": the heading and the tabs belong to the shell;
 //   - an open dialog is never replaced, and nothing goes to the editor from behind one: nothing traps the keyboard behind the overlay, so a button of the list can be pressed while a
-//     dialog is up. Both openers go through `openIfFree` (which keeps what is open), and Edit does nothing while a dialog is open.
+//     dialog is up. Both openers go through `openIfFree` (which keeps what is open), and Edit does nothing while a dialog is open;
+//   - the tab is busy while a dialog is open (`onBusy`): the shell locks its tab strip meanwhile.
 
 export interface RolesTabViewProps {
   roles: SuperRole[];
@@ -67,6 +68,7 @@ export default function RolesTab({
   ticks,
   roles,
   reload,
+  onBusy,
   onEdit,
 }: TabBodyProps & {
   /** Opens the screen of a role (the Edit button). */
@@ -74,6 +76,11 @@ export default function RolesTab({
 }) {
   const [open, setOpen] = useState<RolesDialog | null>(null);
   const close = useCallback(() => setOpen(null), []);
+  const busy = open !== null;
+  useEffect(() => {
+    onBusy(busy);
+    return () => onBusy(false);
+  }, [busy, onBusy]);
   const onAction = (action: RoleAction, role: SuperRole) => {
     const next = dialogFor(action, role);
     if (next !== null) setOpen((now) => openIfFree(now, next));

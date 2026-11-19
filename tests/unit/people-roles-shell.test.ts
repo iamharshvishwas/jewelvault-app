@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import ConfirmPasswordDialog from '@/app/people-roles/components/ConfirmPasswordDialog';
 import {
   PeopleRolesView,
+  nextTab,
   type PeopleRolesTab,
 } from '@/app/people-roles/components/PeopleRolesClient';
 import {
@@ -37,6 +38,7 @@ import type {
 } from '@/lib/api/types';
 import { PLAN_TICKS, sessionFor, type RoleSpec } from './support/access';
 import { leaksOf, sourcesUnder } from './support/leaks';
+import { callsOf, declarationsOf, effectsCalling, elementsOf } from './support/screen';
 
 const STAMP = '2026-11-19T07:41:12.123456Z';
 
@@ -445,6 +447,123 @@ describe('Task 22 the shell: People & Roles', () => {
     expect(html).not.toContain('people-roles-loading');
     expect(html).not.toMatch(/role="alert"/);
     expect(html).not.toContain('Try again');
+  });
+});
+
+// ================================================================================================ the tab strip is locked while a body is busy (Task 24 review, Task 25 Part A)
+
+// The shell draws one tab body only. A keyboard user can Shift+Tab from behind a dialog to the tab buttons and press Enter: the body that holds the dialog would unmount, and what it held
+// (a temporary password that is shown once, a form that was filled, edits that are not saved) would be gone. So a body says when it is busy (`onBusy`) and the shell locks the strip.
+describe('Task 25 review: nextTab decides where a press on a tab goes', () => {
+  it('a screen that is free goes to the tab that was asked for, the same one too', () => {
+    expect(nextTab('people', 'roles', false)).toBe('roles');
+    expect(nextTab('roles', 'people', false)).toBe('people');
+    expect(nextTab('people', 'people', false)).toBe('people');
+  });
+
+  it('a screen that is busy stays where it is, whatever was asked for', () => {
+    expect(nextTab('people', 'roles', true)).toBe('people');
+    expect(nextTab('roles', 'people', true)).toBe('roles');
+    expect(nextTab('roles', 'roles', true)).toBe('roles');
+  });
+});
+
+describe('Task 25 review: the tab buttons while a body is busy', () => {
+  const drawBusy = (busy: boolean, tab: PeopleRolesTab = 'people') =>
+    renderToStaticMarkup(
+      createElement(PeopleRolesView, {
+        view: view(),
+        tab,
+        onTab: () => undefined,
+        busy,
+        onBusy: () => undefined,
+      })
+    );
+
+  it('are disabled, and say so to a screen reader, while a body is busy', () => {
+    for (const tab of ['people', 'roles'] as const)
+      for (const button of tabButtons(drawBusy(true, tab))) {
+        expect(button).toMatch(/\sdisabled=""/);
+        expect(button).toMatch(/aria-disabled="true"/);
+      }
+  });
+
+  it('are not disabled when nothing is busy, and say nothing about it', () => {
+    const buttons = tabButtons(drawBusy(false));
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons) {
+      expect(button).not.toMatch(/\sdisabled=""/);
+      expect(button).not.toContain('aria-disabled');
+    }
+  });
+
+  it('the screen is not busy until a body says so (the old way to draw it)', () => {
+    for (const button of tabButtons(drawView(view()))) {
+      expect(button).not.toMatch(/\sdisabled=""/);
+      expect(button).not.toContain('aria-disabled');
+    }
+  });
+
+  it('busy changes nothing else: the same tab is chosen and the same panel is drawn', () => {
+    const free = drawBusy(false, 'roles');
+    const busy = drawBusy(true, 'roles');
+    expect(busy).toContain('data-testid="roles-tab"');
+    expect(tabButtons(busy)[1]).toMatch(/aria-selected="true"/);
+    expect(tabButtons(busy)[0]).toMatch(/aria-selected="false"/);
+    // the same markup but for the attributes of the buttons and the dimming of the tab that is not the one open (the rest of the page has buttons that are disabled for their own reasons)
+    const plainer = (html: string) =>
+      html
+        .replace(/\sdisabled=""/g, '')
+        .replace(/\saria-disabled="true"/g, '')
+        .replace(/\sopacity-50/g, '');
+    expect(plainer(busy)).toBe(plainer(free));
+  });
+});
+
+describe('Task 25 review: the bodies tell the shell when they are busy', () => {
+  it.each(['PeopleTab.tsx', 'RolesTab.tsx'])(
+    '%s calls onBusy from one effect, with the state of the dialog, and says "not busy" when it goes away',
+    (file) => {
+      const effects = effectsCalling(file, 'onBusy');
+      expect(effects, file).toHaveLength(1);
+      expect(effects[0].calls, file).toEqual([['busy']]);
+      expect(effects[0].cleanup, file).toEqual([['false']]);
+      expect(effects[0].deps, file).toBe('[busy, onBusy]');
+    }
+  );
+
+  it.each(['PeopleTab.tsx', 'RolesTab.tsx'])(
+    '%s is busy exactly while a dialog is open (open !== null)',
+    (file) => {
+      expect(declarationsOf(file, 'busy'), file).toEqual(['open !== null']);
+    }
+  );
+
+  it('no other call of onBusy hides in either body: the effect is the only way it speaks', () => {
+    expect(callsOf('PeopleTab.tsx', 'onBusy')).toHaveLength(2);
+    expect(callsOf('RolesTab.tsx', 'onBusy')).toHaveLength(2);
+  });
+
+  it('the shell keeps busy in state, gives onBusy to both bodies, and takes every press on a tab through nextTab', () => {
+    for (const body of ['PeopleTab', 'RolesTab']) {
+      const used = elementsOf('PeopleRolesClient.tsx', body);
+      expect(used, body).toHaveLength(1);
+      expect(used[0].onBusy, body).toBe('onBusy');
+    }
+    expect(callsOf('PeopleRolesClient.tsx', 'nextTab')).toEqual([['current', 'requested', 'busy']]);
+    const screen = elementsOf('PeopleRolesClient.tsx', 'PeopleRolesView');
+    expect(screen).toHaveLength(1);
+    expect(screen[0].busy).toBe('busy');
+    expect(screen[0].onBusy).toBe('setBusy');
+  });
+
+  it('the strip is the only thing the shell locks: the tab buttons carry disabled and aria-disabled from busy', () => {
+    const buttons = elementsOf('PeopleRolesClient.tsx', 'button').filter((attributes) =>
+      attributes.id?.startsWith('`people-roles-tab-')
+    );
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].disabled).toBe('busy');
+    expect(buttons[0]['aria-disabled']).toBe('busy ? true : undefined');
   });
 });
 

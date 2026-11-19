@@ -63,6 +63,7 @@ export default function ChangeRoleDialog({
           setErrors({});
         }}
         error={errors.role}
+        required
       />
     </FormDialog>
   );

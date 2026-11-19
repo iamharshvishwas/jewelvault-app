@@ -5,7 +5,9 @@ import type { SuperRole } from '@/lib/api/types';
 // The fields of the forms before the password step (plan: access and roles, Task 23): a label, the control, and the sentence that says what is wrong with it. The look is the one of the
 // password field of ConfirmPasswordDialog.
 //   - what a phone does with capital letters is chosen for each field (`capitalize`): a name starts with a capital letter ("words"), an e-mail or a code never does ("none"). The prop has
-//     no default, so that a new field has to say which it is.
+//     no default, so that a new field has to say which it is;
+//   - whether a field must be filled is said for each field too (`required`, no default): it is drawn as `aria-required`, which is also what tells the frame of a form (`firstToFill`) where
+//     the cursor goes. The forms are not checked by the browser (they are `noValidate`): the sentences of the screen say what is missing.
 
 const LABEL = 'text-xs font-semibold text-foreground block';
 
@@ -27,6 +29,7 @@ export function TextField({
   type = 'text',
   maxLength,
   capitalize,
+  required,
 }: {
   label: string;
   value: string;
@@ -37,6 +40,8 @@ export function TextField({
   maxLength?: number;
   /** What a phone's keyboard does with capital letters: "words" for a name, "none" for an e-mail or a code. */
   capitalize: 'words' | 'none';
+  /** Whether the field must be filled in. */
+  required: boolean;
 }) {
   const errorId = useId();
   return (
@@ -52,6 +57,7 @@ export function TextField({
           autoComplete="off"
           autoCapitalize={capitalize}
           spellCheck={false}
+          aria-required={required ? true : undefined}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? errorId : undefined}
           className="input-field text-sm mt-1.5 font-normal"
@@ -70,6 +76,7 @@ export function TextAreaField({
   error,
   testId,
   maxLength,
+  required,
 }: {
   label: string;
   value: string;
@@ -77,6 +84,8 @@ export function TextAreaField({
   error?: string;
   testId: string;
   maxLength?: number;
+  /** Whether the field must be filled in. */
+  required: boolean;
 }) {
   const errorId = useId();
   return (
@@ -91,6 +100,7 @@ export function TextAreaField({
           rows={3}
           autoComplete="off"
           autoCapitalize="sentences"
+          aria-required={required ? true : undefined}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? errorId : undefined}
           className="input-field text-sm mt-1.5 font-normal min-h-20"
@@ -112,6 +122,7 @@ export function RoleSelect({
   onChange,
   error,
   testId,
+  required,
 }: {
   label: string;
   choices: readonly SuperRole[];
@@ -120,6 +131,8 @@ export function RoleSelect({
   onChange: (key: string) => void;
   error?: string;
   testId: string;
+  /** Whether a role must be chosen. */
+  required: boolean;
 }) {
   const errorId = useId();
   const chosen = choices.findIndex((r) => r.key === value);
@@ -134,6 +147,7 @@ export function RoleSelect({
             const place = Number(event.target.value);
             onChange(event.target.value === '' ? '' : (choices[place]?.key ?? ''));
           }}
+          aria-required={required ? true : undefined}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? errorId : undefined}
           className="input-field text-sm mt-1.5 font-normal"

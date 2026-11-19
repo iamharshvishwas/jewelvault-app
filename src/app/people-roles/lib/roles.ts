@@ -4,9 +4,10 @@
 //     copied), which is done from "+ New role";
 //   - every other role has Edit, Copy and one button that switches it off or on. Switching OFF is allowed when nobody holds the role (guardrail 4; `people` counts the ACTIVE logins on it):
 //     the button is then disabled and the row says why, in words. Switching ON is always allowed;
-//   - the checks of the New role form are the ones the API makes (API Task 13, `cleanRoleName`: a name is trimmed, white space inside it is folded, and it is 1 to 40 characters; a
-//     description is 200 at most), so that a mistake is shown on the form and not after the password was typed. A name that another role has already is only known to the API: its own
-//     sentence is shown as it comes.
+//   - the checks of the New role form are the ones the API makes (API Task 13, `cleanRoleName`: a name is trimmed, white space inside it is folded, it is 1 to 40 characters and has a letter
+//     or a number in it; a description is 200 at most), so that a mistake is shown on the form and not after the password was typed. The form also asks whether another role has the name
+//     already, from the roles the screen holds (capitals and spaces do not make another name). The API stays the authority: it also ignores accents, so a name that only differs in
+//     an accent is refused by the API after the password step, and its own sentence is shown as it comes.
 import type { SuperRole } from '@/lib/api/types';
 
 export type RoleAction = 'edit' | 'copy' | 'switch';
@@ -75,6 +76,8 @@ const DESCRIPTION_MAX = 200;
 export const COPY_OF_REQUIRED = 'Choose a role to start from.';
 export const NAME_REQUIRED = 'Name is required.';
 export const NAME_TOO_LONG = `Name is ${NAME_MAX} characters at most.`;
+export const NAME_NEEDS_LETTER = 'Name needs a letter or a number.';
+export const NAME_TAKEN = 'Another role already has this name.';
 export const DESCRIPTION_TOO_LONG = `Description is ${DESCRIPTION_MAX} characters at most.`;
 
 /** A name as the API keeps it: without the spaces around it, and with white space inside it folded into one space. */
@@ -82,19 +85,37 @@ export function cleanRoleName(text: string): string {
   return text.trim().replace(/\s+/g, ' ');
 }
 
-/** The mistakes of the New role form, by field (`copy_of`, `name`, `description`); an empty record when it is complete. */
-export function validateNewRole(v: {
-  copy_of: string;
-  name: string;
-  description?: string;
-}): Record<string, string> {
+/** How roles are told apart in a list: the name without the spaces around it, white space folded, capitals ignored (the API's collation also ignores accents; it decides). */
+function nameKey(text: string): string {
+  return cleanRoleName(text).toLowerCase();
+}
+
+/**
+ * The mistakes of the name and the description of a role, by field (`name`, `description`); an empty record when both are fine. `others` are the roles whose names are taken (every
+ * role the screen holds but the one being edited). Used by the New role form and by the Edit role screen, so that both say the same.
+ */
+export function validateRoleText(
+  v: { name: string; description?: string },
+  others: readonly SuperRole[] = []
+): Record<string, string> {
   const errors: Record<string, string> = {};
-  if (v.copy_of.trim() === '') errors.copy_of = COPY_OF_REQUIRED;
   const name = cleanRoleName(v.name);
   if (name === '') errors.name = NAME_REQUIRED;
   else if (name.length > NAME_MAX) errors.name = NAME_TOO_LONG;
+  else if (!/[\p{L}\p{N}]/u.test(name)) errors.name = NAME_NEEDS_LETTER;
+  else if (others.some((r) => nameKey(r.name) === nameKey(name))) errors.name = NAME_TAKEN;
   if ((v.description ?? '').trim().length > DESCRIPTION_MAX)
     errors.description = DESCRIPTION_TOO_LONG;
+  return errors;
+}
+
+/** The mistakes of the New role form, by field (`copy_of`, `name`, `description`); an empty record when it is complete. `roles` are the roles the screen holds: a name one of them has is refused. */
+export function validateNewRole(
+  v: { copy_of: string; name: string; description?: string },
+  roles: readonly SuperRole[] = []
+): Record<string, string> {
+  const errors = validateRoleText(v, roles);
+  if (v.copy_of.trim() === '') errors.copy_of = COPY_OF_REQUIRED;
   return errors;
 }
 

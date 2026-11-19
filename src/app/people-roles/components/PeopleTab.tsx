@@ -1,5 +1,5 @@
 'use client';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import type { SuperPerson, SuperRole } from '@/lib/api/types';
 import { useSession } from '@/lib/authStore';
 import type { PersonAction } from '../lib/people';
@@ -18,7 +18,8 @@ import SwitchPersonDialog from './SwitchPersonDialog';
 //   - the caller's own id comes from the signed-in session (`useSession`), the one place the screen reads who is signed in: her own row is the one that has Edit only (R12);
 //   - the button is drawn at the top of the panel, under the tabs: the heading and the tabs belong to the shell;
 //   - an open dialog is never replaced: nothing traps the keyboard behind the overlay, so a button of the list can be pressed while a dialog is up (and the temporary password is shown
-//     once). Both openers go through `openIfFree`, which keeps what is open.
+//     once). Both openers go through `openIfFree`, which keeps what is open;
+//   - the tab is busy while a dialog is open (`onBusy`): the shell locks its tab strip, as a press on the Roles tab would unmount this one and the temporary password would be gone.
 
 /** Which dialog is open: the add form, or the dialog of one button of one row. */
 type Open = { kind: 'add' } | { kind: PersonAction; person: SuperPerson };
@@ -90,11 +91,16 @@ function OpenDialog({
   }
 }
 
-export default function PeopleTab({ people, roles, reload }: TabBodyProps) {
+export default function PeopleTab({ people, roles, reload, onBusy }: TabBodyProps) {
   const { session } = useSession();
   const meId = session?.userId ?? '';
   const [open, setOpen] = useState<Open | null>(null);
   const close = useCallback(() => setOpen(null), []);
+  const busy = open !== null;
+  useEffect(() => {
+    onBusy(busy);
+    return () => onBusy(false);
+  }, [busy, onBusy]);
   return (
     <>
       <PeopleTabView

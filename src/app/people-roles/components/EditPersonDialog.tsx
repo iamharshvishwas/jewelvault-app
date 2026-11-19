@@ -72,6 +72,7 @@ export default function EditPersonDialog({
         onChange={set('full_name')}
         error={errors.full_name}
         maxLength={120}
+        required
       />
       <TextField
         label="E-mail"
@@ -82,6 +83,7 @@ export default function EditPersonDialog({
         onChange={set('email')}
         error={errors.email}
         maxLength={254}
+        required
       />
     </FormDialog>
   );
