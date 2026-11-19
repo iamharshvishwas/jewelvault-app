@@ -389,16 +389,8 @@ describe('T-E05 the catalogue and the settings answer from memory (C9)', () => {
     expect(s.tagTemplate).toMatchObject({ widthMm: 60, copiesPerSku: 2 });
     expect(s.materials).toEqual([{ name: 'Gold', purities: ['22K'] }]);
     expect(s.customFields).toHaveLength(1);
-    expect(s.users).toEqual([
-      {
-        id: uuid(901),
-        name: 'Asha Verma',
-        role: 'Owner',
-        canSeeOriginalWeight: true,
-        canEditStock: true,
-        active: true,
-      },
-    ]);
+    // the people are who a login is (the Activity Log names them): what a login may do is its role's ticks, never a guess made here
+    expect(s.users).toEqual([{ id: uuid(901), name: 'Asha Verma' }]);
   });
 
   it("a role that reads fewer settings keys (staff) gets the rest from the app's own labels, and still no sample rate", async () => {

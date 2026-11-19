@@ -24,7 +24,6 @@ import {
   CreditCard,
   Layers,
   SlidersHorizontal,
-  Shield,
   ShieldCheck,
   Hash,
   FileText,
@@ -205,12 +204,6 @@ const NAV_ITEMS: NavItem[] = [
         icon: <FileText size={15} />,
       },
       { id: 'nav-taxes', label: 'Taxes', href: '/settings?tab=taxes', icon: <Hash size={15} /> },
-      {
-        id: 'nav-users',
-        label: 'Users & Permissions',
-        href: '/settings?tab=users',
-        icon: <Shield size={15} />,
-      },
       {
         id: 'nav-numbering',
         label: 'Numbering',

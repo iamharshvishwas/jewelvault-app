@@ -18,7 +18,9 @@
 //   - a call that saves data tells, when it is over (it worked or it did not), whoever asked to hear it (`onWriteFinished`): the poller of WEB04 polls at once after any write
 //     the screen made (C4);
 //   - a photo goes up as the raw bytes of a file (`upload`, WEB06): the body is the Blob and `Content-Type` is its picture type, never JSON; the address of a photo to show is
-//     `photoUrl`, on the API's origin (P2, P3).
+//     `photoUrl`, on the API's origin (P2, P3);
+//   - the twelve calls of the Super Admin's People & Roles screen (`superTicks` to `superSetRoleActive`) are ordinary calls of this client: the nine writes carry her password again
+//     in the body (R9), never in an address or a header, and are refused in the words of `confirmsPassword` in errorMap.ts.
 //
 // The module keeps no state of its own besides the connection banner and the pricing check; the session itself (who is signed in) is authStore's (WEB02).
 import { NOTHING_WRITTEN, NOT_ACTIVE_MESSAGE, plainMessage, type MessageOptions } from './errorMap';
@@ -31,6 +33,22 @@ import {
   type OkResponse,
   type PollRequest,
   type PollResponse,
+  type SuperAddPersonBody,
+  type SuperCreateRoleBody,
+  type SuperEditPersonBody,
+  type SuperEditRoleBody,
+  type SuperNewPersonAnswer,
+  type SuperPeopleResponse,
+  type SuperPersonActiveBody,
+  type SuperPersonAnswer,
+  type SuperPersonRoleBody,
+  type SuperResetAnswer,
+  type SuperResetPasswordBody,
+  type SuperRoleActiveBody,
+  type SuperRoleAnswer,
+  type SuperRoleTicksBody,
+  type SuperRolesResponse,
+  type SuperTicksResponse,
   type SyncPage,
   type SyncResource,
   type SyncRows,
@@ -332,6 +350,8 @@ export interface RequestOptions {
   readOnly?: boolean;
   /** The call is a function of section 10 (X1 to X12 except X7): it carries an Idempotency-Key, made here once. */
   idempotent?: boolean;
+  /** The call is one of the Super Admin's People & Roles writes: its body carries her password again (R9), and a refusal of that has the words of errorMap.ts (`plainMessage`). */
+  confirmsPassword?: boolean;
   /** The key of an earlier try of the same user action (`error.idempotencyKey`): the retry by hand sends it again. Implies `idempotent`. */
   idempotencyKey?: string;
   /** What to read again if the outcome cannot be confirmed. */
@@ -492,6 +512,8 @@ export function createApiClient(config: ApiClientConfig = {}) {
           write,
           serverMessage: init.serverMessage,
           details: init.details,
+          confirmsPassword: options.confirmsPassword,
+          retryAfterS: init.retryAfterS,
         }),
         write,
         idempotencyKey: key,
@@ -671,6 +693,53 @@ export function createApiClient(config: ApiClientConfig = {}) {
     changePassword: (currentPassword: string, newPassword: string) =>
       request<LoginResponse>('POST', '/v1/auth/change-password', {
         body: { current_password: currentPassword, new_password: newPassword },
+      }),
+
+    // ---- the Super Admin's People & Roles calls (plan: access and roles, Tasks 12 to 14 and 22). Only her session passes the API's gate. The three reads change nothing. Each write
+    // carries her password in the body (R9) and says so with `confirmsPassword`; a role write names the `updated_at` it was made from, and is refused as stale when it is old.
+    // An id or a key is one part of the address (`encodeURIComponent`), so it cannot lead to another route.
+    superTicks: () => request<SuperTicksResponse>('GET', '/v1/super/ticks'),
+    superPeople: () => request<SuperPeopleResponse>('GET', '/v1/super/people'),
+    superRoles: () => request<SuperRolesResponse>('GET', '/v1/super/roles'),
+    superAddPerson: (body: SuperAddPersonBody) =>
+      request<SuperNewPersonAnswer>('POST', '/v1/super/people', { body, confirmsPassword: true }),
+    superEditPerson: (id: string, body: SuperEditPersonBody) =>
+      request<SuperPersonAnswer>('PATCH', `/v1/super/people/${encodeURIComponent(id)}`, {
+        body,
+        confirmsPassword: true,
+      }),
+    superSetPersonRole: (id: string, body: SuperPersonRoleBody) =>
+      request<SuperPersonAnswer>('POST', `/v1/super/people/${encodeURIComponent(id)}/role`, {
+        body,
+        confirmsPassword: true,
+      }),
+    superSetPersonActive: (id: string, body: SuperPersonActiveBody) =>
+      request<SuperPersonAnswer>('POST', `/v1/super/people/${encodeURIComponent(id)}/active`, {
+        body,
+        confirmsPassword: true,
+      }),
+    superResetPassword: (id: string, body: SuperResetPasswordBody) =>
+      request<SuperResetAnswer>(
+        'POST',
+        `/v1/super/people/${encodeURIComponent(id)}/reset-password`,
+        { body, confirmsPassword: true }
+      ),
+    superCreateRole: (body: SuperCreateRoleBody) =>
+      request<SuperRoleAnswer>('POST', '/v1/super/roles', { body, confirmsPassword: true }),
+    superEditRole: (key: string, body: SuperEditRoleBody) =>
+      request<SuperRoleAnswer>('PATCH', `/v1/super/roles/${encodeURIComponent(key)}`, {
+        body,
+        confirmsPassword: true,
+      }),
+    superSetRoleTicks: (key: string, body: SuperRoleTicksBody) =>
+      request<SuperRoleAnswer>('PUT', `/v1/super/roles/${encodeURIComponent(key)}/ticks`, {
+        body,
+        confirmsPassword: true,
+      }),
+    superSetRoleActive: (key: string, body: SuperRoleActiveBody) =>
+      request<SuperRoleAnswer>('POST', `/v1/super/roles/${encodeURIComponent(key)}/active`, {
+        body,
+        confirmsPassword: true,
       }),
 
     // ---- the read side (C3, C4)
