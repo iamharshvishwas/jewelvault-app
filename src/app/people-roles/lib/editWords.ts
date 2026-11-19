@@ -15,6 +15,9 @@ export const NAME_LABEL = 'Role name';
 export const DESCRIPTION_LABEL = 'What this role is for';
 export const SAVED_LINE = 'Saved.';
 export const STALE_LINE = 'This role was changed by someone else. Reload it and try again.';
+/** Said under the stale line when she pressed Reload and the role could not be read again (Task 24b): her edits stay, and so does the button. */
+export const REREAD_FAILED_LINE =
+  'Could not read the role again. Check your connection and try Reload again.';
 export const OWNER_FIXED_LINE = 'The Owner role is fixed.';
 export const LEAVE_QUESTION = 'Leave without saving? Your changes will be lost.';
 export const ALSO_NEEDS = 'Also needs';

@@ -13,12 +13,13 @@ import { alsoNeedsLine, groupCount, neededByLine } from '../lib/editWords';
 //     the whole page instead of the screen's own area. Its name is the title of the tick (the words and the marks) and nothing under it: the lines under are its description;
 //   - a tick that another ticked tick needs is LOCKED: the box is greyed with a lock, it cannot be changed, and "Needed by ..." says why. On the Owner's screen (`readOnly`) every tick is
 //     on and locked, and no line about needs is drawn;
-//   - a tick that differs from the saved set has the yellow row and the "Changed" mark; a sensitive one has the red "Sensitive" mark;
+//   - a tick that differs from the saved set has the yellow row and the "Changed" mark; a sensitive one has the red "Sensitive" mark (red-700 on red-50, 5.9:1: the mark is 11 px of text,
+//     and red-600 was 4.4:1, under the 4.5:1 of WCAG AA);
 //   - no tick key is in the markup: ticks are told by their words, and the rows have no key in any attribute.
 
 export function SensitiveTag() {
   return (
-    <span className="ml-2 whitespace-nowrap rounded-full border border-[#f9caca] bg-red-50 px-2 py-px align-[1px] text-[11px] font-bold text-red-600">
+    <span className="ml-2 whitespace-nowrap rounded-full border border-[#f9caca] bg-red-50 px-2 py-px align-[1px] text-[11px] font-bold text-red-700">
       Sensitive
     </span>
   );

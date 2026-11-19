@@ -2,7 +2,7 @@
 // (the count of the banner, the mistakes, the sensitive ticks to confirm, whether Save works) and what a save would write. tests/unit/people-roles-editor.test.ts drives this file directly.
 //   - the draft keeps the saved copy it was made from (`base`): "changed" is measured against it, and a save names its `updated_at`. It is NOT the list the screen holds now: a list read again
 //     (after a write, or "Try again") must not give a draft with edits a newer copy to be saved over, since that would undo what somebody else did without a word. The copy changes only
-//     when she saves (the answer of the API is the new copy: `seed`), when she asks to reload (`seed` from the list as it is then), and when the first write of a save went through and
+//     when she saves (the answer of the API is the new copy: `seed`), when she asks to reload (`seed` from the role as it is read then), and when the first write of a save went through and
 //     the second did not (`rebase`);
 //   - the box "I understand" is ticked for the exact set of sensitive ticks that were newly on when she ticked it (`understood`): turn on another one and the box is empty again;
 //   - the name is compared as the API keeps it (spaces around it gone, white space inside folded), the description trimmed; capitals are a rename.
@@ -130,11 +130,12 @@ export function infoOf(
 
 /**
  * A line under the heading of the screen: that it was saved, or why it was not. A role changed by someone else may come with the plain line of what its first write had already saved
- * (`savedLine`: "The name was saved, but the ticks were not."), which is said before the sentence about the role; it is null when nothing was saved.
+ * (`savedLine`: "The name was saved, but the ticks were not."), which is said before the sentence about the role; it is null when nothing was saved. `readFailed` is set by the screen, not by
+ * `settle`: she pressed Reload and the role could not be read again (Task 24b), so the alert says that too and keeps its Reload button and her edits.
  */
 export type Notice =
   | { kind: 'saved' }
-  | { kind: 'stale'; savedLine: string | null }
+  | { kind: 'stale'; savedLine: string | null; readFailed?: boolean }
   | { kind: 'problem'; text: string };
 
 /** What the screen does with the outcome of a save. */

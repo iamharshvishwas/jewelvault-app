@@ -21,6 +21,7 @@ import { firstToFill } from '@/app/people-roles/components/FormDialog';
 import NewRoleDialog from '@/app/people-roles/components/NewRoleDialog';
 import { PeopleRolesView } from '@/app/people-roles/components/PeopleRolesClient';
 import RolesTab, { RolesTabView } from '@/app/people-roles/components/RolesTab';
+import StaleNotice from '@/app/people-roles/components/StaleNotice';
 import SwitchRoleDialog from '@/app/people-roles/components/SwitchRoleDialog';
 import { failureOf, readAgain } from '@/app/people-roles/lib/afterWrite';
 import {
@@ -31,6 +32,8 @@ import {
   switchRoleChange,
 } from '@/app/people-roles/lib/roleChange';
 import {
+  NAME_TAKEN,
+  ROLES_STALE_NOTICE,
   actionLabel,
   canSwitchOff,
   cleanRoleName,
@@ -43,7 +46,7 @@ import {
   switchOffReason,
   validateNewRole,
 } from '@/app/people-roles/lib/roles';
-import { runRoleChange, type RoleWrites } from '@/app/people-roles/lib/roleWrite';
+import { roleRefusalWords, runRoleChange, type RoleWrites } from '@/app/people-roles/lib/roleWrite';
 import type { SuperView } from '@/app/people-roles/lib/useSuper';
 import { ApiError } from '@/lib/api/client';
 import { ROLE_CHANGED_MESSAGE, UNCONFIRMED_MESSAGE } from '@/lib/api/errorMap';
@@ -61,6 +64,7 @@ import {
   callsOf,
   chosenOf,
   conditionsAround,
+  declarationsOf,
   draw,
   elementsOf,
   optionsOf,
@@ -505,17 +509,15 @@ describe('Task 24 runRoleChange: the lists are read again after a write', () => 
     expect(log).toEqual(['write', 'reload']);
   });
 
-  it("a refusal that says nothing was written and has nothing to do with an old list (a wrong password, the pause, a taken name) shows the API's sentence untouched and reads nothing again", async () => {
+  it("a refusal that says nothing was written and has nothing to do with an old list (a wrong password, the pause, a name that is not accepted, not allowed) shows the API's sentence untouched and reads nothing again", async () => {
     for (const refused of [
       refusal('JV_INVALID_INPUT', 422, 'Your password is not correct.', { field: 'password' }),
       refusal('JV_RATE_LIMITED', 429, 'Too many wrong passwords. Try again in 15 minutes.'),
       refusal(
         'JV_INVALID_INPUT',
         422,
-        'name is already used by another role. Nothing was changed.',
-        {
-          field: 'name',
-        }
+        'name must contain a letter or a number. Nothing was changed.',
+        { field: 'name' }
       ),
       refusal('JV_FORBIDDEN', 403, 'You are not allowed to do this. Nothing was changed.'),
     ]) {
@@ -528,11 +530,11 @@ describe('Task 24 runRoleChange: the lists are read again after a write', () => 
     }
   });
 
-  it("a stale answer (someone else changed the role) shows the client's words and reads the lists again, so the row shows the state it has now", async () => {
+  it('a stale answer (someone else changed the role) reads the lists again, so the row shows the state it has now, and says it is stale (the step ends on it: Task 24b)', async () => {
     const { writes, reload: read } = fakeWrites();
     writes.superSetRoleActive.mockRejectedValueOnce(refusal('JV_STALE', 409, ROLE_CHANGED_MESSAGE));
     const outcome = await runRoleChange(writes, read, switchRoleChange(R_BILLER), PASSWORD);
-    expect(outcome).toEqual({ error: 'This was changed by someone else. Reload and try again.' });
+    expect(outcome).toEqual({ error: ROLE_CHANGED_MESSAGE, stale: true });
     expect(read).toHaveBeenCalledTimes(1);
   });
 
@@ -1023,7 +1025,7 @@ describe('Task 24 the buttons and the steps are wired', () => {
     expect(elementsOf('RolesTab.tsx', 'RolesList').map((l) => l.onAction)).toEqual(['onAction']);
   });
 
-  it('the password step: Cancel goes back to the form with what was typed, or closes when there is no form; the write is done once, and only a written answer ends the dialog', () => {
+  it('the password step: Cancel goes back to the form with what was typed, or closes when there is no form; the write is done once, and only a written answer or a stale one (Task 24b) ends the dialog', () => {
     expect(elementsOf('NewRoleDialog.tsx', 'RoleSteps').map((s) => s.onBack)).toEqual([
       '() => setChange(null)',
     ]);
@@ -1034,7 +1036,9 @@ describe('Task 24 the buttons and the steps are wired', () => {
     expect(confirm).toHaveLength(1);
     expect(confirm[0].onConfirm).toBe('confirm');
     expect(confirm[0].onClose).toBe('onBack');
+    // a stale answer ends the step too (the tab says why); any other refusal stays on it
     expect(callsOf('RoleSteps.tsx', 'dispatch')).toEqual([
+      ["{ type: 'closed' }"],
       ["{ type: 'written', temporary: null }"],
     ]);
   });
@@ -1213,6 +1217,275 @@ describe('Task 25 review: the cursor goes to the first empty REQUIRED field', ()
 
 // ================================================================================================ no password can leak
 
+// ================================================================================================ Task 24b: the fixes of the real-browser run (the stale refusal, the clash of names)
+
+// Task 26 part 1 ran the screen against the real API in a real browser and found two things on this tab: a switch refused as stale left the password step open with the OLD row and the
+// OLD stamp (Confirm again gave the same refusal for ever, and the words sent her to a Reload button that is not in the dialog), and the one clash of names the form cannot catch (an accent
+// or a zero-width space) was shown in the API's technical words on the password step.
+describe('Task 24b roleRefusalWords: the one clash of names the form cannot catch', () => {
+  // as API Task 13 words it (src/super/roles.ts: `new InvalidInputError('name', 'is already used by another role')`), and as the client words a refusal of a write: the API's sentence with
+  // its full stop, then "Nothing was changed."
+  const API_WORDS = 'name is already used by another role';
+  const asClient = `${API_WORDS}. Nothing was changed.`;
+  const onName = (message: string) => refusal('JV_INVALID_INPUT', 422, message, { field: 'name' });
+
+  it('the exact sentence of the API, as the client words it, reads "Another role already has this name." with nothing after it', () => {
+    const cause = onName(asClient);
+    expect(roleRefusalWords(cause, cause.message)).toBe('Another role already has this name.');
+  });
+
+  it('the words are the ones of the form (NAME_TAKEN): one sentence for the clash, wherever it is caught', () => {
+    expect(NAME_TAKEN).toBe('Another role already has this name.');
+    const cause = onName(asClient);
+    expect(roleRefusalWords(cause, cause.message)).toBe(NAME_TAKEN);
+  });
+
+  it('it is the end of the sentence that counts: the closing words of the client, a full stop and the capital of the first word make no difference', () => {
+    for (const message of [
+      API_WORDS,
+      `${API_WORDS}.`,
+      asClient,
+      `Name is already used by another role. Nothing was changed.`,
+      `  ${asClient}  `,
+    ])
+      expect(roleRefusalWords(onName(message), message), message).toBe(NAME_TAKEN);
+  });
+
+  it('every other 422 on `name` stays in the API words (with the closing words of the client): not a letter or a number, required, too long', () => {
+    for (const message of [
+      'name must contain a letter or a number. Nothing was changed.',
+      'name is required. Nothing was changed.',
+      'name must be at most 40 characters. Nothing was changed.',
+      'Something you entered is not accepted. Nothing was changed.',
+    ])
+      expect(roleRefusalWords(onName(message), message), message).toBe(message);
+  });
+
+  it('a sentence that only mentions another role is not the clash: it has to END with the words', () => {
+    for (const message of [
+      'name is already used by another role. Move it first. Nothing was changed.',
+      'another role is already used by name. Nothing was changed.',
+    ])
+      expect(roleRefusalWords(onName(message), message), message).toBe(message);
+  });
+
+  it('the same words on another field, or with another code, are not mapped: only a 422 on `name` is', () => {
+    for (const cause of [
+      refusal('JV_INVALID_INPUT', 422, asClient, { field: 'description' }),
+      refusal('JV_INVALID_INPUT', 422, asClient, { field: 'copy_of' }),
+      refusal('JV_INVALID_INPUT', 422, asClient, {}),
+      refusal('JV_NOT_ALLOWED', 409, asClient, { field: 'name' }),
+      refusal('JV_FORBIDDEN', 403, asClient, { field: 'name' }),
+    ])
+      expect(roleRefusalWords(cause, cause.message), cause.code).toBe(cause.message);
+  });
+
+  it('whatever did not come from the API is left as it is', () => {
+    expect(roleRefusalWords(new TypeError('Failed to fetch'), UNCONFIRMED_MESSAGE)).toBe(
+      UNCONFIRMED_MESSAGE
+    );
+    expect(roleRefusalWords('boom', UNCONFIRMED_MESSAGE)).toBe(UNCONFIRMED_MESSAGE);
+    expect(roleRefusalWords(undefined, asClient)).toBe(asClient);
+  });
+});
+
+describe('Task 24b runRoleChange: the clash of names says it in plain words, and a stale answer ends the step', () => {
+  const clash = () =>
+    refusal('JV_INVALID_INPUT', 422, 'name is already used by another role. Nothing was changed.', {
+      field: 'name',
+    });
+  const newRole = () =>
+    newRoleChange({ copy_of: 'zk-biller', name: 'Cashiér', description: '' }, ROLES);
+
+  it('a new role whose name only differs by an accent: the API refuses it on `name`, and the step reads "Another role already has this name." (the lists are not read again: nothing was written)', async () => {
+    const { writes, reload: read } = fakeWrites();
+    writes.superCreateRole.mockRejectedValueOnce(clash());
+    const outcome = await runRoleChange(writes, read, newRole(), PASSWORD);
+    expect(outcome).toEqual({ error: 'Another role already has this name.' });
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('the other refusals of a create are still the API words, and no refusal of a create is stale (a create names no stamp)', async () => {
+    for (const refused of [
+      refusal('JV_INVALID_INPUT', 422, 'name is required. Nothing was changed.', { field: 'name' }),
+      refusal('JV_INVALID_INPUT', 422, 'copy_of is not a role. Nothing was changed.', {
+        field: 'copy_of',
+      }),
+      refusal('JV_FORBIDDEN', 403, 'You are not allowed to do this. Nothing was changed.'),
+    ]) {
+      const { writes, reload: read } = fakeWrites();
+      writes.superCreateRole.mockRejectedValueOnce(refused);
+      const outcome = await runRoleChange(writes, read, newRole(), PASSWORD);
+      expect(outcome, refused.message).toEqual({ error: refused.message });
+      expect('stale' in outcome, refused.message).toBe(false);
+    }
+  });
+
+  it('a stale switch is marked stale, reads the lists again ONCE, and does not send the write a second time with anything fresher', async () => {
+    const { writes, reload: read, log } = fakeWrites();
+    writes.superSetRoleActive.mockRejectedValueOnce(refusal('JV_STALE', 409, ROLE_CHANGED_MESSAGE));
+    const outcome = await runRoleChange(writes, read, switchRoleChange(R_BILLER), PASSWORD);
+    expect(outcome.stale).toBe(true);
+    expect(writes.superSetRoleActive).toHaveBeenCalledTimes(1);
+    expect(writes.superCreateRole).not.toHaveBeenCalled();
+    // the call that was refused (with the stamp of the row that was listed), then the lists: nothing else
+    expect(log).toEqual(['reload']);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it('no other outcome is marked stale: not a success, a wrong password, the pause, a rule, a refusal of the Owner, an unknown failure', async () => {
+    const others: unknown[] = [
+      null,
+      refusal('JV_INVALID_INPUT', 422, 'Your password is not correct.', { field: 'password' }),
+      refusal('JV_RATE_LIMITED', 429, 'Too many wrong passwords. Try again in 15 minutes.'),
+      refusal(
+        'JV_NOT_ALLOWED',
+        409,
+        '3 people still have this role. Move them to another role first.'
+      ),
+      refusal('JV_NOT_ALLOWED', 409, 'The Owner role is fixed and cannot be changed.'),
+      refusal('JV_INTERNAL', 500, UNCONFIRMED_MESSAGE),
+      new TypeError('Failed to fetch'),
+    ];
+    for (const cause of others) {
+      const { writes, reload: read } = fakeWrites();
+      if (cause !== null) writes.superSetRoleActive.mockRejectedValueOnce(cause);
+      const outcome = await runRoleChange(writes, read, switchRoleChange(R_BILLER), PASSWORD);
+      expect('stale' in outcome, String(cause)).toBe(false);
+    }
+  });
+
+  it('a stale answer that comes with a read that fails is still stale: the step ends, whatever the lists did', async () => {
+    const { writes, reload: read } = fakeWrites();
+    read.mockRejectedValueOnce(new Error('the lists could not be read'));
+    writes.superSetRoleActive.mockRejectedValueOnce(refusal('JV_STALE', 409, ROLE_CHANGED_MESSAGE));
+    const outcome = await runRoleChange(writes, read, switchRoleChange(R_BILLER), PASSWORD);
+    expect(outcome).toEqual({ error: ROLE_CHANGED_MESSAGE, stale: true });
+  });
+});
+
+describe('Task 24b the notice after a stale refusal', () => {
+  const SENTENCE =
+    'This was changed by someone else. The list is now up to date. Try again if you still want to.';
+  const drawTab = (over: object = {}) =>
+    draw(RolesTabView, {
+      roles: ROLES,
+      tickTotal: TOTAL,
+      onNew: noop,
+      onAction: noop,
+      ...over,
+    });
+
+  it('the words are those of the ruling, byte for byte', () => {
+    expect(ROLES_STALE_NOTICE).toBe(SENTENCE);
+  });
+
+  it('is one alert with the sentence and a small Dismiss button, and nothing else', () => {
+    const html = draw(StaleNotice, { onDismiss: noop });
+    expect(plain(html)).toBe(`${SENTENCE} Dismiss`);
+    expect(html.match(/role="alert"/g)).toHaveLength(1);
+    expect(buttonsOf(html)).toEqual(['Dismiss']);
+    expect(html).toMatch(/<button[^>]*type="button"/);
+    // the sentence is in a paragraph of its own, as the test of a browser reads it
+    expect(html).toMatch(new RegExp(`<p[^>]*>${SENTENCE}</p>`));
+  });
+
+  it('is not drawn at rest, and is drawn when the tab says so, above the list and below the + New role button', () => {
+    expect(drawTab()).not.toContain('roles-stale-notice');
+    expect(drawTab({ stale: false, onDismiss: noop })).not.toContain('roles-stale-notice');
+    const html = drawTab({ stale: true, onDismiss: noop });
+    expect(html).toContain('data-testid="roles-stale-notice"');
+    expect(html.match(/role="alert"/g)).toHaveLength(1);
+    expect(plain(html)).toContain(SENTENCE);
+    const notice = html.indexOf('data-testid="roles-stale-notice"');
+    expect(notice).toBeGreaterThan(html.indexOf('data-testid="new-role"'));
+    expect(notice).toBeLessThan(html.indexOf('data-testid="roles-table"'));
+  });
+
+  it('the list is the list: the notice takes nothing away from it', () => {
+    const rows = (html: string) => html.match(/data-testid="role-row"/g)?.length ?? 0;
+    expect(rows(drawTab({ stale: true, onDismiss: noop }))).toBe(rows(drawTab()));
+    expect(plain(drawTab({ stale: true, onDismiss: noop }))).toContain('Cashier');
+  });
+
+  it('names no role key and no stamp', () => {
+    const html = drawTab({ stale: true, onDismiss: noop });
+    for (const hidden of ['zk-cashier', 'zk-biller', STAMP])
+      expect(html.includes(hidden), hidden).toBe(false);
+  });
+});
+
+describe('Task 24b the stale refusal is wired: the step closes, the tab says so, and the notice goes away by itself', () => {
+  it('the password step: a stale outcome tells the tab and closes the step, before any refusal is handed back to the dialog; the write is done once', () => {
+    expect(callsOf('RoleSteps.tsx', 'runRoleChange')).toEqual([
+      ['api', 'reload', 'change', 'password'],
+    ]);
+    expect(callsOf('RoleSteps.tsx', 'onStale')).toEqual([[]]);
+    expect(conditionsAround('RoleSteps.tsx', 'onStale')).toEqual([['outcome.stale === true']]);
+    // nothing re-seeds the change or the stamp from the fresh row, and the dialog is not kept open: the step is closed by the flow, as after a write
+    expect(callsOf('RoleSteps.tsx', 'dispatch')).toEqual([
+      ["{ type: 'closed' }"],
+      ["{ type: 'written', temporary: null }"],
+    ]);
+    expect(conditionsAround('RoleSteps.tsx', 'dispatch')[0]).toEqual(['outcome.stale === true']);
+    expect(callsOf('RoleSteps.tsx', 'onClose')).toHaveLength(1);
+    expect(callsOf('RoleSteps.tsx', 'switchRoleChange')).toEqual([]);
+    expect(callsOf('RoleSteps.tsx', 'newRoleChange')).toEqual([]);
+  });
+
+  it.each(['NewRoleDialog.tsx', 'SwitchRoleDialog.tsx'])(
+    '%s hands the way to tell the tab on to the password step',
+    (file) => {
+      const steps = elementsOf(file, 'RoleSteps');
+      expect(steps.length, file).toBeGreaterThan(0);
+      for (const attributes of steps) expect(attributes.onStale, file).toBe('onStale');
+    }
+  );
+
+  it('the tab gives each dialog the way to show the notice, and draws the notice from one flag with a Dismiss of its own', () => {
+    for (const dialog of ['NewRoleDialog', 'SwitchRoleDialog']) {
+      const used = elementsOf('RolesTab.tsx', dialog);
+      expect(used.length, dialog).toBeGreaterThan(0);
+      for (const attributes of used) expect(attributes.onStale, dialog).toBe('onStale');
+    }
+    // and the tab itself gives the open dialog its own flag raiser, the one that sets the flag
+    const opening = elementsOf('RolesTab.tsx', 'OpenDialog');
+    expect(opening).toHaveLength(1);
+    expect(opening[0].onStale).toBe('showStale');
+    const view = elementsOf('RolesTab.tsx', 'RolesTabView');
+    expect(view).toHaveLength(1);
+    expect(view[0]).toMatchObject({ stale: 'stale', onDismiss: 'dismiss' });
+    // the notice itself is drawn by the view, and its one button is Dismiss; the view has the one button of the tab, + New role
+    expect(elementsOf('RolesTab.tsx', 'button').map((b) => b.onClick)).toEqual(['onNew']);
+    expect(elementsOf('StaleNotice.tsx', 'button').map((b) => b.onClick)).toEqual(['onDismiss']);
+    const shown = elementsOf('RolesTab.tsx', 'StaleNotice');
+    expect(shown).toHaveLength(1);
+    expect(shown[0].onDismiss).toBe('onDismiss');
+  });
+
+  it('the flag is raised by the stale answer alone, and put down by Dismiss and by every opener of a dialog (a write needs a dialog, so a write that succeeds has put it down already)', () => {
+    const calls = callsOf('RolesTab.tsx', 'setStale').map(([argument]) => argument);
+    expect(calls.filter((argument) => argument === 'true')).toHaveLength(1);
+    // Dismiss, the + New role button, and the Copy and Switch buttons of a row
+    expect(calls.filter((argument) => argument === 'false')).toHaveLength(3);
+    expect(calls).toHaveLength(4);
+    const source = readFileSync(
+      path.resolve(__dirname, '../../src/app/people-roles/components/RolesTab.tsx'),
+      'utf8'
+    );
+    // each opener puts the notice down in the same breath as it opens its dialog, and before it
+    const openers = source.match(/setStale\(false\);\s*setOpen\(/g) ?? [];
+    expect(openers).toHaveLength(2);
+    // the way to show it is the only place that raises it
+    expect(source).toMatch(/showStale\s*=\s*useCallback\(\(\) => setStale\(true\)/);
+    expect(source).toMatch(/dismiss\s*=\s*useCallback\(\(\) => setStale\(false\)/);
+  });
+
+  it('the notice does not lock the tab strip: only an open dialog does', () => {
+    expect(declarationsOf('RolesTab.tsx', 'busy')).toEqual(['open !== null']);
+  });
+});
+
 describe('Task 24 no password can leak from the files of the screen', () => {
   const SRC = path.resolve(__dirname, '../../src');
   const walked = sourcesUnder(path.join(SRC, 'app/people-roles')).map((file) =>
@@ -1224,6 +1497,7 @@ describe('Task 24 no password can leak from the files of the screen', () => {
     'app/people-roles/components/NewRoleDialog.tsx',
     'app/people-roles/components/SwitchRoleDialog.tsx',
     'app/people-roles/components/RoleSteps.tsx',
+    'app/people-roles/components/StaleNotice.tsx',
     'app/people-roles/lib/roles.ts',
     'app/people-roles/lib/roleChange.ts',
     'app/people-roles/lib/roleWrite.ts',

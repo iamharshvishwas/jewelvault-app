@@ -41,14 +41,16 @@ import {
   roleEditSummary,
   roleEditTitle,
 } from '@/app/people-roles/lib/editWords';
+import { readRoleAgain } from '@/app/people-roles/lib/afterWrite';
 import {
   partlySaved,
   runRoleEdit,
   savedLine,
   type RoleEditWrites,
 } from '@/app/people-roles/lib/roleEdit';
+import { shouldWarnOnUnload, warnBeforeUnload } from '@/app/people-roles/lib/unloadGuard';
 import { TICK_KEYS, type TickKey } from '@/lib/access';
-import { ApiError } from '@/lib/api/client';
+import { ApiError, type ApiClient } from '@/lib/api/client';
 import { UNCONFIRMED_MESSAGE } from '@/lib/api/errorMap';
 import type { SuperEditRoleBody, SuperRoleAnswer, SuperRoleTicksBody } from '@/lib/api/types';
 import {
@@ -825,16 +827,54 @@ describe('Task 25 runRoleEdit: the calls, their order and their bodies', () => {
 });
 
 describe('Task 25 runRoleEdit: what goes wrong', () => {
-  it("a refusal of the first write (a name another role has) shows the API's sentence, writes nothing else, saves nothing and reads nothing again", async () => {
+  it('a refusal of the first write because another role has the name (the clash the form cannot catch, an accent) reads "Another role already has this name.", writes nothing else, saves nothing and reads nothing again', async () => {
     const { writes, reload } = fakeWrites();
-    const sentence = 'name is already used by another role. Nothing was changed.';
     writes.superEditRole.mockRejectedValueOnce(
-      refusal('JV_INVALID_INPUT', 422, sentence, { field: 'name' })
+      refusal(
+        'JV_INVALID_INPUT',
+        422,
+        'name is already used by another role. Nothing was changed.',
+        {
+          field: 'name',
+        }
+      )
     );
     const outcome = await runRoleEdit(writes, reload, editOf(NAME, ...TICKS), PASSWORD);
-    expect(outcome).toEqual({ kind: 'refused', error: sentence, saved: null });
+    expect(outcome).toEqual({
+      kind: 'refused',
+      error: 'Another role already has this name.',
+      saved: null,
+    });
     expect(writes.superSetRoleTicks).not.toHaveBeenCalled();
     expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("every other refusal on the name stays in the API's words, closing words of the client and all", async () => {
+    for (const sentence of [
+      'name must contain a letter or a number. Nothing was changed.',
+      'name is required. Nothing was changed.',
+      'name must be at most 40 characters. Nothing was changed.',
+    ]) {
+      const { writes, reload } = fakeWrites();
+      writes.superEditRole.mockRejectedValueOnce(
+        refusal('JV_INVALID_INPUT', 422, sentence, { field: 'name' })
+      );
+      const outcome = await runRoleEdit(writes, reload, editOf(NAME, ...TICKS), PASSWORD);
+      expect(outcome, sentence).toEqual({ kind: 'refused', error: sentence, saved: null });
+    }
+  });
+
+  it("the clash is a line on the page like any other refusal: the editor's alert says it in the same plain words, with no Reload", () => {
+    const edit = editOf(NAME, ...TICKS);
+    const settled = settle(
+      { kind: 'refused', error: 'Another role already has this name.', saved: null },
+      edit
+    );
+    expect(settled.notice).toEqual({
+      kind: 'problem',
+      text: 'Another role already has this name.',
+    });
+    expect(settled.stepError).toBeNull();
   });
 
   it("a wrong password is the step's to show: it stays on the password step, nothing is written, nothing is read again", async () => {
@@ -1146,5 +1186,110 @@ describe('Task 25 review: a stale answer to the second write still says what the
     expect(outcome.kind).toBe('stale');
     expect(writes.superEditRole).toHaveBeenCalledTimes(1);
     expect(writes.superSetRoleTicks).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ================================================================================================ Task 24b: the fixes of the real-browser run (the unload guard, Reload)
+
+describe('Task 24b the unload guard: reload and closing the tab ask first, only while there is something to lose', () => {
+  it('shouldWarnOnUnload is the question "are there edits that are not saved?" and nothing else', () => {
+    expect(shouldWarnOnUnload(true)).toBe(true);
+    expect(shouldWarnOnUnload(false)).toBe(false);
+  });
+
+  it('what the screen counts as unsaved is what it warns about: a tick, a rename, a new description; and not a change that was undone', () => {
+    const dirtyOf = (...actions: DraftAction[]) =>
+      infoOf(run(seedOf(CASHIER), ...actions), CATALOGUE, ROLES).dirty;
+    expect(shouldWarnOnUnload(dirtyOf())).toBe(false);
+    expect(shouldWarnOnUnload(dirtyOf(tick('cashbook_all', true)))).toBe(true);
+    expect(shouldWarnOnUnload(dirtyOf({ type: 'name', value: 'Night Till' }))).toBe(true);
+    expect(shouldWarnOnUnload(dirtyOf({ type: 'description', value: 'At night' }))).toBe(true);
+    expect(
+      shouldWarnOnUnload(dirtyOf(tick('cashbook_all', true), tick('cashbook_all', false)))
+    ).toBe(false);
+    // the same name in other capital letters is a rename, as the API keeps capitals; the same name with spaces around it is not
+    expect(shouldWarnOnUnload(dirtyOf({ type: 'name', value: 'CASHIER' }))).toBe(true);
+    expect(shouldWarnOnUnload(dirtyOf({ type: 'name', value: '  Cashier ' }))).toBe(false);
+  });
+
+  it('after a save the saved copy is the draft: nothing to lose, no question', () => {
+    const edit = editOf(...TICKS);
+    const saved = role({
+      ticks: [...BILLER_TICKS, 'cashbook_all', 'refund_give'],
+      updated_at: AFTER_FIRST,
+    });
+    const after = run(
+      run(seedOf(CASHIER), ...TICKS),
+      settle({ kind: 'saved', role: saved }, edit).action as DraftAction
+    );
+    expect(shouldWarnOnUnload(infoOf(after, CATALOGUE, ROLES).dirty)).toBe(false);
+  });
+
+  it('warnBeforeUnload cancels the event and sets returnValue, as the browsers require, and does nothing else', () => {
+    const preventDefault = vi.fn();
+    const event = { preventDefault, returnValue: undefined as unknown, type: 'beforeunload' };
+    expect(warnBeforeUnload(event as unknown as BeforeUnloadEvent)).toBeUndefined();
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(preventDefault.mock.calls[0]).toEqual([]);
+    // an empty text is a value: the browsers show their own words, and a custom text is ignored by all of them
+    expect(event.returnValue).toBe('');
+    expect(event.type).toBe('beforeunload');
+  });
+});
+
+describe('Task 24b readRoleAgain: what "Reload" reads before it starts the screen again', () => {
+  const fresh = role({ name: 'Night Till', updated_at: AFTER_FIRST });
+  const reads = (answer: () => Promise<unknown>) => {
+    const superRoles = vi.fn(answer);
+    return { reads: { superRoles } as unknown as Pick<ApiClient, 'superRoles'>, superRoles };
+  };
+
+  it('answers with the role of that key as the API lists it now, and reads the roles once', async () => {
+    const { reads: client, superRoles } = reads(async () => ({
+      roles: [ROLES[1], fresh, role({ key: 'zk-third', name: 'Third' })],
+    }));
+    expect(await readRoleAgain(client, 'zk-cashier')).toEqual(fresh);
+    expect(superRoles).toHaveBeenCalledTimes(1);
+    expect(superRoles.mock.calls[0]).toEqual([]);
+  });
+
+  it('is null when the read failed, whatever failed: a refusal of the API, a lost connection, anything thrown', async () => {
+    for (const cause of [
+      refusal('JV_INTERNAL', 500, UNCONFIRMED_MESSAGE),
+      new TypeError('Failed to fetch'),
+      'boom',
+    ]) {
+      const { reads: client } = reads(async () => {
+        throw cause;
+      });
+      expect(await readRoleAgain(client, 'zk-cashier'), String(cause)).toBeNull();
+    }
+  });
+
+  it('is null when the answer is not in the agreed shape, or has no role of that key, or a role without its stamp: it must never pass for "the role is as it was"', async () => {
+    for (const answer of [
+      null,
+      undefined,
+      'roles',
+      {},
+      { roles: null },
+      { roles: 'zk-cashier' },
+      { roles: [] },
+      { roles: [ROLES[1]] },
+      { roles: [{ key: 'zk-cashier', name: 'Night Till' }] },
+      { roles: [{ ...fresh, updated_at: 12 }] },
+    ]) {
+      const { reads: client } = reads(async () => answer);
+      expect(await readRoleAgain(client, 'zk-cashier'), JSON.stringify(answer)).toBeNull();
+    }
+  });
+
+  it('never throws', async () => {
+    const client = {
+      superRoles: () => {
+        throw new Error('no');
+      },
+    } as unknown as Pick<ApiClient, 'superRoles'>;
+    await expect(readRoleAgain(client, 'zk-cashier')).resolves.toBeNull();
   });
 });

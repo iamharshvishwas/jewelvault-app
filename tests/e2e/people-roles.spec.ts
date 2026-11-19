@@ -12,6 +12,8 @@ import { roomInTheMinute } from './pacing';
 //   2  Copy Biller as "Cashier", then Edit: needs are on and greyed, the "I understand" box, a wrong password saves nothing, the right one saves
 //   3  the words of the 32 ticks of the website (`TICK_LABELS`) are the words of GET /v1/super/ticks, key by key; the shape of that answer is what the Edit role screen is written against
 //   4  a stale save: the same role open in two browsers, the second saves, the first is told so and Reload starts again from what is saved
+//   5  a stale Switch off on the Roles tab (Task 24b): the second browser renames the role, the first presses Switch off on the old row; the password step closes, a notice says the list is
+//      up to date, the row shows the new name, and a second Switch off works
 //
 // THE PASSWORD. The Super Admin's own password asks for itself again on every write (R9). It comes from `process.env` (through `e2eLogin`) and is typed into the field by the keyboard: Playwright
 // writes the text of `fill` and `type` into the log of a failed action, the keyboard it does not (`typeSecret`). A test never prints it, never compares it and never puts it in a title.
@@ -23,6 +25,8 @@ import { roomInTheMinute } from './pacing';
 
 const WRONG_PASSWORD_WORDS = 'Your password is not correct.';
 const STALE_WORDS = 'This role was changed by someone else. Reload it and try again.';
+const LIST_STALE_WORDS =
+  'This was changed by someone else. The list is now up to date. Try again if you still want to.';
 const TIME_TO_SIGN_IN = 60_000;
 
 const aside = (page: Page) => page.locator('aside');
@@ -463,5 +467,83 @@ test.describe('a role changed in another browser', () => {
     await expect(tickBox(page, 'See the cash book for today and yesterday')).not.toBeChecked();
     await expect(page.getByTestId('edit-role-banner')).toHaveCount(0);
     await expect(page.getByTestId('edit-role-head-save')).toBeDisabled();
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ 5: a stale Switch off on the Roles tab
+
+test.describe('a role renamed in another browser while a Switch off is asked for on its old row', () => {
+  test('the same role on the Roles tab in two browsers: the second renames it, the first presses Switch off on the OLD row and confirms: the password step closes, a notice says the list is up to date, the row shows the new name, and a second Switch off on the refreshed row works', async ({
+    page,
+    browser,
+  }) => {
+    const superAdmin = e2eLogin('super');
+    const NAME = 'Switch probe';
+    const RENAMED = 'Switch probe renamed';
+
+    // the role: a copy of the Staff role, which nobody holds (a role that people hold cannot be switched off)
+    await signInAs(page, superAdmin);
+    await openPeopleAndRoles(page);
+    await openRolesTab(page);
+    await copyRole(page, { from: 'Staff', name: NAME, password: superAdmin.password });
+    const before = await roleFromApi(page, NAME);
+    expect(before.people, 'nobody holds the new role').toBe(0);
+    expect(before.active).toBe(true);
+
+    // the second browser (its own session) renames it on the Edit role screen: the role gets a new stamp, and the first browser's row, which nothing re-reads, is old
+    const second = await otherBrowser(browser);
+    try {
+      await signInAs(second.page, superAdmin);
+      await openPeopleAndRoles(second.page);
+      await openRolesTab(second.page);
+      await second.page.getByRole('button', { name: `Edit ${NAME}`, exact: true }).click();
+      await expect(second.page.getByTestId('edit-role-name')).toHaveValue(NAME);
+      await second.page.getByTestId('edit-role-name').fill(RENAMED);
+      await second.page.getByTestId('edit-role-head-save').click();
+      await confirmWithPassword(second.page, superAdmin.password);
+      await expect(second.page.getByTestId('edit-role-saved')).toHaveText('Saved.');
+    } finally {
+      await second.close();
+    }
+    const renamed = await roleFromApi(page, RENAMED);
+    expect(renamed.updated_at, 'the rename gave the role a new stamp').not.toBe(before.updated_at);
+    expect(renamed.active).toBe(true);
+
+    // the first browser still shows the OLD row; Switch off on it, and the right password
+    await expect(roleRow(page, NAME)).toBeVisible();
+    await expect(roleRow(page, RENAMED)).toHaveCount(0);
+    await page.getByRole('button', { name: `Switch off ${NAME}`, exact: true }).click();
+    const step = page.getByTestId('confirm-password-dialog');
+    await expect(step).toContainText(`Switch off the role ${NAME}`);
+    await confirmWithPassword(page, superAdmin.password);
+
+    // the API refused it as stale: the password step closes (a second try on it could only be refused again), and a notice above the list says what happened
+    await expect(step).toHaveCount(0);
+    const notice = page.getByTestId('roles-stale-notice');
+    await expect(notice).toBeVisible();
+    await expect(notice).toHaveAttribute('role', 'alert');
+    await expect(notice.locator('p')).toHaveText(LIST_STALE_WORDS);
+    await expect(notice.getByRole('button', { name: 'Dismiss', exact: true })).toBeVisible();
+    // the lists were read again: the row behind the notice is the role as it is now, under its new name
+    await expect(roleRow(page, RENAMED)).toBeVisible();
+    await expect(roleRow(page, NAME)).toHaveCount(0);
+    await expect(roleRow(page, RENAMED)).not.toContainText('Switched off');
+    // the refused attempt wrote nothing
+    expect((await roleFromApi(page, RENAMED)).active, 'still switched on').toBe(true);
+
+    // a second Switch off, on the refreshed row, works. Opening its step puts the notice away
+    await page.getByRole('button', { name: `Switch off ${RENAMED}`, exact: true }).click();
+    await expect(notice).toHaveCount(0);
+    await expect(step).toContainText(`Switch off the role ${RENAMED}`);
+    await confirmWithPassword(page, superAdmin.password);
+    await expect(step).toHaveCount(0);
+    await expect(roleRow(page, RENAMED)).toContainText('Switched off');
+    await expect(
+      page.getByRole('button', { name: `Switch on ${RENAMED}`, exact: true })
+    ).toBeVisible();
+    await expect(notice).toHaveCount(0);
+    const after = await roleFromApi(page, RENAMED);
+    expect(after.active, 'the second Switch off went through').toBe(false);
+    expect(after.updated_at).not.toBe(renamed.updated_at);
   });
 });

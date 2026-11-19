@@ -6,7 +6,8 @@
 //   - the password goes to the bodies and nowhere else: not into an address (the key is the only part of one), not into what this returns, not into any message;
 //   - the outcome says what the screen has to do: `saved` (the role as the API now lists it), `password` (the password was refused, or the Super Admin is paused after wrong ones: nothing
 //     was written and the password step stays, with the sentence), `stale` (the role was changed by someone else), `refused` (any other refusal, or an outcome nobody can vouch for: the
-//     API's own sentence). `saved` on `stale` and `refused` is the role after the FIRST write when that one went through and the second did not, else null; the screen takes it as the
+//     API's own sentence, except that a name another role has, which only the API can tell (an accent, a zero-width space), reads "Another role already has this name.": `roleRefusalWords`
+//     of roleWrite.ts, Task 24b). `saved` on `stale` and `refused` is the role after the FIRST write when that one went through and the second did not, else null; the screen takes it as the
 //     role it is editing from now on;
 //   - the lists are read again after every success, after anything that was written (the first write alone), and after an outcome nobody can vouch for. A refusal that wrote nothing reads
 //     nothing again, and a stale one does not either: the "Reload" button of the screen does that when she asks for it, since the edits on screen are hers until then;
@@ -17,6 +18,7 @@ import { isApiError, type ApiClient } from '@/lib/api/client';
 import { NOTHING_CHANGED } from '@/lib/api/errorMap';
 import type { SuperRole, SuperRoleAnswer } from '@/lib/api/types';
 import { failureOf, readAgain } from './afterWrite';
+import { roleRefusalWords } from './roleWrite';
 
 /** The part of the client the save uses. */
 export type RoleEditWrites = Pick<ApiClient, 'superEditRole' | 'superSetRoleTicks'>;
@@ -125,6 +127,7 @@ export async function runRoleEdit(
     return { kind: 'saved', role: last };
   } catch (cause) {
     const failure = failureOf(cause);
+    const sentence = roleRefusalWords(cause, failure.error);
     // something was written, or nobody can say that nothing was: the lists are read again
     if (saved !== null || failure.reread) await readAgain(reload);
     if (isApiError(cause) && cause.code === 'JV_STALE') return { kind: 'stale', saved };
@@ -132,7 +135,7 @@ export async function runRoleEdit(
       return { kind: 'password', error: failure.error };
     return {
       kind: 'refused',
-      error: saved === null ? failure.error : partlySaved(edit, failure.error, !failure.reread),
+      error: saved === null ? sentence : partlySaved(edit, sentence, !failure.reread),
       saved,
     };
   }

@@ -3,13 +3,17 @@
 // the unit tests give it stubs. (Renaming a role and setting its ticks are the Edit role screen, Task 25.)
 //   - the password goes to the one call and nowhere else: not into the address (the key is the only part of it), not into what this returns, not into any message;
 //   - the switch names the `updated_at` the role was listed with (R9): a role changed in another tab since is refused as stale. Nothing was written, but the row on screen is old, so the lists
-//     are read again and the dialog stays on the password step with the client's words;
+//     are read again and the outcome says `stale`: the password step ends there (Task 24b) and the tab says why. A retry on the same step would name the old stamp and be refused for ever;
+//     starting the change again from the fresh row would be wrong, since the switch goes the OTHER way from the way the row is (another browser may have switched the role already);
 //   - a rule's refusal (a role that people have cannot be switched off) reads the lists again too: the people count of the row may be old, since giving a person the role in another tab does
 //     not change the role's own stamp. Every other refusal that says nothing was written reads nothing again, and every success and every outcome nobody can vouch for reads again;
-//   - the API's own sentence is shown as the client made it (`failureOf` of afterWrite.ts: a name already used is the API's own, and so is "The Owner role is fixed ...").
-import type { ApiClient } from '@/lib/api/client';
+//   - the API's own sentence is shown as the client made it (`failureOf` of afterWrite.ts: "The Owner role is fixed ..." is the API's own), with one exception, `roleRefusalWords`: the
+//     one clash of names the form cannot catch is said in the form's own plain words (Task 24b).
+import { isApiError, type ApiClient } from '@/lib/api/client';
+import { NOTHING_CHANGED } from '@/lib/api/errorMap';
 import { failureOf, readAgain } from './afterWrite';
 import type { RoleChange } from './roleChange';
+import { NAME_TAKEN } from './roles';
 
 /** The part of the client the two writes use. */
 export type RoleWrites = Pick<ApiClient, 'superCreateRole' | 'superSetRoleActive'>;
@@ -17,10 +21,34 @@ export type RoleWrites = Pick<ApiClient, 'superCreateRole' | 'superSetRoleActive
 export interface RoleOutcome {
   /** The sentence to show when the write was refused or could not be confirmed, else null. */
   error: string | null;
+  /**
+   * Present, and true, only when the role was changed by someone else since the row on screen was listed (`JV_STALE`): nothing was written and the lists were read again. The password
+   * step is over then, and `error` (the client's sentence for it) is not shown.
+   */
+  stale?: true;
 }
 
 /** Refusals that wrote nothing but prove that the list on screen is old: a role changed by someone else, and a rule (the people count of the row moved). */
 const LIST_IS_OLD = ['JV_STALE', 'JV_NOT_ALLOWED'] as const;
+
+/** How the API's sentence for a name that another role has ends (API Task 13, src/super/roles.ts: `name is already used by another role`). */
+const NAME_CLASH_ENDING = 'is already used by another role';
+
+/**
+ * The words for the refusal of a role write (a new role, a rename), given the sentence that `failureOf` made of it: that sentence, except for the one clash of names the form cannot catch.
+ * The form compares names by capitals and spaces; the API also ignores accents and zero-width characters, so a name that only differs in one of those passes the form and is refused 422
+ * on `name` ("name is already used by another role"), in the API's field word and, from the client, with "Nothing was changed." after it. That is said as the form says it ("Another role
+ * already has this name."). Every other refusal keeps its words, every other 422 on `name` too (no letter or number, empty, too long: the form catches them first).
+ */
+export function roleRefusalWords(cause: unknown, sentence: string): string {
+  if (!isApiError(cause) || cause.code !== 'JV_INVALID_INPUT' || cause.details.field !== 'name')
+    return sentence;
+  const said = sentence.trim();
+  const apiPart = said.endsWith(NOTHING_CHANGED)
+    ? said.slice(0, said.length - NOTHING_CHANGED.length)
+    : said;
+  return apiPart.trim().replace(/\.$/, '').endsWith(NAME_CLASH_ENDING) ? NAME_TAKEN : sentence;
+}
 
 async function send(writes: RoleWrites, change: RoleChange, password: string): Promise<void> {
   switch (change.kind) {
@@ -56,7 +84,10 @@ export async function runRoleChange(
     await send(writes, change, password);
   } catch (cause) {
     const failure = failureOf(cause, LIST_IS_OLD);
-    outcome = { error: failure.error };
+    outcome = {
+      error: roleRefusalWords(cause, failure.error),
+      ...(isApiError(cause) && cause.code === 'JV_STALE' ? { stale: true as const } : {}),
+    };
     reread = failure.reread;
   }
   if (reread) await readAgain(reload);

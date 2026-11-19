@@ -4,6 +4,7 @@ import type { SuperPerson, SuperRole } from '@/lib/api/types';
 import type { Notice } from '../lib/editorDraft';
 import {
   LEAVE_QUESTION,
+  REREAD_FAILED_LINE,
   SAVED_LINE,
   STALE_LINE,
   UNDERSTAND_TEXT,
@@ -16,7 +17,8 @@ import {
 //     at the bottom of a phone as well, and the line is at the top;
 //   - a role changed by someone else and any other refusal are alerts; the first has "Reload" (the edits stay on screen until she presses it), the second says the API's own sentence. When
 //     the name or the description of the same save is already live, the alert of the first says so before its sentence ("The name was saved, but the ticks were not."): Reload would
-//     drop her ticks, and she must know the rename stuck;
+//     drop her ticks, and she must know the rename stuck. When she pressed Reload and the role could not be read again, the same alert says so after its sentence (Task 24b) and keeps
+//     its button, so that she can press it again;
 //   - the box is ticked for the sensitive ticks that are newly on, which it lists by their words; it is tied to the list for a screen reader.
 
 export function LeavePrompt({ onLeave, onKeep }: { onLeave: () => void; onKeep: () => void }) {
@@ -76,6 +78,7 @@ export function Notices({ notice, onReload }: { notice: Notice | null; onReload:
       <div className="space-y-1 text-sm font-semibold text-red-700">
         {notice.kind === 'stale' && notice.savedLine !== null && <p>{notice.savedLine}</p>}
         <p>{notice.kind === 'stale' ? STALE_LINE : notice.text}</p>
+        {notice.kind === 'stale' && notice.readFailed === true && <p>{REREAD_FAILED_LINE}</p>}
       </div>
       {notice.kind === 'stale' && (
         <button

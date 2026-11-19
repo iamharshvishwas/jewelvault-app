@@ -6,8 +6,8 @@
 //     the button is then disabled and the row says why, in words. Switching ON is always allowed;
 //   - the checks of the New role form are the ones the API makes (API Task 13, `cleanRoleName`: a name is trimmed, white space inside it is folded, it is 1 to 40 characters and has a letter
 //     or a number in it; a description is 200 at most), so that a mistake is shown on the form and not after the password was typed. The form also asks whether another role has the name
-//     already, from the roles the screen holds (capitals and spaces do not make another name). The API stays the authority: it also ignores accents, so a name that only differs in
-//     an accent is refused by the API after the password step, and its own sentence is shown as it comes.
+//     already, from the roles the screen holds (capitals and spaces do not make another name). The API stays the authority: it also ignores accents and zero-width characters, so a name that
+//     only differs in one of those is refused by the API after the password step, and is said there in the same words as the form (`roleRefusalWords` of roleWrite.ts, Task 24b).
 import type { SuperRole } from '@/lib/api/types';
 
 export type RoleAction = 'edit' | 'copy' | 'switch';
@@ -60,6 +60,14 @@ export function roleSummary(r: SuperRole, tickTotal: number): string {
 /** The note under the list: the picture's words. */
 export const ROLES_NOTE =
   'A role can be switched off only when nobody has it. Nothing is ever deleted.';
+
+/**
+ * The line above the list after a switch was refused because the role had been changed by someone else (Task 24b, found by the first real-browser run): the password step has closed and the
+ * lists were read again, so the row behind shows the role as it is now. It does not say what the change was, and it does not offer to do the switch again: the other way a switch can
+ * go (somebody may have switched the role already) is hers to look at and decide.
+ */
+export const ROLES_STALE_NOTICE =
+  'This was changed by someone else. The list is now up to date. Try again if you still want to.';
 
 // ---- the New role form
 

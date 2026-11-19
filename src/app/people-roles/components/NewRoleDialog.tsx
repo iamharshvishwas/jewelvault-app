@@ -11,21 +11,24 @@ import RoleSteps from './RoleSteps';
 // of the row chosen to start from; the name is left empty (nothing is suggested). The new role gets the same ticks as the one it starts from; changing them is the Edit button, afterwards.
 //   - the roles to start from are all of them, the Owner and the switched-off ones too, by their names (`startFromChoices`), as the API takes a copy of any role;
 //   - the form checks what the API checks (a name of 1 to 40 characters with a letter or a number in it, a description of 200 at most) and whether another role has the name already, from the
-//     roles it holds, so a mistake is shown here and not after the password was typed (`validateNewRole`). The API stays the authority: it also ignores accents, and its own sentence is
-//     shown as it comes;
-//   - "Cancel" on the password step brings the form back with everything typed, so that a refusal of the API (a name that another role has) is mended on the form and not typed again.
+//     roles it holds, so a mistake is shown here and not after the password was typed (`validateNewRole`). The API stays the authority: it also ignores accents and zero-width characters,
+//     so a name that only differs that way is refused after the password step, and is said there as "Another role already has this name." (`roleRefusalWords`, Task 24b);
+//   - "Cancel" on the password step brings the form back with everything typed, so that a refusal of the API (a name that another role has) is mended on the form and not typed again;
+//   - a create names no stamp, so it cannot be refused as stale; the way to tell the tab (`onStale`) is the password step's, which both dialogs of the tab share.
 
 export default function NewRoleDialog({
   roles,
   copyOf,
   reload,
   onClose,
+  onStale,
 }: {
   roles: SuperRole[];
   /** The key of the role to start from when the dialog opens (Copy), or an empty text (+ New role). */
   copyOf: string;
   reload: () => Promise<void>;
   onClose: () => void;
+  onStale: () => void;
 }) {
   const choices = useMemo(() => startFromChoices(roles), [roles]);
   const [values, setValues] = useState<NewRoleValues>(() => ({
@@ -38,7 +41,13 @@ export default function NewRoleDialog({
 
   if (change !== null)
     return (
-      <RoleSteps change={change} reload={reload} onBack={() => setChange(null)} onClose={onClose} />
+      <RoleSteps
+        change={change}
+        reload={reload}
+        onBack={() => setChange(null)}
+        onClose={onClose}
+        onStale={onStale}
+      />
     );
 
   const set = (field: keyof NewRoleValues) => (value: string) => {

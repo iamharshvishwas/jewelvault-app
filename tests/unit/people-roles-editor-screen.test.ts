@@ -11,6 +11,7 @@ import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { createElement } from 'react';
+import colors from 'tailwindcss/colors';
 import { describe, expect, it } from 'vitest';
 import ConfirmPasswordDialog from '@/app/people-roles/components/ConfirmPasswordDialog';
 import EditRole from '@/app/people-roles/components/EditRole';
@@ -23,8 +24,14 @@ import {
   PeopleRolesView,
 } from '@/app/people-roles/components/PeopleRolesClient';
 import RoleEditSummary from '@/app/people-roles/components/RoleEditSummary';
+import { SensitiveTag } from '@/app/people-roles/components/TickGroup';
 import { infoOf, roleEditOf, seedOf, settle, type Draft } from '@/app/people-roles/lib/editorDraft';
-import { STALE_LINE, roleEditConfirmLabel, roleEditTitle } from '@/app/people-roles/lib/editWords';
+import {
+  REREAD_FAILED_LINE,
+  STALE_LINE,
+  roleEditConfirmLabel,
+  roleEditTitle,
+} from '@/app/people-roles/lib/editWords';
 import { runRoleEdit, type RoleEditWrites } from '@/app/people-roles/lib/roleEdit';
 import { TICK_KEYS } from '@/lib/access';
 import { ApiError } from '@/lib/api/client';
@@ -561,6 +568,68 @@ describe('Task 25 the screen of a role: a switched-off role, the Owner, and what
   });
 });
 
+// ================================================================================================ Task 24b: the red "Sensitive" mark
+
+// The mark is 11 px of text, so WCAG AA asks 4.5:1 (normal text). The colours are those of Tailwind's default palette, which this site extends and does not replace (tailwind.config.js).
+describe('Task 24b the red "Sensitive" mark reaches the contrast of AA', () => {
+  const palette = colors as unknown as Record<string, Record<string, string>>;
+  const channel = (value: number) => {
+    const share = value / 255;
+    return share <= 0.03928 ? share / 12.92 : ((share + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = (hex: string) => {
+    const [r, g, b] = [1, 3, 5].map((at) => channel(parseInt(hex.slice(at, at + 2), 16)));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (a: string, b: string) => {
+    const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (high + 0.05) / (low + 0.05);
+  };
+  /** The colours the mark is drawn with: its text and its background, from the classes of its markup. */
+  const coloursOf = (html: string) => {
+    const classes = (/class="([^"]*)"/.exec(html)?.[1] ?? '').split(/\s+/);
+    const pick = (prefix: string) => {
+      const found = classes.filter((one) => new RegExp(`^${prefix}-red-\\d+$`).test(one));
+      expect(found, `the ${prefix} classes of the mark`).toHaveLength(1);
+      return { name: found[0], hex: palette.red[found[0].split('-')[2]] };
+    };
+    return { text: pick('text'), back: pick('bg') };
+  };
+
+  it('the checker sees what the old class was: red-600 on red-50 is under 4.5:1 and red-700 is over it', () => {
+    expect(contrast(palette.red['600'], palette.red['50'])).toBeGreaterThan(4.4);
+    expect(contrast(palette.red['600'], palette.red['50'])).toBeLessThan(4.5);
+    expect(contrast(palette.red['700'], palette.red['50'])).toBeGreaterThan(4.5);
+  });
+
+  it('the text of the mark on its background is at least 4.5:1', () => {
+    const html = draw(SensitiveTag, {});
+    expect(plain(html)).toBe('Sensitive');
+    const { text, back } = coloursOf(html);
+    expect(back.name).toBe('bg-red-50');
+    expect(contrast(text.hex, back.hex), `${text.name} on ${back.name}`).toBeGreaterThanOrEqual(
+      4.5
+    );
+  });
+
+  it('the mark is text-red-700 on bg-red-50, still 11 px and bold, and the same one in the rows and in the summary of the password step', () => {
+    const html = draw(SensitiveTag, {});
+    expect(html).toContain('text-red-700');
+    expect(html).not.toContain('text-red-600');
+    expect(html).toContain('text-[11px]');
+    expect(html).toContain('font-bold');
+    const row = rowFor(drawEditor(CLEAN), 'Cancel a bill');
+    expect(row).toContain('text-red-700');
+    expect(row).not.toContain('text-red-600');
+    const summary = draw(RoleEditSummary, {
+      edit: roleEditOf(run(CLEAN, tick('bill_cancel', true)), CATALOGUE),
+      catalogue: CATALOGUE,
+    });
+    expect(summary).toContain('text-red-700');
+    expect(summary).not.toContain('text-red-600');
+  });
+});
+
 describe('Task 25 the screen of a role: the lines under the heading', () => {
   it('nothing is said until there is something to say', () => {
     const html = drawEditor(CLEAN);
@@ -628,6 +697,52 @@ describe('Task 25 the screen of a role: the lines under the heading', () => {
     });
     expect(plain(tagOfBlock(html, 'edit-role-stale'))).toBe(`${STALE_SENTENCE} Reload`);
     expect(plain(html)).not.toMatch(/saved, but the ticks were not/);
+  });
+
+  // Task 24b (F5): a Reload that could not read the role again changes nothing but the alert
+  const REREAD_FAILED =
+    'Could not read the role again. Check your connection and try Reload again.';
+
+  it('a Reload that could not read the role again keeps the stale alert and its Reload button, says so in a plain line, and leaves her edits on screen', () => {
+    expect(REREAD_FAILED_LINE).toBe(REREAD_FAILED);
+    const html = drawEditor(run(CLEAN, tick('cashbook_all', true)), {
+      notice: { kind: 'stale', savedLine: null, readFailed: true },
+    });
+    const alert = tagOfBlock(html, 'edit-role-stale');
+    expect(plain(alert)).toBe(`${STALE_SENTENCE} ${REREAD_FAILED} Reload`);
+    // one alert, with the button of Reload in it, after both lines
+    expect(html.match(/role="alert"/g)).toHaveLength(1);
+    expect(alert.indexOf('>Reload</button>')).toBeGreaterThan(alert.indexOf(REREAD_FAILED));
+    expect(tagOf(html, 'edit-role-reload')).toContain('type="button"');
+    expect(html).toMatch(new RegExp(`<p[^>]*>${REREAD_FAILED}</p>`));
+    // her edits are still on screen: nothing was restarted
+    expect(plain(html)).toContain('1 change not saved yet');
+    expect(rowsOf(html).filter(isChecked)).toHaveLength(10);
+  });
+
+  it('with the name saved first, the order is: what was saved, the stale sentence, the line about the read, Reload', () => {
+    const line = SAVED_LINES[0];
+    const html = drawEditor(CLEAN, {
+      notice: { kind: 'stale', savedLine: line, readFailed: true },
+    });
+    expect(plain(tagOfBlock(html, 'edit-role-stale'))).toBe(
+      `${line} ${STALE_SENTENCE} ${REREAD_FAILED} Reload`
+    );
+  });
+
+  it('the line about the read is drawn only when the read failed: with `readFailed` false, or not given, the alert is the stale one as before', () => {
+    for (const notice of [
+      { kind: 'stale', savedLine: null },
+      { kind: 'stale', savedLine: null, readFailed: false },
+    ] as const) {
+      const html = drawEditor(CLEAN, { notice });
+      expect(plain(tagOfBlock(html, 'edit-role-stale'))).toBe(`${STALE_SENTENCE} Reload`);
+      expect(html).not.toContain('Could not read the role again');
+    }
+    // and no other alert has it: a refusal is the API's sentence alone
+    expect(drawEditor(CLEAN, { notice: { kind: 'problem', text: 'Not now.' } })).not.toContain(
+      'Could not read the role again'
+    );
   });
 
   it('the alert with the line before it names no tick key, role key, id or stamp', () => {
@@ -995,18 +1110,84 @@ describe('Task 25 the editor is wired', () => {
     expect(callsOf('EditRole.tsx', 'onBusy')).toHaveLength(2);
   });
 
+  it('reload and closing the tab ask first while there are edits that are not saved: one effect adds the listener under `shouldWarnOnUnload(info.dirty)`, and its cleanup removes the same listener (Task 24b)', () => {
+    const adding = effectsCalling('EditRole.tsx', 'window.addEventListener');
+    expect(adding).toHaveLength(1);
+    expect(adding[0].calls).toEqual([["'beforeunload'", 'warnBeforeUnload']]);
+    expect(adding[0].deps).toBe('[info.dirty]');
+    const removing = effectsCalling('EditRole.tsx', 'window.removeEventListener');
+    expect(removing).toHaveLength(1);
+    expect(removing[0].calls).toEqual([]);
+    expect(removing[0].cleanup).toEqual([["'beforeunload'", 'warnBeforeUnload']]);
+    expect(removing[0].deps).toBe('[info.dirty]');
+    // the decision is the pure function's, asked of what the screen counts as unsaved; the listener is added once, under it
+    expect(callsOf('EditRole.tsx', 'shouldWarnOnUnload')).toEqual([['info.dirty']]);
+    expect(callsOf('EditRole.tsx', 'window.addEventListener')).toHaveLength(1);
+    expect(conditionsAround('EditRole.tsx', 'window.addEventListener')).toEqual([
+      ['shouldWarnOnUnload(info.dirty)'],
+    ]);
+    // one effect holds both lines, so a listener that is added is a listener that is removed (on a change of `dirty` and when the editor goes away)
+    const source = readFileSync(
+      path.resolve(__dirname, '../../src/app/people-roles/components/EditRole.tsx'),
+      'utf8'
+    );
+    const effect =
+      /useEffect\(\(\) => \{(?:(?!useEffect)[\s\S])*?\}, \[info\.dirty\]\);/.exec(source)?.[0] ??
+      '';
+    expect(effect).toContain("window.addEventListener('beforeunload', warnBeforeUnload)");
+    expect(effect).toContain(
+      "return () => window.removeEventListener('beforeunload', warnBeforeUnload)"
+    );
+    expect(effect.indexOf('removeEventListener')).toBeGreaterThan(
+      effect.indexOf('addEventListener')
+    );
+  });
+
   it('a role that is not in the list takes her back from an effect', () => {
     const effects = effectsCalling('EditRole.tsx', 'onBack');
     expect(effects).toHaveLength(1);
     expect(effects[0].deps).toBe('[live, onBack]');
   });
 
-  it('Reload reads the lists again and then starts the screen again from them: a new Editor for each round', () => {
+  it('Reload reads the role itself and starts the draft again from what it read (not from a drawing of the lists), reads the lists for the rest of the screen, and a read that fails changes nothing but the alert (Task 24b)', () => {
+    expect(callsOf('EditRole.tsx', 'readRoleAgain')).toEqual([['api', 'live.key']]);
     expect(callsOf('EditRole.tsx', 'readAgain')).toEqual([['reload']]);
-    expect(callsOf('EditRole.tsx', 'onReloaded')).toEqual([[]]);
+    // the old way is gone: no round to count, no new Editor to wait for
+    expect(callsOf('EditRole.tsx', 'onReloaded')).toEqual([]);
+    expect(callsOf('EditRole.tsx', 'setRound')).toEqual([]);
     const editor = elementsOf('EditRole.tsx', 'Editor');
     expect(editor).toHaveLength(1);
-    expect(editor[0].key).toBe('round');
+    expect(editor[0].key).toBeUndefined();
+    expect(editor[0].onReloaded).toBeUndefined();
+
+    const source = readFileSync(
+      path.resolve(__dirname, '../../src/app/people-roles/components/EditRole.tsx'),
+      'utf8'
+    );
+    const start = source.indexOf('reload: async () => {');
+    const handler = source.slice(start, source.indexOf('\n    },', start));
+    expect(start).toBeGreaterThan(-1);
+    const at = (text: string) => handler.indexOf(text);
+    // read first: nothing of the screen is touched before the role has been read, and the draft is restarted exactly once
+    expect(at('readRoleAgain(api, live.key)')).toBeGreaterThan(-1);
+    expect(handler.slice(0, at('readRoleAgain('))).not.toMatch(
+      /dispatch\(|setNotice\(|setLeaving\(/
+    );
+    expect(handler.match(/dispatch\(/g)).toHaveLength(1);
+    // a failed read is the only thing that ends the handler early, and it touches the notice alone
+    expect(at('if (fresh === null)')).toBeGreaterThan(at('readRoleAgain('));
+    const failed = handler.slice(at('if (fresh === null)'), at('await readAgain(reload)'));
+    expect(failed).toContain('readFailed: true');
+    expect(failed).toContain('return;');
+    for (const touched of ['dispatch(', 'setLeaving(', 'setConfirming(', 'readAgain('])
+      expect(failed.includes(touched), touched).toBe(false);
+    // then the lists, then the restart from what was read, and the question and the alert are put away
+    expect(at('await readAgain(reload)')).toBeGreaterThan(at('return;'));
+    expect(at("dispatch({ type: 'seed', role: fresh })")).toBeGreaterThan(
+      at('await readAgain(reload)')
+    );
+    expect(at('setNotice(null)')).toBeGreaterThan(at("dispatch({ type: 'seed'"));
+    expect(at('setLeaving(false)')).toBeGreaterThan(at("dispatch({ type: 'seed'"));
   });
 
   it('Leave goes back to the list at once when nothing is unsaved, and asks first when something is', () => {
@@ -1025,6 +1206,7 @@ describe('Task 25 the editor is wired', () => {
       ['false'], // Save
       ['true'], // leave, when there are edits
       ['false'], // keep editing
+      ['false'], // Reload starts again from the saved role
     ]);
   });
 
@@ -1045,15 +1227,18 @@ describe('Task 25 the editor is wired', () => {
       );
   });
 
-  it('every call of setNotice either keeps a refusal and clears "Saved." (a change), or sets the outcome, or clears it for a new save', () => {
+  it('every call of setNotice either keeps a refusal and clears "Saved." (a change), or sets the outcome, or clears it for a new save or a new start, or marks a Reload that could not read', () => {
     expect(flat(callsOf('EditRole.tsx', 'setNotice'))).toEqual([
       ["(now) => (now?.kind === 'saved' ? null : now)"],
       ['next'],
       ['null'],
+      // Reload: a read that failed keeps the stale alert and adds the line about it; one that worked starts again with no alert
+      ["(now) => (now?.kind === 'stale' ? { ...now, readFailed: true } : now)"],
+      ['null'],
     ]);
   });
 
-  it('the editor listens for no key of its own: only the password step does, so no second dialog closes with it', () => {
+  it('the editor listens for no key of its own: only the password step does, so no second dialog closes with it; the one listener it adds is for the page being left', () => {
     for (const file of [
       'EditRole.tsx',
       'EditRoleView.tsx',
@@ -1063,8 +1248,13 @@ describe('Task 25 the editor is wired', () => {
       'RoleEditSummary.tsx',
     ]) {
       expect(callsOf(file, 'document.addEventListener'), file).toEqual([]);
-      expect(callsOf(file, 'window.addEventListener'), file).toEqual([]);
+      // Task 24b: `beforeunload` (a reload, closing the tab) is the only event the editor listens for, and it is not a key
+      for (const [event] of callsOf(file, 'window.addEventListener'))
+        expect(event, file).toBe("'beforeunload'");
     }
+    expect(callsOf('EditRole.tsx', 'window.addEventListener')).toHaveLength(1);
+    for (const file of ['EditRoleView.tsx', 'EditRoleParts.tsx', 'TickGroup.tsx', 'SaveBar.tsx'])
+      expect(callsOf(file, 'window.addEventListener'), file).toEqual([]);
     // and the question "Leave without saving?" is a line, not a dialog
     expect(
       readFileSync(
@@ -1127,6 +1317,7 @@ describe('Task 25 no password can leak from the files of the screen', () => {
     'app/people-roles/lib/editorDraft.ts',
     'app/people-roles/lib/editWords.ts',
     'app/people-roles/lib/roleEdit.ts',
+    'app/people-roles/lib/unloadGuard.ts',
   ];
 
   it('the files of this task are among the ones the tripwire walks (the Task 22 and 23 tests walk the whole folder)', () => {

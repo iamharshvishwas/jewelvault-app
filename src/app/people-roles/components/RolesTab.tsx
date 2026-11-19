@@ -6,6 +6,7 @@ import { ROLES_NOTE, dialogFor, type RoleAction, type RolesDialog } from '../lib
 import NewRoleDialog from './NewRoleDialog';
 import type { TabBodyProps } from './PeopleRolesClient';
 import RolesList from './RolesList';
+import StaleNotice from './StaleNotice';
 import SwitchRoleDialog from './SwitchRoleDialog';
 
 // The Roles tab (plan: access and roles, Task 24; DESIGN 6.5; the pictures are mockups/2-roles.png, 4-password-confirm.png and 5-phone.png): the roles of the shop and what can be done to them.
@@ -15,7 +16,10 @@ import SwitchRoleDialog from './SwitchRoleDialog';
 //   - the button is drawn at the top of the panel, under the tabs, like "+ Add person": the heading and the tabs belong to the shell;
 //   - an open dialog is never replaced, and nothing goes to the editor from behind one: nothing traps the keyboard behind the overlay, so a button of the list can be pressed while a
 //     dialog is up. Both openers go through `openIfFree` (which keeps what is open), and Edit does nothing while a dialog is open;
-//   - the tab is busy while a dialog is open (`onBusy`): the shell locks its tab strip meanwhile.
+//   - the tab is busy while a dialog is open (`onBusy`): the shell locks its tab strip meanwhile;
+//   - a switch that was refused because the role had been changed by someone else closes its password step and tells the tab (`onStale`, Task 24b): the tab then shows a plain notice above the
+//     list (`StaleNotice`, one flag). The notice goes away when she dismisses it and when she opens any dialog (both openers put it down first): a write needs a dialog, so a write that
+//     succeeds has put it down already. It does not lock the tab strip: only an open dialog does.
 
 export interface RolesTabViewProps {
   roles: SuperRole[];
@@ -23,10 +27,23 @@ export interface RolesTabViewProps {
   tickTotal: number;
   onNew: () => void;
   onAction: (action: RoleAction, role: SuperRole) => void;
+  /** The notice after a stale refusal is drawn, above the list. */
+  stale?: boolean;
+  /** The Dismiss button of that notice. */
+  onDismiss?: () => void;
 }
 
+const ignore = () => undefined;
+
 /** The tab as it is drawn with no dialog open (the container below gives it its handlers). */
-export function RolesTabView({ roles, tickTotal, onNew, onAction }: RolesTabViewProps) {
+export function RolesTabView({
+  roles,
+  tickTotal,
+  onNew,
+  onAction,
+  stale = false,
+  onDismiss = ignore,
+}: RolesTabViewProps) {
   return (
     <div data-testid="roles-tab" className="space-y-4">
       <div className="flex md:justify-end">
@@ -39,6 +56,7 @@ export function RolesTabView({ roles, tickTotal, onNew, onAction }: RolesTabView
           + New role
         </button>
       </div>
+      {stale && <StaleNotice onDismiss={onDismiss} />}
       <RolesList roles={roles} tickTotal={tickTotal} onAction={onAction} />
       <p className="text-[13px] text-muted-foreground">{ROLES_NOTE}</p>
     </div>
@@ -50,17 +68,29 @@ function OpenDialog({
   roles,
   reload,
   onClose,
+  onStale,
 }: {
   open: RolesDialog;
   roles: SuperRole[];
   reload: () => Promise<void>;
   onClose: () => void;
+  onStale: () => void;
 }) {
   switch (open.kind) {
     case 'new':
-      return <NewRoleDialog roles={roles} copyOf={open.copyOf} reload={reload} onClose={onClose} />;
+      return (
+        <NewRoleDialog
+          roles={roles}
+          copyOf={open.copyOf}
+          reload={reload}
+          onClose={onClose}
+          onStale={onStale}
+        />
+      );
     case 'switch':
-      return <SwitchRoleDialog role={open.role} reload={reload} onClose={onClose} />;
+      return (
+        <SwitchRoleDialog role={open.role} reload={reload} onClose={onClose} onStale={onStale} />
+      );
   }
 }
 
@@ -75,7 +105,11 @@ export default function RolesTab({
   onEdit: (role: SuperRole) => void;
 }) {
   const [open, setOpen] = useState<RolesDialog | null>(null);
+  // a switch was refused because the role had been changed by someone else: the dialog has closed, the lists were read again, and the notice says so until she puts it away
+  const [stale, setStale] = useState(false);
   const close = useCallback(() => setOpen(null), []);
+  const showStale = useCallback(() => setStale(true), []);
+  const dismiss = useCallback(() => setStale(false), []);
   const busy = open !== null;
   useEffect(() => {
     onBusy(busy);
@@ -83,18 +117,27 @@ export default function RolesTab({
   }, [busy, onBusy]);
   const onAction = (action: RoleAction, role: SuperRole) => {
     const next = dialogFor(action, role);
-    if (next !== null) setOpen((now) => openIfFree(now, next));
-    else if (open === null) onEdit(role);
+    if (next !== null) {
+      setStale(false);
+      setOpen((now) => openIfFree(now, next));
+    } else if (open === null) onEdit(role);
   };
   return (
     <>
       <RolesTabView
         roles={roles}
         tickTotal={ticks.ticks.length}
-        onNew={() => setOpen((now) => openIfFree(now, { kind: 'new', copyOf: '' }))}
+        stale={stale}
+        onDismiss={dismiss}
+        onNew={() => {
+          setStale(false);
+          setOpen((now) => openIfFree(now, { kind: 'new', copyOf: '' }));
+        }}
         onAction={onAction}
       />
-      {open !== null && <OpenDialog open={open} roles={roles} reload={reload} onClose={close} />}
+      {open !== null && (
+        <OpenDialog open={open} roles={roles} reload={reload} onClose={close} onStale={showStale} />
+      )}
     </>
   );
 }
