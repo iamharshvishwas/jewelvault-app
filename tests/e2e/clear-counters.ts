@@ -1,7 +1,7 @@
 import { e2eLane } from './global-setup';
 
 // The one-command way out of the login throttle (spec U3): the admin door's call that resets the login counters (A13). A lane's API counts
-// every login of the three test users in one 15-minute window, so after five logins of the same person each further login waits 1, 2, 4 and
+// every login of the four test logins in one 15-minute window, so after five logins of the same person each further login waits 1, 2, 4 and
 // then 8 seconds (A13 (1)); a spec that signs in many times asks for a clean slate before each test, so that the throttle under test is the
 // test's own and not the one the earlier tests left behind. It does not touch the in-memory limits (300 calls a minute for each person).
 //

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as e2e from '../../scripts/e2e-lane.mjs';
-import globalSetup, { e2eLane, e2eLogin } from '../e2e/global-setup';
+import globalSetup, { LOGINS, ROLES, e2eLane, e2eLogin } from '../e2e/global-setup';
 
 // WEB00: the pure parts of the end-to-end lane (scripts/e2e-lane.mjs): ports, the environment of the API, the admin
 // command's input and output, the lane's env file. None of these tests needs Docker, the API or a browser: the whole
@@ -229,6 +229,83 @@ describe('the admin command (npm run admin -- add-user)', () => {
   });
 });
 
+describe('the four logins of a lane (access and roles, Task 26)', () => {
+  const run = 'ab12cd34';
+  const logins = () =>
+    e2e.testLogins(run) as Array<{
+      login: string;
+      command: string;
+      role: string;
+      email: string;
+      fullName: string;
+    }>;
+  const named = (login: string) => {
+    const found = logins().find((one) => one.login === login);
+    if (!found) throw new Error(`the lane makes no login called ${login}`);
+    return found;
+  };
+
+  it('lists FOUR logins: the owner, the biller, the staff user and the Super Admin, in the order they are made', () => {
+    expect(logins().map((one) => one.login)).toEqual(['owner', 'biller', 'staff', 'super']);
+    expect([...e2e.TEST_LOGINS]).toEqual(['owner', 'biller', 'staff', 'super']);
+  });
+
+  it('keeps the names of the logins the same in the lane tool and in the global setup of the tests', () => {
+    expect([...LOGINS]).toEqual([...e2e.TEST_LOGINS]);
+    expect([...ROLES]).toEqual([...e2e.TEST_ROLES]);
+  });
+
+  it('gives the Super Admin an e-mail of its own: it differs from the owner’s, and all four are different', () => {
+    expect(named('super').email).toBe('e2e-super-ab12cd34@jv-test.local');
+    expect(named('super').email).not.toBe(named('owner').email);
+    expect(new Set(logins().map((one) => one.email)).size).toBe(4);
+  });
+
+  it('makes the first three with add-user, and the Super Admin with make-super-admin as a login with the role owner', () => {
+    expect(logins().map((one) => [one.login, one.command, one.role])).toEqual([
+      ['owner', 'add-user', 'owner'],
+      ['biller', 'add-user', 'biller'],
+      ['staff', 'add-user', 'staff'],
+      ['super', 'make-super-admin', 'owner'],
+    ]);
+  });
+
+  it('names the variables of each login the same way: JV_E2E_<LOGIN>_EMAIL and JV_E2E_<LOGIN>_PASSWORD', () => {
+    expect(e2e.loginEnvNames('super')).toEqual({
+      email: 'JV_E2E_SUPER_EMAIL',
+      password: 'JV_E2E_SUPER_PASSWORD',
+    });
+    expect(e2e.loginEnvNames('owner')).toEqual({
+      email: 'JV_E2E_OWNER_EMAIL',
+      password: 'JV_E2E_OWNER_PASSWORD',
+    });
+    const names = logins().flatMap((one) => Object.values(e2e.loginEnvNames(one.login)));
+    expect(new Set(names).size).toBe(8);
+  });
+
+  it('answers the three questions of make-super-admin in order: token, e-mail, name (it asks no role)', () => {
+    expect(
+      e2e.makeSuperAdminInput('the-token', { email: 'a@b.test', fullName: 'Test super' })
+    ).toBe('the-token\na@b.test\nTest super\n');
+  });
+
+  it('reads the temporary password out of what make-super-admin prints', () => {
+    const output = [
+      'Made the Super Admin a@b.test (role owner).',
+      'Temporary password (shown only now, write it down): Zq-90_xyzABC',
+      'They must change it when they sign in for the first time.',
+      '',
+    ].join('\n');
+    expect(e2e.parseTemporaryPassword(output)).toBe('Zq-90_xyzABC');
+    // a login that was promoted keeps its password: nothing is shown, and the lane must not go on with no password
+    expect(
+      e2e.parseTemporaryPassword(
+        'a@b.test is the Super Admin now (role owner). Their password is unchanged, and so is their name.\n'
+      )
+    ).toBeNull();
+  });
+});
+
 describe('the lane env file (.lanes/<lane>/.env.local)', () => {
   const values = {
     JV_LANE: 'b',
@@ -315,6 +392,18 @@ describe('the global setup of the Playwright tests (tests/e2e/global-setup.ts)',
     });
     vi.stubEnv('JV_E2E_BILLER_EMAIL', '');
     expect(() => e2eLogin('biller')).toThrow(/JV_E2E_BILLER_EMAIL.*global setup did not run/);
+  });
+
+  it('gives a test the login of the Super Admin the same way, with the name the lane gave it', () => {
+    vi.stubEnv('JV_E2E_SUPER_EMAIL', 'e2e-super-1@jv-test.local');
+    vi.stubEnv('JV_E2E_SUPER_PASSWORD', 'another-test-password');
+    expect(e2eLogin('super')).toEqual({
+      email: 'e2e-super-1@jv-test.local',
+      password: 'another-test-password',
+      fullName: 'Test super',
+    });
+    vi.stubEnv('JV_E2E_SUPER_PASSWORD', '');
+    expect(() => e2eLogin('super')).toThrow(/JV_E2E_SUPER_PASSWORD.*global setup did not run/);
   });
 
   it('gives a test the addresses and the admin token of the lane', () => {

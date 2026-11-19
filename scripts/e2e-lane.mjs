@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The end-to-end lane (task WEB00): a throw-away MariaDB, the built API and three test users, for the Playwright tests of the site.
+// The end-to-end lane (task WEB00): a throw-away MariaDB, the built API and four test logins, for the Playwright tests of the site.
 //
 //   LANE=b JV_API_DIR=<checkout of jewelvault-api> npm run e2e:lane -- up      start the lane (what Playwright's global setup does before the tests)
 //   LANE=b npm run e2e:lane -- down                                           stop the API and remove the lane's container (docker rm -fv: no volume is left)
@@ -12,9 +12,11 @@
 //   2. compiles the API from JV_API_DIR (tsconfig.build.json) into node_modules/.cache/jv-e2e/<lane>/dist of THAT checkout (git ignores it), so two lanes never delete each other's build;
 //   3. starts it on the lane's API port with a made-up admin token (its SHA-256 goes into JV_ADMIN_TOKEN_HASH), ALLOWED_ORIGINS set to the site's origin and the lane database's own password
 //      (read from Docker in memory; it is never printed or written);
-//   4. makes an owner, a biller and a staff user through the admin door with the API's real command (`npm run admin -- add-user`), signs each in once with the temporary password and changes it
-//      (the must-change gate of U11), so the test users are ordinary users;
-//   5. writes their e-mail addresses and passwords, and the token, to .lanes/<lane>/.env.local (mode 0600, git-ignored, rewritten on every run). Nothing secret goes anywhere else.
+//   4. makes four logins through the admin door with the API's real commands: an owner, a biller and a staff user (`npm run admin -- add-user`) and THE Super Admin (`npm run admin -- make-super-admin`: a
+//      login with the role owner and the flag that opens People & Roles, with an e-mail address of its own). Each is signed in once with the temporary password, which is changed
+//      (the must-change gate of U11), so the test logins are ordinary ones;
+//   5. writes their e-mail addresses and passwords (JV_E2E_OWNER_*, JV_E2E_BILLER_*, JV_E2E_STAFF_*, JV_E2E_SUPER_*), and the token, to .lanes/<lane>/.env.local (mode 0600, git-ignored, rewritten on every
+//      run). Nothing secret goes anywhere else.
 // `down` is safe to repeat. If `up` fails half way it takes down what it started.
 //
 // PORTS. The site (the Next.js dev server of Playwright's webServer) listens on PORT, else on the lane's port (main 4028, a 4128, b 4228, c 4328), else 4028; the API on that port + 1.
@@ -150,6 +152,13 @@ export const testEmail = (role, run) => `e2e-${role}-${run}@jv-test.local`;
  */
 export const addUserInput = (token, user) =>
   `${token}\n${user.email}\n${user.fullName}\n${user.role}\n`;
+
+/**
+ * What the admin command reads from its input for `make-super-admin`: the token, the e-mail and the name (it asks for no role: the Super Admin has the role owner and the flag).
+ * @param {string} token
+ * @param {{ email: string, fullName: string }} user
+ */
+export const makeSuperAdminInput = (token, user) => `${token}\n${user.email}\n${user.fullName}\n`;
 
 /**
  * The temporary password in the command's output ("Temporary password (shown only now, write it down): ..."), or null.
@@ -369,15 +378,23 @@ async function waitForReady(ports, child, logFile) {
   throw new Error(`the API did not answer /readyz within 40 s:\n${tail(logFile)}`);
 }
 
-/** `npm run admin -- add-user` against the lane's API: the real command of Harsh, fed through its input. Returns the temporary password. */
-async function adminAddUser(apiDir, ports, token, user) {
+/**
+ * One command of the API's terminal tool (`npm run admin -- add-user` or `make-super-admin`) against the lane's API: the real command of Harsh, fed through its input. Returns the temporary
+ * password the command printed once.
+ * @param {string} apiDir
+ * @param {{ apiOrigin: string }} ports
+ * @param {'add-user' | 'make-super-admin'} command
+ * @param {string} input what the command asks, one answer a line (`addUserInput`, `makeSuperAdminInput`)
+ * @param {string} who the login's name, for the message of a failure
+ */
+async function adminCommand(apiDir, ports, command, input, who) {
   const env = {
     ...Object.fromEntries(
       KEPT_FROM_SHELL.filter((n) => process.env[n] !== undefined).map((n) => [n, process.env[n]])
     ),
     JV_API_URL: ports.apiOrigin,
   };
-  const child = spawn('npm', ['--silent', 'run', 'admin', '--', 'add-user'], {
+  const child = spawn('npm', ['--silent', 'run', 'admin', '--', command], {
     cwd: apiDir,
     env,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -386,7 +403,7 @@ async function adminAddUser(apiDir, ports, token, user) {
   let err = '';
   child.stdout.on('data', (chunk) => (out += chunk));
   child.stderr.on('data', (chunk) => (err += chunk));
-  child.stdin.end(addUserInput(token, user));
+  child.stdin.end(input);
   const code = await new Promise((resolve, reject) => {
     child.once('error', reject);
     child.once('close', (c) => resolve(c ?? 1));
@@ -395,20 +412,20 @@ async function adminAddUser(apiDir, ports, token, user) {
   if (code !== 0 || temporary === null) {
     // the command never prints the token; its output on success holds the temporary password, so only the error stream is shown
     throw new Error(
-      `npm run admin -- add-user (${user.role}) failed (exit ${code}): ${err.trim().split('\n').slice(-3).join(' ')}`
+      `npm run admin -- ${command} (${who}) failed (exit ${code}): ${err.trim().split('\n').slice(-3).join(' ')}`
     );
   }
   return temporary;
 }
 
-/** A made user signs in with the temporary password and changes it, so that the account is an ordinary one (U11); returns the new password. */
+/** A made login signs in with the temporary password and changes it, so that the account is an ordinary one (U11); returns the new password. `user` is one of `testLogins`. */
 async function settlePassword(ports, user, temporary) {
   const login = await apiCall(ports, 'POST', '/v1/auth/login', {
     body: { email: user.email, password: temporary },
   });
   if (login.status !== 200 || !login.cookie)
     throw new Error(
-      `the first login of the ${user.role} was refused: ${login.status} ${login.json?.error?.code ?? ''}`
+      `the first login of the ${user.login} was refused: ${login.status} ${login.json?.error?.code ?? ''}`
     );
   const password = newPassword();
   const changed = await apiCall(ports, 'POST', '/v1/auth/change-password', {
@@ -417,13 +434,43 @@ async function settlePassword(ports, user, temporary) {
   });
   if (changed.status !== 200)
     throw new Error(
-      `the ${user.role}'s password change was refused: ${changed.status} ${changed.json?.error?.code ?? ''} ${changed.json?.error?.details?.field ?? ''}`
+      `the ${user.login}'s password change was refused: ${changed.status} ${changed.json?.error?.code ?? ''} ${changed.json?.error?.details?.field ?? ''}`
     );
   await apiCall(ports, 'POST', '/v1/auth/logout', { cookie: login.cookie });
   return password;
 }
 
+/** The three logins made with `add-user`: the built-in roles, by their keys. */
 export const TEST_ROLES = ['owner', 'biller', 'staff'];
+/** The fourth login: THE Super Admin, made with `make-super-admin` (it has the role owner and the Super Admin flag, and no role key of its own). */
+export const SUPER_LOGIN = 'super';
+/** The four logins of a lane, in the order they are made. `tests/e2e/global-setup.ts` lists the same four (a unit test keeps the two lists equal). */
+export const TEST_LOGINS = [...TEST_ROLES, SUPER_LOGIN];
+
+/**
+ * The four logins of one run: who each is and which admin command makes it. The Super Admin's e-mail is its own, never the owner's: the owner is an ordinary owner (no flag).
+ * @param {string} run
+ * @returns {Array<{ login: string, command: 'add-user' | 'make-super-admin', role: string, email: string, fullName: string }>}
+ */
+export function testLogins(run) {
+  return TEST_LOGINS.map((login) => ({
+    login,
+    command: login === SUPER_LOGIN ? 'make-super-admin' : 'add-user',
+    role: login === SUPER_LOGIN ? 'owner' : login,
+    email: testEmail(login, run),
+    fullName: `Test ${login}`,
+  }));
+}
+
+/**
+ * The two variables a login's e-mail address and password go to, in the lane's env and in the process env of the tests: JV_E2E_OWNER_EMAIL and JV_E2E_OWNER_PASSWORD, and so on to
+ * JV_E2E_SUPER_EMAIL and JV_E2E_SUPER_PASSWORD.
+ * @param {string} login
+ */
+export const loginEnvNames = (login) => ({
+  email: `JV_E2E_${login.toUpperCase()}_EMAIL`,
+  password: `JV_E2E_${login.toUpperCase()}_PASSWORD`,
+});
 
 // ------------------------------------------------------------------------------------------------ up, down, status
 
@@ -544,7 +591,7 @@ export async function laneUp(lane, { env = process.env } = {}) {
     writeFileSync(pidFile(lane), `${child.pid}\n`);
     await waitForReady(ports, child, apiLog);
 
-    info('making the owner, biller and staff users through the admin door');
+    info('making the owner, the biller, the staff user and the Super Admin through the admin door');
     const run = randomBytes(4).toString('hex');
     /** @type {Record<string, string>} */
     const values = {
@@ -555,15 +602,15 @@ export async function laneUp(lane, { env = process.env } = {}) {
       JV_E2E_API_URL: ports.apiOrigin,
       JV_E2E_ADMIN_TOKEN: token,
     };
-    for (const role of TEST_ROLES) {
-      const user = { email: testEmail(role, run), fullName: `Test ${role}`, role };
-      const temporary = await adminAddUser(apiDir, ports, token, user);
-      values[`JV_E2E_${role.toUpperCase()}_EMAIL`] = user.email;
-      values[`JV_E2E_${role.toUpperCase()}_PASSWORD`] = await settlePassword(
-        ports,
-        user,
-        temporary
-      );
+    for (const one of testLogins(run)) {
+      const input =
+        one.command === 'make-super-admin'
+          ? makeSuperAdminInput(token, one)
+          : addUserInput(token, one);
+      const temporary = await adminCommand(apiDir, ports, one.command, input, one.login);
+      const names = loginEnvNames(one.login);
+      values[names.email] = one.email;
+      values[names.password] = await settlePassword(ports, one, temporary);
     }
     writeLaneEnv(lane, values);
     info(
@@ -621,7 +668,7 @@ async function laneStatus(lane, env) {
 
 const HELP = `usage: LANE=<main|a|b|c> JV_API_DIR=<jewelvault-api checkout> node scripts/e2e-lane.mjs <command>
 
-  up        start the lane's MariaDB container and API, make the three test users, write .lanes/<lane>/.env.local
+  up        start the lane's MariaDB container and API, make the four test logins (owner, biller, staff, Super Admin), write .lanes/<lane>/.env.local
   down      stop the API and remove the container (docker rm -fv); safe to repeat
   status    container, API and site port
   ports     the site and API ports of the four lanes (needs no LANE)

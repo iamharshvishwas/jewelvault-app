@@ -200,7 +200,7 @@ export function renderEnvLocal(lane, { apiUrl, dbUrl, publishableKey }) {
 // ------------------------------------------------------------------------------------------------ verify plan
 
 // WEB00: `npm run verify` is typecheck, changed-file lint, unit tests, build, build check (WEB14) and, with E2E=1, the Playwright tests against a lane
-// (a MariaDB container, the API of JV_API_DIR and three test users: scripts/e2e-lane.mjs). The Supabase steps (db:check, db:test, db:test:2) are gone
+// (a MariaDB container, the API of JV_API_DIR and four test logins: scripts/e2e-lane.mjs). The Supabase steps (db:check, db:test, db:test:2) are gone
 // from it; their scripts stay until WEB15 removes the Supabase pieces. Only the e2e step needs a lane, so plain `npm run verify` needs neither LANE nor Docker.
 const VERIFY_STEPS = [
   { name: 'typecheck', script: 'typecheck' },
