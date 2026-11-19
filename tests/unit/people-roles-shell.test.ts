@@ -9,11 +9,10 @@
 // The Super Admin's real password is never used here: the tests type "made up" text.
 //
 // Run: npm test -- tests/unit/people-roles-shell.test.ts
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import ts from 'typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ConfirmPasswordDialog from '@/app/people-roles/components/ConfirmPasswordDialog';
 import {
@@ -37,6 +36,7 @@ import type {
   SuperTicksResponse,
 } from '@/lib/api/types';
 import { PLAN_TICKS, sessionFor, type RoleSpec } from './support/access';
+import { leaksOf, sourcesUnder } from './support/leaks';
 
 const STAMP = '2026-11-19T07:41:12.123456Z';
 
@@ -482,69 +482,6 @@ describe("Task 22 the shell is the Super Admin's own", () => {
 });
 
 // ================================================================================================ no password can leak
-
-/** Every .ts and .tsx under a folder of src, found by walking it (a file added next week is looked at at once). */
-function sourcesUnder(folder: string): string[] {
-  return readdirSync(folder).flatMap((name) => {
-    const full = path.join(folder, name);
-    if (statSync(full).isDirectory()) return sourcesUnder(full);
-    return /\.tsx?$/.test(name) ? [full] : [];
-  });
-}
-
-const STORAGE = new Set(['localStorage', 'sessionStorage', 'indexedDB', 'openDatabase']);
-
-/**
- * What a source text does that could let a password out: a console call; a template or a sum of texts that holds something called password (an address, a message); a throw or an
- * Error made from such a thing; a use of browser storage; a call of `fetch` (the client is the one place that calls the server).
- */
-function leaksOf(text: string, name: string): string[] {
-  const source = ts.createSourceFile(
-    name,
-    text,
-    ts.ScriptTarget.Latest,
-    true,
-    name.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-  );
-  const found: string[] = [];
-  const named = (node: ts.Node) => /password/i.test(node.getText(source));
-  const visit = (node: ts.Node) => {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === 'console'
-    )
-      found.push(`console: ${node.getText(source)}`);
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === 'fetch'
-    )
-      found.push(`fetch: ${node.getText(source)}`);
-    if (ts.isTemplateExpression(node) && node.templateSpans.some((span) => named(span.expression)))
-      found.push(`template: ${node.getText(source)}`);
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-      (named(node.left) || named(node.right)) &&
-      (ts.isStringLiteralLike(node.left) || ts.isStringLiteralLike(node.right))
-    )
-      found.push(`sum: ${node.getText(source)}`);
-    if (ts.isThrowStatement(node) && named(node)) found.push(`throw: ${node.getText(source)}`);
-    if (
-      ts.isNewExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      /Error$/.test(node.expression.text) &&
-      named(node)
-    )
-      found.push(`error: ${node.getText(source)}`);
-    if (ts.isIdentifier(node) && STORAGE.has(node.text)) found.push(`storage: ${node.text}`);
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
-  return found;
-}
 
 describe('Task 22 no password can leak from the files of the screen', () => {
   const SRC = path.resolve(__dirname, '../../src');
