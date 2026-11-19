@@ -14,7 +14,9 @@ import {
 // the question "Leave without saving?", the line under the heading ("Saved.", or why it was not), who has the role, and the box "I understand" of the sensitive ticks.
 //   - the question is one plain line with two buttons, not a dialog; it is an alert so that it is read out when it appears, and it scrolls into view: it is asked from the Cancel of the bar
 //     at the bottom of a phone as well, and the line is at the top;
-//   - a role changed by someone else and any other refusal are alerts; the first has "Reload" (the edits stay on screen until she presses it), the second says the API's own sentence;
+//   - a role changed by someone else and any other refusal are alerts; the first has "Reload" (the edits stay on screen until she presses it), the second says the API's own sentence. When
+//     the name or the description of the same save is already live, the alert of the first says so before its sentence ("The name was saved, but the ticks were not."): Reload would
+//     drop her ticks, and she must know the rename stuck;
 //   - the box is ticked for the sensitive ticks that are newly on, which it lists by their words; it is tied to the list for a screen reader.
 
 export function LeavePrompt({ onLeave, onKeep }: { onLeave: () => void; onKeep: () => void }) {
@@ -71,9 +73,10 @@ export function Notices({ notice, onReload }: { notice: Notice | null; onReload:
       data-testid={notice.kind === 'stale' ? 'edit-role-stale' : 'edit-role-problem'}
       className="jewel-card flex flex-wrap items-center gap-3 border-red-200 bg-red-50 p-3"
     >
-      <p className="text-sm font-semibold text-red-700">
-        {notice.kind === 'stale' ? STALE_LINE : notice.text}
-      </p>
+      <div className="space-y-1 text-sm font-semibold text-red-700">
+        {notice.kind === 'stale' && notice.savedLine !== null && <p>{notice.savedLine}</p>}
+        <p>{notice.kind === 'stale' ? STALE_LINE : notice.text}</p>
+      </div>
       {notice.kind === 'stale' && (
         <button
           type="button"

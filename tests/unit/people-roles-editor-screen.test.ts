@@ -7,6 +7,7 @@
 //   - a guard over every file of the screen (the tripwire of tests/unit/support/leaks.ts also walks the files of this task).
 //
 // Run: npx vitest run tests/unit/people-roles-editor-screen.test.ts
+import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { createElement } from 'react';
@@ -22,9 +23,11 @@ import {
   PeopleRolesView,
 } from '@/app/people-roles/components/PeopleRolesClient';
 import RoleEditSummary from '@/app/people-roles/components/RoleEditSummary';
-import { infoOf, roleEditOf, seedOf, type Draft } from '@/app/people-roles/lib/editorDraft';
-import { roleEditConfirmLabel, roleEditTitle } from '@/app/people-roles/lib/editWords';
+import { infoOf, roleEditOf, seedOf, settle, type Draft } from '@/app/people-roles/lib/editorDraft';
+import { STALE_LINE, roleEditConfirmLabel, roleEditTitle } from '@/app/people-roles/lib/editWords';
+import { runRoleEdit, type RoleEditWrites } from '@/app/people-roles/lib/roleEdit';
 import { TICK_KEYS } from '@/lib/access';
+import { ApiError } from '@/lib/api/client';
 import type { SuperPerson } from '@/lib/api/types';
 import {
   AFTER_FIRST,
@@ -573,7 +576,9 @@ describe('Task 25 the screen of a role: the lines under the heading', () => {
   });
 
   it('a role changed by someone else is an alert with exactly the words of the brief, and a Reload button', () => {
-    const html = drawEditor(run(CLEAN, tick('cashbook_all', true)), { notice: { kind: 'stale' } });
+    const html = drawEditor(run(CLEAN, tick('cashbook_all', true)), {
+      notice: { kind: 'stale', savedLine: null },
+    });
     const alert = tagOfBlock(html, 'edit-role-stale');
     expect(plain(alert)).toBe(
       'This role was changed by someone else. Reload it and try again. Reload'
@@ -582,6 +587,86 @@ describe('Task 25 the screen of a role: the lines under the heading', () => {
     expect(tagOf(html, 'edit-role-reload')).toContain('type="button"');
     // her edits are still on screen
     expect(plain(html)).toContain('1 change not saved yet');
+  });
+
+  const STALE_SENTENCE = 'This role was changed by someone else. Reload it and try again.';
+  const SAVED_LINES = [
+    'The name was saved, but the ticks were not.',
+    'The description was saved, but the ticks were not.',
+    'The name and description were saved, but the ticks were not.',
+  ];
+
+  it('when the name or the description was already saved, the same alert says so first: that line, then the stale sentence, then Reload, in that order', () => {
+    for (const line of SAVED_LINES) {
+      const html = drawEditor(run(CLEAN, tick('cashbook_all', true)), {
+        notice: { kind: 'stale', savedLine: line },
+      });
+      const alert = tagOfBlock(html, 'edit-role-stale');
+      expect(plain(alert), line).toBe(`${line} ${STALE_SENTENCE} Reload`);
+      expect(alert.indexOf(line), line).toBeGreaterThan(-1);
+      expect(alert.indexOf(STALE_SENTENCE), line).toBeGreaterThan(alert.indexOf(line));
+      expect(alert.indexOf('>Reload</button>'), line).toBeGreaterThan(
+        alert.indexOf(STALE_SENTENCE)
+      );
+      // one alert, with the button of Reload in it, as before
+      expect(html.match(/role="alert"/g), line).toHaveLength(1);
+      expect(tagOf(html, 'edit-role-reload')).toContain('type="button"');
+    }
+  });
+
+  it('the stale sentence is byte for byte the same with and without the line before it, in a paragraph of its own', () => {
+    expect(STALE_LINE).toBe(STALE_SENTENCE);
+    for (const savedLine of [null, ...SAVED_LINES]) {
+      const html = drawEditor(CLEAN, { notice: { kind: 'stale', savedLine } });
+      expect(html, String(savedLine)).toMatch(new RegExp(`<p[^>]*>${STALE_SENTENCE}</p>`));
+    }
+  });
+
+  it('with nothing saved before (the first write was stale, or only ticks changed) the alert is the stale sentence alone, as before', () => {
+    const html = drawEditor(run(CLEAN, tick('cashbook_all', true)), {
+      notice: { kind: 'stale', savedLine: null },
+    });
+    expect(plain(tagOfBlock(html, 'edit-role-stale'))).toBe(`${STALE_SENTENCE} Reload`);
+    expect(plain(html)).not.toMatch(/saved, but the ticks were not/);
+  });
+
+  it('the alert with the line before it names no tick key, role key, id or stamp', () => {
+    for (const line of SAVED_LINES) {
+      const html = drawEditor(CLEAN, { notice: { kind: 'stale', savedLine: line } });
+      for (const hidden of [...TICK_KEYS, 'zk-cashier', STAMP, AFTER_FIRST, 'updated_at'])
+        expect(html.includes(hidden), hidden).toBe(false);
+    }
+  });
+
+  it('a whole stale second save, from the writes to the page: the name is saved and live, so it is not counted as unsaved, the ticks are, and the alert says what was saved first', async () => {
+    const writes = {
+      superEditRole: async (key: string, body: { changes: { name?: string } }) => ({
+        role: role({ key, name: body.changes.name ?? 'Cashier', updated_at: AFTER_FIRST }),
+      }),
+      superSetRoleTicks: async () => {
+        throw new ApiError({
+          code: 'JV_STALE',
+          status: 409,
+          message: 'This was changed by someone else. Reload and try again.',
+          details: {},
+          write: true,
+        });
+      },
+    } as unknown as RoleEditWrites;
+    const draft = run(CLEAN, { type: 'name', value: '  Till ' }, tick('cashbook_all', true));
+    const edit = roleEditOf(draft, CATALOGUE);
+    const typed = `pw-${randomBytes(9).toString('hex')}`;
+    const settled = settle(await runRoleEdit(writes, async () => undefined, edit, typed), edit);
+    const after = settled.action === null ? draft : run(draft, settled.action);
+    const html = drawEditor(after, { notice: settled.notice });
+    expect(plain(tagOfBlock(html, 'edit-role-stale'))).toBe(
+      `The name was saved, but the ticks were not. ${STALE_SENTENCE} Reload`
+    );
+    expect(plain(tagOfBlock(html, 'edit-role-banner'))).toBe(
+      '1 change not saved yet: See the cash book for all days'
+    );
+    expect(tagOf(html, 'edit-role-name')).toContain('value="Till"');
+    expect(html.includes(typed)).toBe(false);
   });
 
   it("any other refusal is an alert with the API's sentence, untouched, and no Reload button", () => {
@@ -618,7 +703,7 @@ describe('Task 25 the screen of a role: no key, no id, no stamp', () => {
       drawEditor(CLEAN),
       drawEditor(edited),
       drawEditor(run(edited, { type: 'understood', confirm, on: true }), {
-        notice: { kind: 'stale' },
+        notice: { kind: 'stale', savedLine: null },
         leaving: true,
       }),
       drawEditor(seedOf(role({ key: 'owner', name: 'Owner', fixed: true, ticks: [...TICK_KEYS] }))),
@@ -868,7 +953,9 @@ describe('Task 25 the editor is wired', () => {
     expect(callsOf('EditRole.tsx', 'runRoleEdit')).toEqual([
       ['api', 'reload', 'confirming', 'password'],
     ]);
-    expect(callsOf('EditRole.tsx', 'settle')).toHaveLength(1);
+    expect(flat(callsOf('EditRole.tsx', 'settle'))).toEqual([
+      ['await runRoleEdit(api, reload, confirming, password)', 'confirming'],
+    ]);
     const dialog = elementsOf('EditRole.tsx', 'ConfirmPasswordDialog');
     expect(dialog).toHaveLength(1);
     expect(dialog[0]).toMatchObject({

@@ -41,7 +41,12 @@ import {
   roleEditSummary,
   roleEditTitle,
 } from '@/app/people-roles/lib/editWords';
-import { partlySaved, runRoleEdit, type RoleEditWrites } from '@/app/people-roles/lib/roleEdit';
+import {
+  partlySaved,
+  runRoleEdit,
+  savedLine,
+  type RoleEditWrites,
+} from '@/app/people-roles/lib/roleEdit';
 import { TICK_KEYS, type TickKey } from '@/lib/access';
 import { ApiError } from '@/lib/api/client';
 import { UNCONFIRMED_MESSAGE } from '@/lib/api/errorMap';
@@ -1002,7 +1007,7 @@ describe('Task 25 settle: what the screen does with the outcome of a save', () =
   const saved = role({ name: 'Till', updated_at: AFTER_FIRST });
 
   it('saved: the draft starts again from the role the API answered with, and the line says "Saved."; the step closes', () => {
-    const outcome = settle({ kind: 'saved', role: saved });
+    const outcome = settle({ kind: 'saved', role: saved }, editOf(...TICKS));
     expect(outcome).toEqual({
       action: { type: 'seed', role: saved },
       notice: { kind: 'saved' },
@@ -1017,7 +1022,9 @@ describe('Task 25 settle: what the screen does with the outcome of a save', () =
   });
 
   it('a password that was refused stays on the step with its sentence; nothing else changes', () => {
-    expect(settle({ kind: 'password', error: 'Your password is not correct.' })).toEqual({
+    expect(
+      settle({ kind: 'password', error: 'Your password is not correct.' }, editOf(...TICKS))
+    ).toEqual({
       action: null,
       notice: null,
       stepError: 'Your password is not correct.',
@@ -1025,15 +1032,15 @@ describe('Task 25 settle: what the screen does with the outcome of a save', () =
   });
 
   it('a role changed by someone else closes the step and keeps her edits, with the stale line', () => {
-    expect(settle({ kind: 'stale', saved: null })).toEqual({
+    expect(settle({ kind: 'stale', saved: null }, editOf(...TICKS))).toEqual({
       action: null,
-      notice: { kind: 'stale' },
+      notice: { kind: 'stale', savedLine: null },
       stepError: null,
     });
   });
 
   it("any other refusal closes the step and says the API's sentence on the page", () => {
-    expect(settle({ kind: 'refused', error: 'Not now.', saved: null })).toEqual({
+    expect(settle({ kind: 'refused', error: 'Not now.', saved: null }, editOf(...TICKS))).toEqual({
       action: null,
       notice: { kind: 'problem', text: 'Not now.' },
       stepError: null,
@@ -1045,6 +1052,99 @@ describe('Task 25 settle: what the screen does with the outcome of a save', () =
       { kind: 'stale', saved } as const,
       { kind: 'refused', error: 'x', saved } as const,
     ])
-      expect(settle(outcome).action, outcome.kind).toEqual({ type: 'rebase', role: saved });
+      expect(settle(outcome, editOf(NAME, ...TICKS)).action, outcome.kind).toEqual({
+        type: 'rebase',
+        role: saved,
+      });
+  });
+});
+
+describe('Task 25 review: a stale answer to the second write still says what the first write saved', () => {
+  /** The whole way a save goes, up to the notice: the writes (the second one answers `JV_STALE`), then what the screen does with the outcome. */
+  async function staleSecondWrite(edit: ReturnType<typeof editOf>) {
+    const { writes, reload } = fakeWrites();
+    writes.superSetRoleTicks.mockRejectedValueOnce(refusal('JV_STALE', 409, 'This was changed.'));
+    const outcome = await runRoleEdit(writes, reload, edit, PASSWORD);
+    return { outcome, settled: settle(outcome, edit), writes };
+  }
+
+  it('the name was saved and the ticks are stale: the notice carries "The name was saved, but the ticks were not."', async () => {
+    const { settled } = await staleSecondWrite(editOf(NAME, ...TICKS));
+    expect(settled.notice).toEqual({
+      kind: 'stale',
+      savedLine: 'The name was saved, but the ticks were not.',
+    });
+    expect(settled.stepError).toBeNull();
+  });
+
+  it('the description was saved: "The description was saved, but the ticks were not."', async () => {
+    const { settled } = await staleSecondWrite(editOf(DESCRIPTION, ...TICKS));
+    expect(settled.notice).toEqual({
+      kind: 'stale',
+      savedLine: 'The description was saved, but the ticks were not.',
+    });
+  });
+
+  it('the name and the description were saved: "The name and description were saved, but the ticks were not."', async () => {
+    const { settled } = await staleSecondWrite(editOf(NAME, DESCRIPTION, ...TICKS));
+    expect(settled.notice).toEqual({
+      kind: 'stale',
+      savedLine: 'The name and description were saved, but the ticks were not.',
+    });
+  });
+
+  it('the draft still takes the role of the first write as its saved copy (the name is not an unsaved change any more)', async () => {
+    const { outcome, settled } = await staleSecondWrite(editOf(NAME, ...TICKS));
+    expect(outcome).toEqual({
+      kind: 'stale',
+      saved: expect.objectContaining({ name: 'Night Till', updated_at: AFTER_FIRST }),
+    });
+    expect(settled.action).toEqual({
+      type: 'rebase',
+      role: expect.objectContaining({ updated_at: AFTER_FIRST }),
+    });
+  });
+
+  it('a stale answer to the FIRST write saved nothing: the notice is the stale sentence alone', async () => {
+    const { writes, reload } = fakeWrites();
+    writes.superEditRole.mockRejectedValueOnce(refusal('JV_STALE', 409, 'This was changed.'));
+    const edit = editOf(NAME, ...TICKS);
+    const outcome = await runRoleEdit(writes, reload, edit, PASSWORD);
+    expect(writes.superSetRoleTicks).not.toHaveBeenCalled();
+    expect(settle(outcome, edit)).toEqual({
+      action: null,
+      notice: { kind: 'stale', savedLine: null },
+      stepError: null,
+    });
+  });
+
+  it('a stale answer when only the ticks changed (one write, nothing saved before it) is the stale sentence alone', async () => {
+    const { writes, reload } = fakeWrites();
+    writes.superSetRoleTicks.mockRejectedValueOnce(refusal('JV_STALE', 409, 'This was changed.'));
+    const edit = editOf(...TICKS);
+    const outcome = await runRoleEdit(writes, reload, edit, PASSWORD);
+    expect(settle(outcome, edit).notice).toEqual({ kind: 'stale', savedLine: null });
+  });
+
+  it('the line is the words partlySaved uses for the same case, up to its reason', () => {
+    for (const actions of [[NAME], [DESCRIPTION], [NAME, DESCRIPTION]]) {
+      const edit = editOf(...actions, ...TICKS);
+      expect(partlySaved(edit, 'Because of this.')).toBe(`${savedLine(edit)} Because of this.`);
+    }
+  });
+
+  it('the notice names no tick key, role key, id or stamp', async () => {
+    for (const edit of [editOf(NAME, ...TICKS), editOf(NAME, DESCRIPTION, ...TICKS)]) {
+      const text = JSON.stringify((await staleSecondWrite(edit)).settled.notice);
+      for (const hidden of [...TICK_KEYS, 'zk-cashier', STAMP, AFTER_FIRST, 'updated_at'])
+        expect(text.includes(hidden), hidden).toBe(false);
+    }
+  });
+
+  it('the writer says what it said before: a stale answer of the second write is stale, with the first write saved and the lists read again', async () => {
+    const { outcome, writes } = await staleSecondWrite(editOf(NAME, ...TICKS));
+    expect(outcome.kind).toBe('stale');
+    expect(writes.superEditRole).toHaveBeenCalledTimes(1);
+    expect(writes.superSetRoleTicks).toHaveBeenCalledTimes(1);
   });
 });

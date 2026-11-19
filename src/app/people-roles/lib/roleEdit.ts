@@ -11,7 +11,7 @@
 //   - the lists are read again after every success, after anything that was written (the first write alone), and after an outcome nobody can vouch for. A refusal that wrote nothing reads
 //     nothing again, and a stale one does not either: the "Reload" button of the screen does that when she asks for it, since the edits on screen are hers until then;
 //   - when the first write went through the second can no longer be answered on the password step (the step would write the first part again): whatever refused the second is shown on
-//     the screen, with what was saved.
+//     the screen, with what was saved (`partlySaved` for a refusal, and for a role changed by someone else the screen puts `savedLine` before its own sentence).
 import type { TickKey } from '@/lib/access';
 import { isApiError, type ApiClient } from '@/lib/api/client';
 import { NOTHING_CHANGED } from '@/lib/api/errorMap';
@@ -39,22 +39,32 @@ export type RoleEditOutcome =
   | { kind: 'stale'; saved: SuperRole | null }
   | { kind: 'refused'; error: string; saved: SuperRole | null };
 
+/** The part of an edit that the first write saves, as the start of a sentence: "The name was", "The description was" or "The name and description were". */
+function firstPartOf(edit: RoleEdit): string {
+  if (edit.name !== undefined && edit.description !== undefined)
+    return 'The name and description were';
+  return edit.name !== undefined ? 'The name was' : 'The description was';
+}
+
+/**
+ * The plain line of what is live when the first write went through and the second was refused, so that the ticks were not saved: "The name was saved, but the ticks were not." (or the
+ * description, or both). `partlySaved` says it before the reason; the screen says it before the sentence of a role changed by someone else.
+ */
+export function savedLine(edit: RoleEdit): string {
+  return `${firstPartOf(edit)} saved, but the ticks were not.`;
+}
+
 /**
  * What was saved and what was not, when the first write went through and the second did not, then the reason. `wroteNothing`: the refusal says nothing was written; else nobody can say.
  * The client ends the sentence of a refusal with "Nothing was changed." (right for one write); here something WAS changed, so that closing phrase, and only it, is left off.
  */
 export function partlySaved(edit: RoleEdit, sentence: string, wroteNothing = true): string {
-  const what =
-    edit.name !== undefined && edit.description !== undefined
-      ? 'The name and description were'
-      : edit.name !== undefined
-        ? 'The name was'
-        : 'The description was';
-  if (!wroteNothing) return `${what} saved. Could not confirm that the ticks were saved.`;
+  if (!wroteNothing)
+    return `${firstPartOf(edit)} saved. Could not confirm that the ticks were saved.`;
   const reason = sentence.endsWith(NOTHING_CHANGED)
     ? sentence.slice(0, -NOTHING_CHANGED.length).trimEnd()
     : sentence;
-  return `${what} saved, but the ticks were not.${reason === '' ? '' : ` ${reason}`}`;
+  return reason === '' ? savedLine(edit) : `${savedLine(edit)} ${reason}`;
 }
 
 /** The role of an answer. An answer without one (the agreed shape drifted) throws: an outcome nobody can vouch for. */

@@ -28,7 +28,8 @@ import RoleEditSummary from './RoleEditSummary';
 //     meanwhile does not touch a draft with edits: a save from an older copy is refused as stale, and that is how a change made by someone else is never undone without a word;
 //   - Save goes to the password step (`ConfirmPasswordDialog`, shown over the page: the page behind it is off) with what is about to happen in words. `runRoleEdit` does the one or two
 //     writes with the password in their bodies. A wrong password stays on the step with its sentence. Any other outcome closes the step: saved (the draft is the answer, "Saved."), a
-//     role changed by someone else (her edits stay, with "Reload" to discard them), or any other refusal in a line on the page (the API's own sentence);
+//     role changed by someone else (her edits stay, with "Reload" to discard them; when the name or the description of this save is already live, the alert says so first), or any
+//     other refusal in a line on the page (the API's own sentence);
 //   - the tab strip is locked while she has edits that are not saved or the password step is open (`onBusy`, the shell's `nextTab`): changing tabs would lose them;
 //   - the page is not a dialog and listens for no key of its own: only the password step listens for Escape, and the question "Leave without saving?" is a line on the page.
 
@@ -79,7 +80,7 @@ function Editor({
       action,
       notice: next,
       stepError,
-    } = settle(await runRoleEdit(api, reload, confirming, password));
+    } = settle(await runRoleEdit(api, reload, confirming, password), confirming);
     // a password that was refused is typed again on the step; every other outcome closes it
     if (stepError !== null) return { error: stepError };
     if (action !== null) dispatch(action);

@@ -8,7 +8,7 @@
 //   - the name is compared as the API keeps it (spaces around it gone, white space inside folded), the description trimmed; capitals are a rename.
 import type { TickKey } from '@/lib/access';
 import type { SuperRole, TickInfo } from '@/lib/api/types';
-import type { RoleEdit, RoleEditOutcome } from './roleEdit';
+import { savedLine, type RoleEdit, type RoleEditOutcome } from './roleEdit';
 import { cleanRoleName, validateRoleText } from './roles';
 import { changesOf, sensitiveToConfirm, toggleTick } from './tickEdit';
 
@@ -128,8 +128,14 @@ export function infoOf(
   };
 }
 
-/** A line under the heading of the screen: that it was saved, or why it was not. */
-export type Notice = { kind: 'saved' } | { kind: 'stale' } | { kind: 'problem'; text: string };
+/**
+ * A line under the heading of the screen: that it was saved, or why it was not. A role changed by someone else may come with the plain line of what its first write had already saved
+ * (`savedLine`: "The name was saved, but the ticks were not."), which is said before the sentence about the role; it is null when nothing was saved.
+ */
+export type Notice =
+  | { kind: 'saved' }
+  | { kind: 'stale'; savedLine: string | null }
+  | { kind: 'problem'; text: string };
 
 /** What the screen does with the outcome of a save. */
 export interface Settled {
@@ -142,11 +148,12 @@ export interface Settled {
 }
 
 /**
- * What the screen does with the outcome of a save (`runRoleEdit`). Saved: the draft starts again from the role the API answered with, and the line says "Saved.". A password that was
- * refused stays on the password step with its sentence. Anything else closes the step: a role changed by someone else keeps her edits and says so, any other refusal says the API's
- * own sentence; and when the first write of a save went through (`saved`) the draft takes that role as its saved copy, with the ticks she ticked still ticked.
+ * What the screen does with the outcome of a save (`runRoleEdit`) of this edit. Saved: the draft starts again from the role the API answered with, and the line says "Saved.". A
+ * password that was refused stays on the password step with its sentence. Anything else closes the step: a role changed by someone else keeps her edits and says so, any other refusal
+ * says the API's own sentence; and when the first write of a save went through (`saved`) the draft takes that role as its saved copy, with the ticks she ticked still ticked, and a role
+ * changed by someone else says first what is already live (`savedLine`), so that "Reload", which drops her ticks, is not pressed without knowing that the name is saved.
  */
-export function settle(outcome: RoleEditOutcome): Settled {
+export function settle(outcome: RoleEditOutcome, edit: RoleEdit): Settled {
   switch (outcome.kind) {
     case 'password':
       return { action: null, notice: null, stepError: outcome.error };
@@ -161,7 +168,9 @@ export function settle(outcome: RoleEditOutcome): Settled {
       return {
         action: outcome.saved === null ? null : { type: 'rebase', role: outcome.saved },
         notice:
-          outcome.kind === 'stale' ? { kind: 'stale' } : { kind: 'problem', text: outcome.error },
+          outcome.kind === 'stale'
+            ? { kind: 'stale', savedLine: outcome.saved === null ? null : savedLine(edit) }
+            : { kind: 'problem', text: outcome.error },
         stepError: null,
       };
   }
