@@ -47,8 +47,11 @@ export function createPdfJob(
     let outcome: ShareOutcome;
     try {
       outcome = await deps.share(file);
-    } catch {
-      if (run === current) set({ step: 'failed', message: PDF_SHARE_FAILED });
+    } catch (error) {
+      if (run === current) {
+        console.warn('The PDF could not be shared', error);
+        set({ step: 'failed', message: PDF_SHARE_FAILED });
+      }
       return;
     }
     if (run !== current) return;
@@ -68,9 +71,13 @@ export function createPdfJob(
       file = await deps.make((done, total) => {
         if (making && run === current) set({ step: 'making', intent, done, total });
       }, controller.signal);
-    } catch {
+    } catch (error) {
       making = false;
-      if (run === current) set({ step: 'failed', message: PDF_MAKE_FAILED });
+      // After Stop the make ends in an AbortError: that is not a failure, so it stays quiet.
+      if (run === current) {
+        console.warn('The PDF could not be made', error);
+        set({ step: 'failed', message: PDF_MAKE_FAILED });
+      }
       return;
     }
     making = false;
@@ -82,8 +89,9 @@ export function createPdfJob(
     }
     try {
       deps.download(file);
-    } catch {
+    } catch (error) {
       // The save could not start: say so, rather than leave Stop on the screen for ever.
+      console.warn('The PDF could not be saved', error);
       set({ step: 'failed', message: PDF_MAKE_FAILED });
       return;
     }

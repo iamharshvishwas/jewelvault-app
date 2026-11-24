@@ -2,12 +2,13 @@
 //   - download: `making`, then `idle` once the file is saved
 //   - share: `shared` and `cancelled` end in `idle` (a menu the person closes is not a failure); `blocked` (the browser refused the old tap after a slow make) ends in `ready`, and
 //     `sendReady()` shares that same file at once, with no second make and nothing awaited before the share (the tap must still count as the person's own)
-//   - a make that fails, or a share that throws, ends in `failed` with its own message
+//   - a make that fails, a share that throws, or a save that throws, ends in `failed` with its own message and is logged with `console.warn` (the person sees the sentence, the developer
+//     the error); the AbortError that follows Stop is not a failure and is not logged
 //   - `stop()` aborts the make and ends in `idle`; what the make does later (resolve or reject) is ignored and nothing is delivered
 //   - a second `start` while making does nothing; the photo count reaches the screen
 //
 // Run: npm test -- tests/unit/pdf-job.test.ts
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import type { ShareOutcome } from '@/lib/pdf/deliver';
 import {
   PDF_MAKE_FAILED,
@@ -52,6 +53,15 @@ const making = (intent: 'download' | 'share', done = 0, total = 0) => ({
 });
 
 describe('PDF-2: the PDF job', () => {
+  // The job logs a failure with console.warn; the spy keeps the test output clean and lets a test see what was logged.
+  let warn: MockInstance<typeof console.warn>;
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
   it('(1) download: making, then idle, and the file is downloaded once', async () => {
     const { job, states, download, share } = setup();
     await job.start('download');
@@ -59,6 +69,7 @@ describe('PDF-2: the PDF job', () => {
     expect(download).toHaveBeenCalledTimes(1);
     expect(download).toHaveBeenCalledWith(file);
     expect(share).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it.each<ShareOutcome>(['shared', 'cancelled'])(
@@ -128,34 +139,40 @@ describe('PDF-2: the PDF job', () => {
   });
 
   it('(4) a make that rejects gives failed with the make message', async () => {
+    const error = new Error('fonts did not load');
     const { job, last, download } = setup({
       make: vi.fn(async () => {
-        throw new Error('fonts did not load');
+        throw error;
       }),
     });
     await job.start('download');
     expect(last()).toEqual({ step: 'failed', message: PDF_MAKE_FAILED });
     expect(download).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledExactlyOnceWith('The PDF could not be made', error);
   });
 
   it('(4) a make that throws before it returns a promise also gives failed', async () => {
+    const error = new Error('sync');
     const { job, last } = setup({
       make: () => {
-        throw new Error('sync');
+        throw error;
       },
     });
     await job.start('share');
     expect(last()).toEqual({ step: 'failed', message: PDF_MAKE_FAILED });
+    expect(warn).toHaveBeenCalledExactlyOnceWith('The PDF could not be made', error);
   });
 
   it('(4) a share that throws gives failed with the share message, and Download PDF can still be used', async () => {
+    const error = new TypeError('files are not supported');
     const { job, last, make, download } = setup({
       share: vi.fn(async () => {
-        throw new TypeError('files are not supported');
+        throw error;
       }),
     });
     await job.start('share');
     expect(last()).toEqual({ step: 'failed', message: PDF_SHARE_FAILED });
+    expect(warn).toHaveBeenCalledExactlyOnceWith('The PDF could not be shared', error);
 
     await job.start('download');
     expect(make).toHaveBeenCalledTimes(2);
@@ -164,7 +181,8 @@ describe('PDF-2: the PDF job', () => {
   });
 
   it('(4) a ready file whose share then throws gives failed with the share message', async () => {
-    const outcomes: Array<ShareOutcome | Error> = ['blocked', new Error('nope')];
+    const error = new Error('nope');
+    const outcomes: Array<ShareOutcome | Error> = ['blocked', error];
     const share = vi.fn<PdfJobDeps['share']>(async () => {
       const next = outcomes.shift() ?? 'shared';
       if (next instanceof Error) throw next;
@@ -172,18 +190,22 @@ describe('PDF-2: the PDF job', () => {
     });
     const { job, last } = setup({ share });
     await job.start('share');
+    expect(warn).not.toHaveBeenCalled();
     await job.sendReady();
     expect(last()).toEqual({ step: 'failed', message: PDF_SHARE_FAILED });
+    expect(warn).toHaveBeenCalledExactlyOnceWith('The PDF could not be shared', error);
   });
 
   it('(4) a download that throws does not leave the job making for ever', async () => {
+    const error = new Error('no blob address');
     const { job, last } = setup({
       download: vi.fn(() => {
-        throw new Error('no blob address');
+        throw error;
       }),
     });
     await job.start('download');
     expect(last()).toEqual({ step: 'failed', message: PDF_MAKE_FAILED });
+    expect(warn).toHaveBeenCalledExactlyOnceWith('The PDF could not be saved', error);
   });
 
   it('(5) stop while making aborts the signal, ends in idle, and delivers nothing even if make resolves later', async () => {
@@ -218,6 +240,7 @@ describe('PDF-2: the PDF job', () => {
     pending.reject(new DOMException('stopped', 'AbortError'));
     await started;
     expect(last()).toEqual({ step: 'idle' });
+    expect(warn).not.toHaveBeenCalled();
 
     const other = hold();
     const second = setup({ make: vi.fn(() => other.promise) });
@@ -226,6 +249,22 @@ describe('PDF-2: the PDF job', () => {
     other.reject(new Error('some other failure'));
     await secondStart;
     expect(second.last()).toEqual({ step: 'idle' });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('(5) stop while the share menu is open: a share that throws later leaves idle and is not logged', async () => {
+    const open = hold<ShareOutcome>();
+    const share = vi.fn<PdfJobDeps['share']>(() => open.promise);
+    const { job, last } = setup({ share });
+    const started = job.start('share');
+    await vi.waitFor(() => expect(share).toHaveBeenCalledTimes(1)); // the make has ended: the menu is open
+    expect(last()).toEqual(making('share'));
+
+    job.stop();
+    open.reject(new TypeError('late'));
+    await started;
+    expect(last()).toEqual({ step: 'idle' });
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('(5) stop then start again: the old make cannot touch the new one', async () => {
