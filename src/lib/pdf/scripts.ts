@@ -9,10 +9,9 @@ export interface Run {
   font: typeof FONT_LATIN | typeof FONT_DEVANAGARI;
 }
 
-/** The letters Noto Sans draws for us: tab, new line, English, the accented Latin letters, dashes and quotes, the euro and the rupee. */
+/** The letters Noto Sans draws for us: new line, English, the accented Latin letters, dashes and quotes, the euro and the rupee. */
 function isLatin(code: number): boolean {
   return (
-    code === 0x09 ||
     code === 0x0a ||
     (code >= 0x20 && code <= 0x7e) ||
     (code >= 0xa0 && code <= 0x24f) ||
@@ -28,14 +27,17 @@ function isDevanagari(code: number): boolean {
   return (code >= 0x0900 && code <= 0x097f) || code === 0x200c || code === 0x200d;
 }
 
-/** The text in runs by font; `replaced` counts the letters written as `?`. With `devanagari` false, Hindi letters are written `?` too. */
+/**
+ * The text in runs by font; `replaced` counts the letters written as `?`. With `devanagari` false, Hindi letters are written `?` too. First a Windows line end (`\r\n`) or a lone `\r`
+ * becomes a new line, and a tab a space: Noto Sans has no letter for either, so an address typed on Windows would show a `?` and a tab an empty box.
+ */
 export function splitScripts(
   text: string,
   options: { devanagari: boolean }
 ): { runs: Run[]; replaced: number } {
   const runs: Run[] = [];
   let replaced = 0;
-  for (const letter of text) {
+  for (const letter of text.replace(/\r\n?/g, '\n').replace(/\t/g, ' ')) {
     const code = letter.codePointAt(0) ?? 0;
     let font: Run['font'] = FONT_LATIN;
     let drawn = letter;

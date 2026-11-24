@@ -1,9 +1,11 @@
 // PDF-1: the PDF engine's parts that run in Node, and the two readers the later PDF tests use.
 //   - a definition is drawn with the shop's fonts (public/fonts) and read back: one A4 page, the rupee sign and an accented letter, bold text from the bold file
-//   - `splitScripts` sends each letter to the font that can draw it (Latin and the rupee to Noto Sans, Hindi to Noto Sans Devanagari) and writes any other letter as `?`
-//   - `breakableText` lets a long word with no space wrap, `usesDevanagari` says whether the Hindi font must be fetched, and a Hindi name is drawn through `pdfText`
+//   - `splitScripts` sends each letter to the font that can draw it (Latin and the rupee to Noto Sans, Hindi to Noto Sans Devanagari) and writes any other letter as `?`; a Windows
+//     line end or a lone carriage return becomes a new line, and a tab a space
+//   - `breakableText` lets a long word with no space wrap, `usesDevanagari` says whether the Hindi font must be fetched (from the content only), and a Hindi name is drawn through `pdfText`
 //
-// The definition is drawn by pdfmake's Node build (tests/unit/support/pdf-node.ts) and read by pdf.js (tests/unit/support/pdf-read.ts), apart from the browser engine (src/lib/pdf/engine.ts).
+// The definition is drawn by pdfmake's Node build (tests/unit/support/pdf-node.ts) and read by pdf.js (tests/unit/support/pdf-read.ts), apart from the browser engine (src/lib/pdf/engine.ts),
+// which tests/unit/pdf-engine-browser.test.ts runs over pdfmake's browser build.
 //
 // Run: npm test -- tests/unit/pdf-engine.test.ts
 import { describe, expect, it } from 'vitest';
@@ -63,6 +65,17 @@ describe('PDF-1: scripts and fonts', () => {
     });
   });
 
+  it('splitScripts turns a Windows line end and a lone carriage return into a new line, and a tab into a space', () => {
+    expect(splitScripts('12 MG Road\r\nJohari Bazar\rJaipur', { devanagari: true })).toEqual({
+      runs: [{ text: '12 MG Road\nJohari Bazar\nJaipur', font: FONT_LATIN }],
+      replaced: 0,
+    });
+    expect(splitScripts('Ring\tR-001', { devanagari: true })).toEqual({
+      runs: [{ text: 'Ring R-001', font: FONT_LATIN }],
+      replaced: 0,
+    });
+  });
+
   it('breakableText splits a long token only', () => {
     const A = (n: number) => 'A'.repeat(n);
     expect(breakableText(A(60))).toBe(`${A(24)}\u200B${A(24)}\u200B${A(12)}`);
@@ -74,5 +87,15 @@ describe('PDF-1: scripts and fonts', () => {
     expect(
       usesDevanagari({ content: ['Anita'], images: { a: 'data:image/png;base64,शर्मा' } })
     ).toBe(false);
+    // The font set outside the content (the default style, a header) is not looked at.
+    expect(usesDevanagari({ content: ['Anita'], defaultStyle: { font: FONT_DEVANAGARI } })).toBe(
+      false
+    );
+    expect(
+      usesDevanagari({ content: ['Anita'], header: { text: 'Shop', font: FONT_DEVANAGARI } })
+    ).toBe(false);
+    // A picture given as bytes (pdfmake takes them; its types still say string) is not looked into: these bytes carry a `font` field that a walk into them would find.
+    const bytes = Object.assign(new Uint8Array([0xff, 0xd8, 0xff]), { font: FONT_DEVANAGARI });
+    expect(usesDevanagari({ content: [{ image: bytes as unknown as string }] })).toBe(false);
   });
 });
