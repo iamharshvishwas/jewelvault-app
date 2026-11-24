@@ -866,11 +866,11 @@ describe('PT-W10 the saved estimate is read-only and shows the figures of V1', (
     const html = w.estimate(w.book.bills[1].id);
     expect(plain(html)).not.toMatch(/Edit Estimate|Save Changes/);
     expect(html).not.toMatch(/<(input|textarea|select)\b/);
-    // what is left to press: back to the list, and print
+    // what is left to press: back to the list, Download PDF and Print (PDF-4; Share is drawn only in a browser that can share a file, never in the static page)
     const buttons = [...html.matchAll(/<button[^>]*>([\s\S]*?)<\/button>/g)].map((b) =>
       plain(b[1])
     );
-    expect(buttons).toEqual(['Print / Save PDF']);
+    expect(buttons).toEqual(['Download PDF', 'Print']);
   });
 
   it('the list of saved estimates has no date field either (only the search box), and lists the sales, not the opening balance', async () => {

@@ -233,7 +233,7 @@ test.describe('FB-A2 estimates on a phone', () => {
 
     const cancel = page.getByRole('button', { name: 'Cancel' });
     const reissue = page.getByRole('link', { name: 'Re-issue' });
-    const print = page.getByRole('button', { name: 'Print / Save PDF' });
+    const print = page.getByRole('button', { name: 'Print', exact: true });
     const back = page.getByRole('link', { name: 'Saved Estimates' });
     for (const control of [cancel, reissue, print, back]) {
       await expect(control).toBeVisible();
@@ -257,7 +257,7 @@ test.describe('FB-A2 estimates on a phone', () => {
     await expect(page).toHaveURL(/\/estimate$/);
     await page.getByRole('link', { name: 'FBA-0001' }).click();
     await expect(page.getByTestId('estimate-number')).toHaveText('FBA-0001');
-    await expect(page.getByRole('button', { name: 'Print / Save PDF' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Print', exact: true })).toBeVisible();
     await expect(page.getByTestId('owner-bill-actions')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
   });

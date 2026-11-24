@@ -5,11 +5,15 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Printer, ArrowLeft, Search, FileText } from 'lucide-react';
 import OwnerBillActions from '@/components/owner/OwnerBillActions';
+import PdfActions from '@/components/pdf/PdfActions';
 import { getBillFacts, getInvoiceById, getInvoices } from '@/lib/appStore';
 import { BUSINESS_NAME } from '@/lib/businessConfig';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { gramsShown, rupeesShown } from '@/lib/ledgerView';
 import type { Invoice } from '@/lib/mockData';
+import { estimatePdfDefinition } from '@/lib/pdf/estimatePdf';
+import { estimateFileName } from '@/lib/pdf/fileName';
+import type { PdfJobDeps } from '@/lib/pdf/pdfJob';
 import { getSettings } from '@/lib/settingsStore';
 
 // The saved estimates, read-only (task WEB10; spec K1, Y8, C15). A bill is never edited and never re-dated in M1: a correction is a re-issue by the owner (WEB11), so this screen has no date
@@ -19,6 +23,7 @@ import { getSettings } from '@/lib/settingsStore';
 // WEB13 (PLAN.md P3-T1; QA UI-04): the paper. The sheet flows over as many pages as the lines need (the print rules are in src/styles/tailwind.css: no fixed height, the header row of the table on
 // every page, a line never cut, the totals block kept whole on the last page). The shop's name, address and phone are the Settings' (`business`; layout only, every figure is still V1's), and a
 // bill with a Per Piece line of more than one piece has a Qty column, on screen and on paper (the price of one piece, how many, the line's total as the API worked it out).
+// PDF-4: Download PDF and Share make that paper as a PDF file in the browser (src/lib/pdf/estimatePdf.ts; the buttons are src/components/pdf/PdfActions.tsx), and Print is the browser's print.
 
 const STATUS_COLORS: Record<Invoice['status'], string> = {
   Paid: 'status-badge-instock',
@@ -263,9 +268,25 @@ export default function EstimateViewClient() {
   const showLabourPerGramOnPrint =
     invoice.saleType === 'Semi-Wholesale' || invoice.saleType === 'Wholesale';
 
+  // PDF-4: the PDF of the paper below: the same bill, the same shop and the same dates as the screen shows. pdfmake and its fonts are fetched at the first tap, never with the page, and
+  // the definition is made afresh at every tap (pdfmake writes into the one it lays out).
+  const makePdf: PdfJobDeps['make'] = async () => {
+    const { makePdfBlob } = await import('@/lib/pdf/engine');
+    const definition = estimatePdfDefinition({
+      invoice,
+      facts,
+      shop: { name: shopName, address: shopAddress, phone: shopPhone },
+      dateText: displayDate(invoice.date),
+      cancelledOnText: facts?.cancelledOn
+        ? displayDate(`${facts.cancelledOn}T12:00:00.000Z`)
+        : null,
+    });
+    return { blob: await makePdfBlob(definition), fileName: estimateFileName(invoice) };
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-4">
-      {/* FB-A2: the bar wraps on a phone, so that Cancel, Re-issue and Print stay inside the screen */}
+      {/* FB-A2: the bar wraps on a phone, so that Cancel, Re-issue and the PDF and Print buttons stay inside the screen */}
       <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
         <Link href="/estimate" className="btn-secondary py-2">
           <ArrowLeft size={15} />
@@ -273,9 +294,16 @@ export default function EstimateViewClient() {
         </Link>
         <div className="flex flex-wrap items-center gap-2">
           <OwnerBillActions billId={invoice.id} />
-          <button onClick={() => window.print()} className="btn-primary py-2">
+          {/* one per bill: a PDF made, or a share waiting for its second tap, never moves over to the next bill opened */}
+          <PdfActions
+            key={invoice.id}
+            make={makePdf}
+            shareTitle={`Estimate ${invoice.invoiceNumber}`}
+            testIdPrefix="estimate-pdf"
+          />
+          <button type="button" onClick={() => window.print()} className="btn-secondary py-2">
             <Printer size={15} />
-            Print / Save PDF
+            Print
           </button>
         </div>
       </div>
