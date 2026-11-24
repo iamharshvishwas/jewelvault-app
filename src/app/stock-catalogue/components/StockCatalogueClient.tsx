@@ -3,22 +3,29 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Printer } from 'lucide-react';
+import PdfActions from '@/components/pdf/PdfActions';
 import { BUSINESS_NAME } from '@/lib/businessConfig';
 import { useBusinessToday } from '@/lib/businessClock';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { getDesigns } from '@/lib/designStore';
 import { imagesSettled } from '@/lib/imageWait';
+import { cataloguePdfDefinition } from '@/lib/pdf/cataloguePdf';
+import { catalogueFileName } from '@/lib/pdf/fileName';
+import type { PdfJobDeps } from '@/lib/pdf/pdfJob';
+import { fetchPhotoDataUrls } from '@/lib/pdf/photoFetch';
 import { photoUrl } from '@/lib/photos';
 import { getSettings } from '@/lib/settingsStore';
 import { catalogueRows, dayShown, grossShown, type CatalogueRow } from '@/lib/stockCatalogue';
 
 // FB-D2 (Siddhi #6): the ready-stock catalogue. The shop chooses the categories (none chosen: every category that has stock), the page shows each design that has a piece In Stock with its first
-// photo, design number, name, purity, the range of the gross weights of the pieces in stock and how many there are, and "Print / Save PDF" gives the browser's print of that sheet (the rules
-// are in src/styles/tailwind.css under `.print-catalogue-sheet`; the same print shell as the estimate, WEB13). The rows are `catalogueRows` (src/lib/stockCatalogue.ts): never the owner's original
+// photo, design number, name, purity, the range of the gross weights of the pieces in stock and how many there are, and "Print" gives the browser's print of that sheet (the rules are in
+// src/styles/tailwind.css under `.print-catalogue-sheet`; the same print shell as the estimate, WEB13). The rows are `catalogueRows` (src/lib/stockCatalogue.ts): never the owner's original
 // weight, never a price. The screen is drawn again when the designs or their pieces change in memory.
 // Wave 2 fix 2: a shop with hundreds of designs must not fetch hundreds of pictures the moment the screen opens, so on the screen the photos are the 320 px thumbnails, loaded lazily and decoded
-// off the main thread. "Print / Save PDF" first switches the sheet to the full pictures (1000 px: a thumbnail is soft on paper) loaded eagerly, waits until every picture has loaded (or failed, or
-// 15 seconds have gone by: a broken photo never stops a paper) and only then asks the browser to print; `afterprint` puts the screen back as it was.
+// off the main thread. "Print" first switches the sheet to the full pictures (1000 px: a thumbnail is soft on paper) loaded eagerly, waits until every picture has loaded (or failed, or 15 seconds
+// have gone by: a broken photo never stops a paper) and only then asks the browser to print; `afterprint` puts the screen back as it was.
+// PDF-6: Download PDF and Share make the same sheet as a PDF file in the browser (src/lib/pdf/cataloguePdf.ts; the buttons are src/components/pdf/PdfActions.tsx), with the thumbnails the page
+// fetches itself (src/lib/pdf/photoFetch.ts): the busy words count them, and Stop ends it. With nothing in stock the buttons cannot be pressed.
 
 const DESIGNS = ['users', 'categories', 'subcategories', 'designs', 'skus', 'settings'] as const;
 
@@ -87,6 +94,24 @@ export default function StockCatalogueClient() {
     .map((category) => ({ category, rows: rows.filter((row) => row.category === category) }))
     .filter((group) => group.rows.length > 0);
 
+  // PDF-6: the PDF of the sheet below: the same groups, the same shop name and the same day as the screen shows. The photos are fetched first (the busy words count them; Stop ends the fetch),
+  // then pdfmake and its fonts, at the first tap and never with the page; the definition is made afresh at every tap (pdfmake writes into the one it lays out).
+  const makePdf: PdfJobDeps['make'] = async (report, signal) => {
+    const photoIds = groups.flatMap((group) =>
+      group.rows.flatMap((row) => (row.photoId === null ? [] : [row.photoId]))
+    );
+    const { photos } = await fetchPhotoDataUrls(photoIds, { signal, onProgress: report });
+    const { makePdfBlob } = await import('@/lib/pdf/engine');
+    // stopped while pdfmake was on its way: nothing is drawn
+    if (signal.aborted) throw new DOMException('The PDF was stopped.', 'AbortError');
+    const businessDate = today || null;
+    const definition = cataloguePdfDefinition({ shopName, businessDate, groups, photos });
+    return {
+      blob: await makePdfBlob(definition),
+      fileName: catalogueFileName(chosen, businessDate),
+    };
+  };
+
   useEffect(() => {
     alive.current = true;
     const after = () => setPrinting(false);
@@ -124,15 +149,27 @@ export default function StockCatalogueClient() {
             The designs in stock now, with a photo, for a PDF to send or print. No prices.
           </p>
         </div>
-        <button
-          type="button"
-          data-testid="print-catalogue"
-          onClick={() => void handlePrint()}
-          className="btn-primary py-2"
-        >
-          <Printer size={15} />
-          Print / Save PDF
-        </button>
+        {/* PDF-6: the buttons wrap on a phone, and a failure's sentence goes on a line of its own under them */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* one per choice of categories: a PDF being made, or a share waiting for its second tap, never moves over to another choice */}
+          <PdfActions
+            key={chosen.join('\n')}
+            make={makePdf}
+            shareTitle="Stock Catalogue"
+            testIdPrefix="catalogue-pdf"
+            disabled={groups.length === 0}
+            disabledReason="Nothing in stock to put in a PDF."
+          />
+          <button
+            type="button"
+            data-testid="print-catalogue"
+            onClick={() => void handlePrint()}
+            className="btn-secondary py-2"
+          >
+            <Printer size={15} />
+            Print
+          </button>
+        </div>
       </div>
 
       <div className="jewel-card p-4 print:hidden">

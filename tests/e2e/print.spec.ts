@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { compact, readMadePdf } from '../unit/support/pdf-read';
 import { clearLoginCounters } from './clear-counters';
 import { e2eLogin, type E2eLogin } from './global-setup';
+import { pressDownloadPdf, sharedCalls, stubShare } from './pdf-file';
 import { PHONE, expectNoSidewaysScroll, expectTappable, shoot } from './phone';
 import { roomInTheMinute } from './pacing';
 import { countIn, readPdf, squash, type PdfPage } from './pdf-text';
@@ -1225,63 +1226,7 @@ test.describe('FB-D fix: the customer ledger and its Print / Save PDF at 375 x 8
 });
 
 // ------------------------------------------------------------------------------------------------ PDF-S1: the estimate as a PDF file
-
-/** What the share menu of the page was handed: one entry per call of `navigator.share`. */
-interface SharedCall {
-  title: string;
-  files: { name: string; type: string; size: number }[];
-}
-
-/**
- * A share menu that is always there: `navigator.canShare` says yes to PDF files, and `navigator.share` keeps what it was handed on `window.__shared` and answers as `answers` says, one call
- * after the other: `ok`, or the name of the DOMException it throws (`NotAllowedError`: the browser refused the tap). Once the answers run out it answers `ok`. Put in before the page opens.
- */
-async function stubShare(page: Page, answers: string[] = []) {
-  await page.addInitScript((answers) => {
-    const mine = window as unknown as { __shared: SharedCall[] };
-    mine.__shared = [];
-    const left = [...answers];
-    const pdfsOnly = (data?: ShareData) =>
-      (data?.files ?? []).length > 0 &&
-      (data?.files ?? []).every((file) => file.type === 'application/pdf');
-    Object.defineProperty(Navigator.prototype, 'canShare', {
-      configurable: true,
-      value: (data?: ShareData) => pdfsOnly(data),
-    });
-    Object.defineProperty(Navigator.prototype, 'share', {
-      configurable: true,
-      value: async (data: ShareData) => {
-        mine.__shared.push({
-          title: data.title ?? '',
-          files: (data.files ?? []).map((file) => ({
-            name: file.name,
-            type: file.type,
-            size: file.size,
-          })),
-        });
-        const answer = left.shift() ?? 'ok';
-        if (answer !== 'ok') throw new DOMException('the stub says no', answer);
-      },
-    });
-  }, answers);
-}
-
-const sharedCalls = (page: Page) =>
-  page.evaluate(() => (window as unknown as { __shared: SharedCall[] }).__shared);
-
-/** Presses Download PDF and waits for the file the browser saves. With JV_PRINT_PDF_DIR set the file is also written there, to look at it. */
-async function pressDownloadPdf(page: Page): Promise<{ name: string; bytes: Uint8Array }> {
-  const saving = page.waitForEvent('download', { timeout: 120_000 });
-  await page.getByTestId('estimate-pdf-download').click();
-  const download = await saving;
-  const bytes = new Uint8Array(readFileSync(await download.path()));
-  const dir = process.env.JV_PRINT_PDF_DIR;
-  if (dir) {
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, `pdf-${download.suggestedFilename()}`), bytes);
-  }
-  return { name: download.suggestedFilename(), bytes };
-}
+// (the share stub and Download PDF's file: ./pdf-file.ts, shared with the catalogue's PDF-S2)
 
 /**
  * The print's table and totals as the page holds them, a row to an entry: every row of `.print-estimate-lines` (the words of its `th` or `td` cells) and every line of
@@ -1306,7 +1251,7 @@ test.describe('PDF-S1: the estimate as a PDF file', () => {
     await openEstimates(page, e2eLogin('owner'));
     await openEstimate(page, 'W13-QTY3');
     await expect(page.getByTestId('estimate-pdf-download')).toHaveText('Download PDF');
-    const { name, bytes } = await pressDownloadPdf(page);
+    const { name, bytes } = await pressDownloadPdf(page, 'estimate-pdf');
     expect(name).toBe(`W13-QTY3 - ${NAMES.retail}.pdf`);
     expect(new TextDecoder('latin1').decode(bytes.slice(0, 5))).toBe('%PDF-');
     // the buttons are back, and nothing went wrong
@@ -1333,7 +1278,7 @@ test.describe('PDF-S1: the estimate as a PDF file', () => {
       );
       expect(print.totals, 'the totals block').toHaveLength(TOTALS.length + fine);
 
-      const { bytes } = await pressDownloadPdf(page);
+      const { bytes } = await pressDownloadPdf(page, 'estimate-pdf');
       const pdf = await readMadePdf(bytes);
       const text = compact(pdf.pages.join('\n')).toUpperCase();
       for (const row of [...print.lines, ...print.totals]) {
@@ -1381,7 +1326,7 @@ test.describe('PDF-S1: the estimate as a PDF file', () => {
     expect(await page.evaluate(() => 'share' in navigator || 'canShare' in navigator)).toBe(false);
     await expect(page.getByTestId('estimate-pdf-download')).toBeVisible();
     await expect(page.getByTestId('estimate-pdf-share')).toHaveCount(0);
-    const { name } = await pressDownloadPdf(page);
+    const { name } = await pressDownloadPdf(page, 'estimate-pdf');
     expect(name).toBe(`W13-QTY3 - ${NAMES.retail}.pdf`);
     await expect(page.getByTestId('estimate-pdf-share')).toHaveCount(0);
   });
@@ -1397,7 +1342,7 @@ test.describe('PDF-S1: the estimate as a PDF file', () => {
     await openEstimates(page, e2eLogin('owner'));
     await openEstimate(page, 'W13-QTY3');
     expect(fonts, 'no font before the tap').toEqual([]);
-    await pressDownloadPdf(page);
+    await pressDownloadPdf(page, 'estimate-pdf');
     expect(fonts).toContain('/fonts/NotoSans-Regular.ttf');
     expect(fonts).toContain('/fonts/NotoSans-Bold.ttf');
     // nothing on this bill is Hindi, so the Hindi pair is not fetched
@@ -1431,7 +1376,7 @@ test.describe('PDF-S1: the estimate as a PDF file', () => {
 
     // the fonts arrive after Stop: the stopped PDF is not saved, and the next tap saves one file
     release();
-    const { name } = await pressDownloadPdf(page);
+    const { name } = await pressDownloadPdf(page, 'estimate-pdf');
     expect(name).toBe(`W13-QTY3 - ${NAMES.retail}.pdf`);
     await page.waitForTimeout(1_500);
     expect(downloads, 'one file: the stopped PDF was never saved').toBe(1);
@@ -1465,7 +1410,7 @@ test.describe('PDF-S1: the estimate as a PDF file', () => {
     await expect(error).toHaveAttribute('role', 'alert');
     await expect(page.getByTestId('estimate-pdf-download')).toBeEnabled();
     // a new PDF takes the message away
-    await pressDownloadPdf(page);
+    await pressDownloadPdf(page, 'estimate-pdf');
     await expect(error).toHaveCount(0);
   });
 

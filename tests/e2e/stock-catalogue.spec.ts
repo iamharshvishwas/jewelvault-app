@@ -3,8 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
+import { compact, readMadePdf } from '../unit/support/pdf-read';
 import { clearLoginCounters } from './clear-counters';
 import { e2eLane, e2eLogin, type E2eLogin } from './global-setup';
+import { pressDownloadPdf, sharedCalls, stubShare } from './pdf-file';
 import { PHONE, expectNoSidewaysScroll, expectTappable, shoot } from './phone';
 import { roomInTheMinute } from './pacing';
 import { countIn, readPdf } from './pdf-text';
@@ -13,6 +15,9 @@ import { countIn, readPdf } from './pdf-text';
 // of a lane.
 //   the owner opens /stock-catalogue, chooses `Ring`, and the page shows each In Stock ring with its photo (an img on the API's photo address, loaded), its number, purity, gross-weight range and number of
 //   pieces; the PDF Chromium makes of it has the number of each In Stock ring, no ring that is Sold out, no chain (not chosen), no price and no original weight; the biller and the staff open it too
+// PDF-S2 (PDF-6): Download PDF makes the catalogue as a PDF file in the browser (src/lib/pdf/cataloguePdf.ts), with the photos the page fetches from the API (another origin): chosen `Ring`, the file is
+//   `Stock Catalogue - Ring - {DD-MM-YYYY}.pdf` and holds the In Stock ring with the API's own photo and nothing else; slow photos are counted on the screen and Stop ends it with nothing saved; a photo
+//   that answers 404 is `No photo`; Share hands over one PDF file of the same name; at 375 x 812 the buttons take a tap; the biller and the staff have Download PDF too
 //
 // The designs and pieces are written as root in the lane's container (the screens that make them are proved in add-design.spec.ts). The category is the seeded `Ring` (the lane's seed has the singular
 // name; the brief's "Rings" is the same category). Everything the test made is taken out again.
@@ -59,9 +64,15 @@ function laneSql(sql: string): Promise<string[][]> {
 
 // ------------------------------------------------------------------------------------------------ the stock of the test
 
-/** A 1 x 1 PNG: the smallest real picture the API will serve (`image/png`). */
-const PNG_HEX =
-  '89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000D49444154789C6300010000000500010D0A2DB40000000049454E44AE426082';
+/**
+ * A 1 x 1 gold baseline JPEG (`image/jpeg`), as the shop's photos are (the website's canvas writes JPEGs): a real picture the browser draws and pdfmake can open (PDF-6). The 1 x 1 PNG it
+ * replaces was cut short (its picture data is not the length its chunk says): a browser drew it, but the PDF would have shown `No photo`.
+ */
+const JPEG_HEX =
+  'FFD8FFE000104A46494600010100000100010000FFDB004300080606070605080707070909080A0C140D0C0B0B0C1912130F141D1A1F1E1D1A1C1C20242E2720222C231C1C2837292C30313434341F27393D38323C2E333432' +
+  'FFDB0043010909090C0B0C180D0D1832211C213232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232FFC00011080001000103011100021101031101' +
+  'FFC40014000100000000000000000000000000000006FFC40014100100000000000000000000000000000000FFC4001501010100000000000000000000000000000506FFC40014110100000000000000000000000000000000' +
+  'FFDA000C03010002110311003F00408336FFD9';
 
 const ids = {
   ring: randomUUID(),
@@ -82,7 +93,7 @@ function fixtureSql(): string {
       .map(
         (kind) =>
           `INSERT INTO design_photos (id, kind, design_id, mime, byte_size, sha256, bytes) VALUES ` +
-          `('${photoId}', '${kind}', '${designId}', 'image/png', ${PNG_HEX.length / 2}, UNHEX(SHA2(UNHEX('${PNG_HEX}'), 256)), UNHEX('${PNG_HEX}'));`
+          `('${photoId}', '${kind}', '${designId}', 'image/jpeg', ${JPEG_HEX.length / 2}, UNHEX(SHA2(UNHEX('${JPEG_HEX}'), 256)), UNHEX('${JPEG_HEX}'));`
       )
       .join(' ');
   const design = (
@@ -241,7 +252,7 @@ test.describe('FB-D2: the ready-stock catalogue by category as a PDF', () => {
 
     // print: the button gets the sheet ready (the full pictures, eager), waits for them and then asks the browser to print; the paper is what Chromium lays out in print media
     await stubPrint(page);
-    await page.getByRole('button', { name: 'Print / Save PDF' }).click();
+    await page.getByRole('button', { name: 'Print', exact: true }).click();
     await expect.poll(() => printCalls(page)).toBe(1);
     // the print waited for the pictures: every one of them was loaded when the browser was asked
     expect(await printIncomplete(page), 'pictures not yet loaded when the print was asked').toBe(0);
@@ -282,7 +293,7 @@ test.describe('FB-D2: the ready-stock catalogue by category as a PDF', () => {
     await page.route(`${apiUrl}/v1/photos/*/full`, (route) => route.abort());
     await openCatalogue(page, e2eLogin('owner'));
     await stubPrint(page);
-    await page.getByRole('button', { name: 'Print / Save PDF' }).click();
+    await page.getByRole('button', { name: 'Print', exact: true }).click();
     await expect.poll(() => printCalls(page), { timeout: 10_000 }).toBe(1);
     await expect(card(page, 'W16-R1').locator('img')).toHaveAttribute(
       'src',
@@ -327,7 +338,7 @@ test.describe('FB-D2: the ready-stock catalogue by category as a PDF', () => {
     test(`the ${role} can open it too`, async ({ page }) => {
       await openCatalogue(page, e2eLogin(role));
       await expect(card(page, 'W16-R1')).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Print / Save PDF' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Print', exact: true })).toBeVisible();
       // and it is in the menu, under Inventory
       await expect(
         page.locator('aside').getByRole('link', { name: 'Stock Catalogue (PDF)' })
@@ -336,12 +347,12 @@ test.describe('FB-D2: the ready-stock catalogue by category as a PDF', () => {
   }
 });
 
-// FB-D fix: the phone width of the plan, 375 x 812. The screen renders, the category chip and Print / Save PDF take a tap, the cards are whole inside the screen and the page does not scroll sideways.
+// FB-D fix: the phone width of the plan, 375 x 812. The screen renders, the category chip and Print take a tap, the cards are whole inside the screen and the page does not scroll sideways.
 test.describe('FB-D fix: the catalogue at 375 x 812', () => {
   test.use({ viewport: PHONE });
   test.describe.configure({ timeout: 180_000 });
 
-  test('renders, the chips and Print / Save PDF are tappable, the photo is whole inside the screen, no sideways scroll', async ({
+  test('renders, the chips and Print are tappable, the photo is whole inside the screen, no sideways scroll', async ({
     page,
   }) => {
     await openCatalogue(page, e2eLogin('owner'));
@@ -359,8 +370,214 @@ test.describe('FB-D fix: the catalogue at 375 x 812', () => {
     await expect
       .poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0))
       .toBe(true);
-    await expectTappable(page.getByRole('button', { name: 'Print / Save PDF' }));
+    await expectTappable(page.getByRole('button', { name: 'Print', exact: true }));
     await expectNoSidewaysScroll(page);
     await shoot(page, 'stock-catalogue');
   });
+});
+
+// ------------------------------------------------------------------------------------------------ PDF-S2: the catalogue as a PDF file
+
+/** Today's business date (India) as the file name writes it, DD-MM-YYYY: the screen's `useBusinessToday`, by the same clock. */
+function businessDay(): string {
+  const [year, month, day] = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+    .format(new Date())
+    .split('-');
+  return `${day}-${month}-${year}`;
+}
+
+/** The names the Ring catalogue may have: the day is read before and after the PDF is made, in case midnight in India falls in between. */
+const ringFileNames = (before: string, after: string) =>
+  [...new Set([before, after])].map((day) => `Stock Catalogue - Ring - ${day}.pdf`);
+
+async function chooseRing(page: Page) {
+  await page
+    .getByTestId('catalogue-category')
+    .filter({ hasText: /^Ring$/ })
+    .click();
+  await expect(card(page, 'W16-C1')).toHaveCount(0);
+  await expect(card(page, 'W16-R1')).toHaveCount(1);
+}
+
+test.describe('PDF-S2: the stock catalogue as a PDF file', () => {
+  test.describe.configure({ timeout: 240_000 });
+
+  test('Ring chosen, Download PDF: the file is named after Ring and the day, and holds the In Stock ring with the photo fetched from the API, no sold-out design, no chain, no price, no original weight', async ({
+    page,
+  }) => {
+    const { apiUrl, webOrigin } = e2eLane();
+    const thumb = `${apiUrl}/v1/photos/${ids.ringPhoto}/thumb`;
+    await openCatalogue(page, e2eLogin('owner'));
+    await chooseRing(page);
+    // the screen has drawn the ring's thumbnail already (an img, no CORS): the PDF's own fetch of it must still be answered for the site's origin
+    await expect
+      .poll(() =>
+        card(page, 'W16-R1')
+          .locator('img')
+          .evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)
+      )
+      .toBe(true);
+    const fetched: { status: number; allowOrigin: string | null }[] = [];
+    page.on('response', (response) => {
+      if (response.url() === thumb && response.request().resourceType() === 'fetch') {
+        fetched.push({
+          status: response.status(),
+          allowOrigin: response.headers()['access-control-allow-origin'] ?? null,
+        });
+      }
+    });
+    await expect(page.getByTestId('catalogue-pdf-download')).toHaveText('Download PDF');
+
+    const before = businessDay();
+    const { name, bytes } = await pressDownloadPdf(page, 'catalogue-pdf');
+    expect(ringFileNames(before, businessDay())).toContain(name);
+    expect(new TextDecoder('latin1').decode(bytes.slice(0, 5))).toBe('%PDF-');
+
+    const pdf = await readMadePdf(bytes);
+    const text = compact(pdf.pages.join('\n'));
+    expect(text, 'the In Stock ring').toContain('W16-R1');
+    expect(text).toContain(compact('W16 gold ring'));
+    expect(text).toContain(compact('Gross 10.250 - 12.500 g'));
+    expect(text).toContain(compact('2 pieces in stock'));
+    expect(text, 'the sold-out ring').not.toContain('W16-R2');
+    expect(text, 'the chain was not chosen').not.toContain('W16-C1');
+    expect(text, 'no price').not.toContain('₹');
+    expect(text, 'no original weight').not.toContain(ORIGINAL_WEIGHT);
+    expect(text, 'the ring has its photo').not.toContain(compact('No photo'));
+    // the ring's photo is in the file, once, and it is the API's own picture byte for byte (pdfmake stores a JPEG as it is)
+    expect(pdf.imageCount).toBe(1);
+    expect(Buffer.from(bytes).indexOf(Buffer.from(JPEG_HEX, 'hex'))).toBeGreaterThan(0);
+    // the page fetched it from the API, across origins, and the API answered for the site
+    expect(fetched).toEqual([{ status: 200, allowOrigin: webOrigin }]);
+
+    // the buttons are back, and nothing went wrong
+    await expect(page.getByTestId('catalogue-pdf-download')).toBeEnabled();
+    await expect(page.getByTestId('catalogue-pdf-progress')).toHaveCount(0);
+    await expect(page.getByTestId('catalogue-pdf-error')).toHaveCount(0);
+  });
+
+  test('slow photos: the busy words count them, Stop ends it, nothing is saved and Download PDF is back', async ({
+    page,
+  }) => {
+    const { apiUrl } = e2eLane();
+    let downloads = 0;
+    page.on('download', () => (downloads += 1));
+    await openCatalogue(page, e2eLogin('owner'));
+    await chooseRing(page);
+    // every thumbnail is held back 2 seconds from now on
+    await page.route(`${apiUrl}/v1/photos/*/thumb`, async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      // the page may have stopped asking by then
+      await route.continue().catch(() => {});
+    });
+
+    await page.getByTestId('catalogue-pdf-download').click();
+    const progress = page.getByTestId('catalogue-pdf-progress');
+    await expect(progress).toHaveText('Making PDF… photos 0 of 1');
+    await expect(progress).toHaveAttribute('role', 'status');
+    const stop = page.getByTestId('catalogue-pdf-stop');
+    await expect(stop).toHaveText('Stop');
+    await stop.click();
+    await expect(progress).toHaveCount(0);
+    await expect(stop).toHaveCount(0);
+
+    // the photo arrives (or not) after Stop: no PDF comes of it
+    await page.waitForTimeout(3_000);
+    expect(downloads, 'no file is saved after Stop').toBe(0);
+    await expect(page.getByTestId('catalogue-pdf-download')).toBeEnabled();
+    await expect(page.getByTestId('catalogue-pdf-error')).toHaveCount(0);
+  });
+
+  test('a photo the API answers 404: the PDF is saved all the same, with No photo in its place', async ({
+    page,
+  }) => {
+    const { apiUrl, webOrigin } = e2eLane();
+    await openCatalogue(page, e2eLogin('owner'));
+    await chooseRing(page);
+    // a real 404 for the site (with the CORS header), not a network error
+    await page.route(`${apiUrl}/v1/photos/*/thumb`, (route) =>
+      route.fulfill({
+        status: 404,
+        headers: { 'access-control-allow-origin': webOrigin },
+        contentType: 'application/json',
+        body: '{"error":{"code":"JV_NOT_FOUND"}}',
+      })
+    );
+
+    const before = businessDay();
+    const { name, bytes } = await pressDownloadPdf(page, 'catalogue-pdf');
+    expect(ringFileNames(before, businessDay())).toContain(name);
+    const pdf = await readMadePdf(bytes);
+    const text = compact(pdf.pages.join('\n'));
+    expect(text).toContain('W16-R1');
+    expect(text).toContain(compact('2 pieces in stock'));
+    expect(text).toContain(compact('No photo'));
+    expect(pdf.imageCount).toBe(0);
+    await expect(page.getByTestId('catalogue-pdf-error')).toHaveCount(0);
+  });
+
+  test('Share hands the share menu one PDF file, with the same name as Download PDF gives', async ({
+    page,
+  }) => {
+    await stubShare(page);
+    await openCatalogue(page, e2eLogin('owner'));
+    await chooseRing(page);
+    const { name } = await pressDownloadPdf(page, 'catalogue-pdf');
+
+    const share = page.getByTestId('catalogue-pdf-share');
+    await expect(share).toHaveText('Share');
+    await share.click();
+    await expect.poll(async () => (await sharedCalls(page)).length, { timeout: 120_000 }).toBe(1);
+    const [call] = await sharedCalls(page);
+    expect(call.title).toBe('Stock Catalogue');
+    expect(call.files).toHaveLength(1);
+    expect(call.files[0].name).toBe(name);
+    expect(call.files[0].type).toBe('application/pdf');
+    expect(call.files[0].size).toBeGreaterThan(1000);
+    // shared: the buttons are as they were
+    await expect(share).toBeVisible();
+    await expect(page.getByTestId('catalogue-pdf-send')).toHaveCount(0);
+    await expect(page.getByTestId('catalogue-pdf-error')).toHaveCount(0);
+  });
+
+  test.describe('at 375 x 812', () => {
+    test.use({ viewport: PHONE });
+
+    test('the chips, Download PDF, Share and Print take a tap, no sideways scroll', async ({
+      page,
+    }) => {
+      await stubShare(page);
+      await openCatalogue(page, e2eLogin('owner'));
+      const controls = [
+        page.getByTestId('catalogue-category').filter({ hasText: /^Ring$/ }),
+        page.getByTestId('catalogue-category').filter({ hasText: /^Chain$/ }),
+        page.getByTestId('catalogue-pdf-download'),
+        page.getByTestId('catalogue-pdf-share'),
+        page.getByRole('button', { name: 'Print', exact: true }),
+      ];
+      for (const control of controls) {
+        await expectTappable(control);
+        // one line each (FB-A2): a word that wraps makes a button two lines tall
+        expect((await control.boundingBox())!.height).toBeLessThanOrEqual(44);
+      }
+      await expectNoSidewaysScroll(page);
+      await page.evaluate(() => document.querySelector('main')?.scrollTo(0, 0));
+      await shoot(page, 'catalogue-pdf-buttons');
+    });
+  });
+
+  for (const role of ['biller', 'staff'] as const) {
+    test(`the ${role} has Download PDF too`, async ({ page }) => {
+      await openCatalogue(page, e2eLogin(role));
+      const download = page.getByTestId('catalogue-pdf-download');
+      await expect(download).toHaveText('Download PDF');
+      await expect(download).toBeEnabled();
+      await expect(page.getByRole('button', { name: 'Print', exact: true })).toBeVisible();
+    });
+  }
 });

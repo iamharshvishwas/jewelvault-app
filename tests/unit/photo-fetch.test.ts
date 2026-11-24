@@ -10,7 +10,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchPhotoDataUrls } from '@/lib/pdf/photoFetch';
 
-// A 1 x 1 grey JPEG and a 1 x 1 gold PNG; and the PNG of tests/e2e/stock-catalogue.spec.ts, whose picture data is cut short (its IEND chunk is out of step), which pdfmake cannot open.
+// A 1 x 1 grey JPEG and a 1 x 1 gold PNG; and the PNG tests/e2e/stock-catalogue.spec.ts had before PDF-6 (now a JPEG), whose picture data is cut short (its IEND chunk is out of step), which
+// pdfmake cannot open.
 const JPEG_HEX =
   'FFD8FFE000104A46494600010100000100010000FFDB004300100B0C0E0C0A100E0D0E1211101318281A181616183123251D283A333D3C3933383740485C4E404457453738506D51575F626768673E4D71797064785C656763FFC0000B080001000101011100FFC40014000100000000000000000000000000000005FFC40014100100000000000000000000000000000000FFDA0008010100003F0069FFD9';
 const PNG_HEX =

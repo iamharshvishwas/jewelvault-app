@@ -20,7 +20,7 @@ import { renderPdf } from './support/pdf-node';
 import { compact, readMadePdf, readPlacedText, type MadePdf } from './support/pdf-read';
 
 // Two 1 x 1 grey JPEGs (different greys: pdfmake stores a picture once by its bytes) and a 1 x 1 gold PNG with no transparency (a PNG with an alpha channel is stored with its mask, a
-// second picture). Not the PNG of tests/e2e/stock-catalogue.spec.ts: that one is cut short, pdfmake cannot open it (tests/unit/photo-fetch.test.ts leaves it out as a failed photo).
+// second picture). Not the PNG tests/e2e/stock-catalogue.spec.ts had before PDF-6: that one is cut short, pdfmake cannot open it (tests/unit/photo-fetch.test.ts leaves it out as a failed photo).
 const JPEG_LIGHT_HEX =
   'FFD8FFE000104A46494600010100000100010000FFDB004300100B0C0E0C0A100E0D0E1211101318281A181616183123251D283A333D3C3933383740485C4E404457453738506D51575F626768673E4D71797064785C656763FFC0000B080001000101011100FFC40014000100000000000000000000000000000005FFC40014100100000000000000000000000000000000FFDA0008010100003F0069FFD9';
 const JPEG_DARK_HEX =

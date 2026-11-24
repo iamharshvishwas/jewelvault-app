@@ -230,7 +230,7 @@ describe('FB-D2 catalogueRows: which designs, in which order', () => {
 
 // ================================================================================================ the screen, over the stores
 
-async function world({ extra = 0 }: { extra?: number } = {}) {
+async function world({ extra = 0, soldOut = false }: { extra?: number; soldOut?: boolean } = {}) {
   vi.resetModules();
   vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
   vi.stubEnv('NEXT_PUBLIC_API_URL', API);
@@ -276,12 +276,14 @@ async function world({ extra = 0 }: { extra?: number } = {}) {
       purity: '18K',
     }),
   ]);
+  // `soldOut`: every piece is Sold, so nothing is in stock
+  const inStock = soldOut ? 'Sold' : 'In Stock';
   rowCache.merge('skus', [
-    skuRow(1, 1, { sku_no: 'RING-00001-001', gross_weight: '12.500', status: 'In Stock' }),
-    skuRow(2, 1, { sku_no: 'RING-00001-002', gross_weight: '10.250', status: 'In Stock' }),
+    skuRow(1, 1, { sku_no: 'RING-00001-001', gross_weight: '12.500', status: inStock }),
+    skuRow(2, 1, { sku_no: 'RING-00001-002', gross_weight: '10.250', status: inStock }),
     skuRow(3, 1, { sku_no: 'RING-00001-003', gross_weight: '40.000', status: 'Sold' }),
     skuRow(4, 2, { sku_no: 'RING-00002-001', gross_weight: '9.000', status: 'Sold' }),
-    skuRow(5, 3, { sku_no: 'CH-00003-001', gross_weight: '20.125', status: 'In Stock' }),
+    skuRow(5, 3, { sku_no: 'CH-00003-001', gross_weight: '20.125', status: inStock }),
   ]);
   // `extra` more rings In Stock, each with its own photo (a big shop: the screen must not fetch them all at once)
   rowCache.merge(
@@ -319,6 +321,10 @@ const plain = (html: string) =>
   decode(html.replace(/<[^>]*>/g, ' '))
     .replace(/\s+/g, ' ')
     .trim();
+
+/** The opening tag of the Download PDF button (src/components/pdf/PdfActions.tsx), or undefined. */
+const downloadButton = (html: string) =>
+  /<button[^>]*data-testid="catalogue-pdf-download"[^>]*>/.exec(html)?.[0];
 
 describe('FB-D2 the catalogue screen', () => {
   it('shows each In Stock design with its first photo from the API, number, name, purity, gross range and pieces in stock', async () => {
@@ -382,12 +388,28 @@ describe('FB-D2 the catalogue screen', () => {
     ].map((m) => plain(m[1]));
     expect(chips).toEqual(['Chain', 'Ring']);
     expect(plain(html)).toContain('Test Jewellers Pvt Ltd');
-    expect(html).toMatch(/Print \/ Save PDF/);
+    // PDF-6: Download PDF (there is stock, so it can be pressed) and Print, the browser's print; `Print / Save PDF` is gone
+    expect(downloadButton(html)).toBeDefined();
+    expect(downloadButton(html)).not.toContain('disabled');
+    expect(downloadButton(html)).not.toContain('title=');
+    expect(html).toMatch(
+      /<button[^>]*data-testid="print-catalogue"[^>]*>(?:(?!<\/button>)[\s\S])*Print<\/button>/
+    );
+    expect(html).not.toContain('Print / Save PDF');
     const source = readFileSync(
       path.join(SRC, 'app/stock-catalogue/components/StockCatalogueClient.tsx'),
       'utf8'
     );
     expect(source).toContain('window.print()');
+  });
+});
+
+describe('PDF-6 Download PDF on the catalogue screen', () => {
+  it('with nothing in stock, Download PDF is there but cannot be pressed, and says why', async () => {
+    const html = await world({ soldOut: true });
+    expect(html).toContain('data-testid="catalogue-empty"');
+    expect(downloadButton(html)).toContain('disabled=""');
+    expect(downloadButton(html)).toContain('title="Nothing in stock to put in a PDF."');
   });
 });
 
