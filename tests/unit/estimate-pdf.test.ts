@@ -4,6 +4,7 @@
 //   - the totals in the print's order, Fine Due and Fine Pending only when fine is due; the cancelled and re-issue notices; an opening balance with no table
 //   - 80 lines over several pages: the header row on every page with lines, the totals on the last page only, `Page k of n` at the foot of each page; the totals never alone on a page
 //   - text a person typed: a 90-letter name with no space and an emoji, a Hindi name (kept in the content, where the engine looks for it), a blank name; a blank address or phone is not drawn
+//   - the widest table (Wholesale with Qty) stays inside the right margin with long design and SKU numbers; the headings and the small labels are drawn in upper case, like the print
 //
 // The definition is drawn by pdfmake's Node build (tests/unit/support/pdf-node.ts) and read back by pdf.js (tests/unit/support/pdf-read.ts). A definition is drawn once: pdfmake writes into it.
 //
@@ -22,7 +23,7 @@ import {
 import { usesDevanagari } from '@/lib/pdf/fonts';
 import type { PdfDefinition } from '@/lib/pdf/types';
 import { renderPdf } from './support/pdf-node';
-import { compact, readMadePdf, type MadePdf } from './support/pdf-read';
+import { compact, readMadePdf, readPlacedText, type MadePdf } from './support/pdf-read';
 
 const GOLD_HEADINGS = [
   'Design',
@@ -133,6 +134,9 @@ const pdfOf = (pdfInput: EstimatePdfInput) => drawn(estimatePdfDefinition(pdfInp
 
 const linesOf = (page: string) => page.split('\n');
 
+/** The header row as the PDF draws it: upper case, as the print's CSS does (estimateTable keeps the print's own words). */
+const headerRowOf = (headings: string[]) => compact(headings.join(' ').toUpperCase());
+
 /** `n` lines with design numbers D-001, D-002, ... */
 function manyLines(n: number): InvoiceItem[] {
   return Array.from({ length: n }, (_, i) => line(`D-${String(i + 1).padStart(3, '0')}`));
@@ -198,8 +202,9 @@ describe('PDF-3: the tables of the print', () => {
     const pdf = await pdfOf(input(invoice));
     expect(pdf.pageCount).toBe(1);
     const page = compact(pdf.pages[0]);
-    // The header row and each line read as one line of the page, cell after cell, as in the print.
-    expect(page).toContain(compact(table.headings.join(' ')));
+    // The header row (in upper case, like the print) and each line read as one line of the page, cell after cell, as in the print.
+    expect(page).toContain(headerRowOf(table.headings));
+    expect(pdf.pages[0]).not.toContain('Customer NW');
     for (const row of table.rows) expect(page).toContain(compact(row.join(' ')));
     for (const cell of ['₹36,900', '12.000 g', '₹1,43,000']) expect(page).toContain(compact(cell));
     // The header and the party.
@@ -209,13 +214,13 @@ describe('PDF-3: the tables of the print', () => {
       'Johari Bazar, Jaipur',
       'Phone: 98290 00000',
       'Estimate only. GST not charged.',
-      'Estimate No.',
+      'ESTIMATE NO.',
       'EST-2026-0042',
       '24/11/2026',
-      'Customer',
+      'CUSTOMER',
       'Anita Sharma',
       '98290 12345',
-      'Status',
+      'STATUS',
       'Partial',
     ]) {
       expect(page).toContain(compact(text));
@@ -256,7 +261,7 @@ describe('PDF-3: the tables of the print', () => {
 
     const pdf = await pdfOf(input(invoice));
     const page = compact(pdf.pages[0]);
-    expect(page).toContain(compact(table.headings.join(' ')));
+    expect(page).toContain(headerRowOf(table.headings));
     for (const row of table.rows) expect(page).toContain(compact(row.join(' ')));
   });
 
@@ -295,9 +300,9 @@ describe('PDF-3: the tables of the print', () => {
 
     const pdf = await pdfOf(input(invoice));
     const page = compact(pdf.pages[0]);
-    expect(page).toContain(compact(table.headings.join(' ')));
+    expect(page).toContain(headerRowOf(table.headings));
     for (const row of table.rows) expect(page).toContain(compact(row.join(' ')));
-    expect(page).not.toContain('CustomerNW');
+    expect(page).not.toContain('CUSTOMERNW');
   });
 
   it('Qty only when a line has more than one piece', async () => {
@@ -340,7 +345,7 @@ describe('PDF-3: the tables of the print', () => {
 
     const pdf = await pdfOf(input(pieces));
     const page = compact(pdf.pages[0]);
-    expect(page).toContain(compact(table.headings.join(' ')));
+    expect(page).toContain(headerRowOf(table.headings));
     for (const row of table.rows) expect(page).toContain(compact(row.join(' ')));
   });
 });
@@ -448,7 +453,7 @@ describe('PDF-3: the totals and the notices', () => {
     const page = compact(pdf.pages[0]);
     expect(page).toContain(compact('Opening balance: dues brought forward.'));
     expect(page).not.toContain('Estimateonly');
-    expect(page).not.toContain('Design');
+    expect(page).not.toContain('DESIGN');
     expect(page).toContain(compact('Grand Total ₹25,000'));
     expect(page).toContain(compact('Pending ₹25,000'));
   });
@@ -457,7 +462,7 @@ describe('PDF-3: the totals and the notices', () => {
 describe('PDF-3: pages', () => {
   it('80 lines run over pages', async () => {
     const invoice = mockInvoice({ items: manyLines(80) });
-    const headerRow = compact(estimateTable(invoice).headings.join(' '));
+    const headerRow = headerRowOf(estimateTable(invoice).headings);
     const pdf = await pdfOf(input(invoice));
     expect(pdf.pageCount).toBeGreaterThanOrEqual(2);
     pdf.pages.forEach((page, k) => {
@@ -491,7 +496,7 @@ describe('PDF-3: pages', () => {
     const pdf = await pdfOf(input(invoice));
     expect(pdf.pageCount).toBe(2);
     const [first, second] = pdf.pages.map(compact);
-    expect(second).toContain(compact(estimateTable(invoice).headings.join(' ')));
+    expect(second).toContain(headerRowOf(estimateTable(invoice).headings));
     expect(second).toContain(rows[lines - 1]);
     expect(second).toContain('GrandTotal');
     expect(first).toContain(rows[lines - 2]);
@@ -515,6 +520,40 @@ describe('PDF-3: pages', () => {
 });
 
 describe('PDF-3: text a person typed', () => {
+  it('the widest table stays inside the page: long design and SKU numbers wrap', async () => {
+    // Wholesale with Qty (11 columns), large figures, and numbers Unicode will not break: a hyphen stays with the digit after it.
+    const big = {
+      quantity: 3,
+      grossWeight: 123.456,
+      customerNetWeight: 120.5,
+      labour: 12345.67,
+      piroi: 1500,
+      itemTotal: 1234567.5,
+    };
+    const invoice = mockInvoice({
+      saleType: 'Wholesale',
+      items: [
+        line('MANGALSUTRA-00012', { ...big, skuNumber: 'MANGALSUTRA-00012-001' }),
+        line('KAMARBANDHNAVRATNA2026', { ...big, skuNumber: 'KAMARBANDHNAVRATNA2026-0001' }),
+        line('RING-00042'),
+      ],
+    });
+    const table = estimateTable(invoice);
+    expect(table.headings).toHaveLength(11);
+    const bytes = await renderPdf(estimatePdfDefinition(input(invoice)));
+    const rightMargin = 595.28 - 23;
+    const pages = await readPlacedText(bytes);
+    expect(pages).toHaveLength(1);
+    for (const item of pages[0]) {
+      expect(item.x + item.width, item.str).toBeLessThanOrEqual(rightMargin + 0.5);
+    }
+    // Every figure of every line is drawn whole (the Total column is not cut off).
+    const page = compact((await readMadePdf(bytes)).pages[0]);
+    for (const row of table.rows) {
+      for (const cell of row.slice(2)) expect(page).toContain(compact(cell));
+    }
+  });
+
   it('a 90-letter name with no space and an emoji', async () => {
     const pdf = await pdfOf(input(mockInvoice({ customerName: `${'Q'.repeat(90)}😀` })));
     expect(pdf.pageCount).toBe(1);
@@ -536,13 +575,13 @@ describe('PDF-3: text a person typed', () => {
 
   it('a blank customer name and mobile', async () => {
     const named = linesOf((await pdfOf(input(mockInvoice()))).pages[0]);
-    expect(named[named.indexOf('Customer Status') + 1]).toBe('Anita Sharma Partial');
+    expect(named[named.indexOf('CUSTOMER STATUS') + 1]).toBe('Anita Sharma Partial');
 
     const pdf = await pdfOf(input(mockInvoice({ customerName: '', customerMobile: '' })));
     expect(pdf.pageCount).toBe(1);
     // The labels stay; beside the status there is nothing, and no mobile under it.
     const lines = linesOf(pdf.pages[0]);
-    expect(lines[lines.indexOf('Customer Status') + 1]).toBe('Partial');
+    expect(lines[lines.indexOf('CUSTOMER STATUS') + 1]).toBe('Partial');
     expect(pdf.pages[0]).not.toContain('98290 12345');
     expect(compact(pdf.pages[0])).toContain(compact('Grand Total ₹1,43,000'));
   });
@@ -558,7 +597,7 @@ describe('PDF-3: text a person typed', () => {
       return lines
         .slice(name + 1, note)
         .map((text) =>
-          ['Estimate No.', 'EST-2026-0042', '24/11/2026']
+          ['ESTIMATE NO.', 'EST-2026-0042', '24/11/2026']
             .reduce((rest, beside) => rest.replace(beside, ''), text)
             .trim()
         )

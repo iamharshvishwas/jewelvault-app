@@ -3,6 +3,7 @@
 //   - `splitScripts` sends each letter to the font that can draw it (Latin and the rupee to Noto Sans, Hindi to Noto Sans Devanagari) and writes any other letter as `?`; a Windows
 //     line end or a lone carriage return becomes a new line, and a tab a space
 //   - `breakableText` lets a long word with no space wrap, `usesDevanagari` says whether the Hindi font must be fetched (from the content only), and a Hindi name is drawn through `pdfText`
+//   - (PDF-3) `breakableCode` lets a design or SKU number wrap after each hyphen and every 8 letters, through `pdfText`'s third argument
 //
 // The definition is drawn by pdfmake's Node build (tests/unit/support/pdf-node.ts) and read by pdf.js (tests/unit/support/pdf-read.ts), apart from the browser engine (src/lib/pdf/engine.ts),
 // which tests/unit/pdf-engine-browser.test.ts runs over pdfmake's browser build.
@@ -10,7 +11,7 @@
 // Run: npm test -- tests/unit/pdf-engine.test.ts
 import { describe, expect, it } from 'vitest';
 import { FONT_DEVANAGARI, FONT_LATIN, usesDevanagari } from '@/lib/pdf/fonts';
-import { breakableText, pdfText, splitScripts } from '@/lib/pdf/scripts';
+import { breakableCode, breakableText, pdfText, splitScripts } from '@/lib/pdf/scripts';
 import type { PdfDefinition } from '@/lib/pdf/types';
 import { renderPdf } from './support/pdf-node';
 import { compact, readMadePdf } from './support/pdf-read';
@@ -80,6 +81,19 @@ describe('PDF-1: scripts and fonts', () => {
     const A = (n: number) => 'A'.repeat(n);
     expect(breakableText(A(60))).toBe(`${A(24)}\u200B${A(24)}\u200B${A(12)}`);
     expect(breakableText('Anita Sharma')).toBe('Anita Sharma');
+  });
+
+  it('breakableCode lets a code wrap after each hyphen and every 8 letters', () => {
+    // Unicode keeps a hyphen with the digit after it, so `-00012` is no place to wrap without the zero-width space.
+    expect(breakableCode('MANGALSUTRA-00012-001')).toBe('MANGALSU\u200BTRA-\u200B00012-\u200B001');
+    expect(breakableCode('RING-42')).toBe('RING-\u200B42');
+    expect(breakableCode('R42')).toBe('R42');
+    expect(pdfText('RING-42', { bold: true }, breakableCode)).toEqual({
+      bold: true,
+      text: [{ text: 'RING-\u200B42', font: FONT_LATIN }],
+    });
+    // pdfText's own rule leaves a short code whole.
+    expect(pdfText('RING-42')).toEqual({ text: [{ text: 'RING-42', font: FONT_LATIN }] });
   });
 
   it('usesDevanagari looks at the content only', () => {

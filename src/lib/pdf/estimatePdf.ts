@@ -7,7 +7,7 @@ import type { BillFacts } from '@/lib/appStore';
 import { gramsShown, rupeesShown } from '@/lib/ledgerView';
 import type { Invoice } from '@/lib/mockData';
 import { FONT_LATIN } from './fonts';
-import { pdfText } from './scripts';
+import { breakableCode, pdfText } from './scripts';
 import type { PdfContent, PdfDefinition } from './types';
 
 export interface EstimatePdfInput {
@@ -149,12 +149,19 @@ const SIZE = {
   grand: 13.5,
 };
 
-// The typed columns may wrap (pdfText gives a long word places to); a figure never does.
+// The typed columns may wrap (pdfText gives a long word places to); a figure never does. A design or SKU number wraps after a hyphen or every 8 letters (breakableCode), so that the
+// widest table (Wholesale with Qty, 11 columns) stays inside the page even with a number like MANGALSUTRA-00012-001.
 const TYPED_COLUMNS = new Set(['Design', 'SKU', 'Purity']);
+const CODE_COLUMNS = new Set(['Design', 'SKU']);
 // The ids that keep the last line and the totals together (see pageBreakBefore).
 const LAST_LINE_ID = 'estimate-last-line-';
 const TOTALS_ID = 'estimate-totals';
 const NO_BREAK_SPACE = '\u00a0';
+
+/** A small label (Estimate No., Customer, Status), in upper case like the print's CSS. */
+function label(text: string): PdfContent {
+  return { text: text.toUpperCase(), fontSize: SIZE.label };
+}
 
 function headerBlock({ invoice, shop, dateText }: EstimatePdfInput): PdfContent {
   const left: PdfContent[] = [];
@@ -180,7 +187,7 @@ function headerBlock({ invoice, shop, dateText }: EstimatePdfInput): PdfContent 
             width: 'auto',
             alignment: 'right',
             stack: [
-              { text: 'Estimate No.', fontSize: SIZE.label },
+              label('Estimate No.'),
               pdfText(invoice.invoiceNumber, { fontSize: SIZE.name, bold: true }),
               { text: dateText, fontSize: SIZE.label, margin: [0, 6, 0, 0] },
             ],
@@ -214,7 +221,7 @@ function partyBlock({ invoice }: EstimatePdfInput): PdfContent {
       {
         width: '*',
         stack: [
-          { text: 'Customer', fontSize: SIZE.label },
+          label('Customer'),
           pdfText(invoice.customerName, { fontSize: SIZE.name, bold: true }),
           ...(invoice.customerMobile
             ? [pdfText(invoice.customerMobile, { fontSize: SIZE.small })]
@@ -224,10 +231,7 @@ function partyBlock({ invoice }: EstimatePdfInput): PdfContent {
       {
         width: '*',
         alignment: 'right',
-        stack: [
-          { text: 'Status', fontSize: SIZE.label },
-          { text: invoice.status, fontSize: SIZE.name, bold: true },
-        ],
+        stack: [label('Status'), { text: invoice.status, fontSize: SIZE.name, bold: true }],
       },
     ],
   };
@@ -299,8 +303,9 @@ function linesTable(invoice: Invoice): PdfContent {
       // Design and SKU share what the figures leave, so the table is as wide as the page
       widths: headings.map((heading) => (heading === 'Design' || heading === 'SKU' ? '*' : 'auto')),
       body: [
+        // in upper case, as the print's CSS draws them; estimateTable keeps the print's own words
         headings.map((heading) => ({
-          text: heading,
+          text: heading.toUpperCase(),
           bold: true,
           fontSize: SIZE.heading,
           noWrap: true,
@@ -308,12 +313,16 @@ function linesTable(invoice: Invoice): PdfContent {
         ...rows.map((row, r) =>
           row.map((cell, c) =>
             // A blank cell is drawn as a no-break space: pdfmake can move a cell to the next page (pageBreakBefore) only when it has something on the page.
-            pdfText(cell || NO_BREAK_SPACE, {
-              fontSize: SIZE.cell,
-              ...(TYPED_COLUMNS.has(headings[c]) ? {} : { noWrap: true }),
-              ...(headings[c] === 'Total' ? { bold: true } : {}),
-              ...(r === last ? { id: `${LAST_LINE_ID}${c}` } : {}),
-            })
+            pdfText(
+              cell || NO_BREAK_SPACE,
+              {
+                fontSize: SIZE.cell,
+                ...(TYPED_COLUMNS.has(headings[c]) ? {} : { noWrap: true }),
+                ...(headings[c] === 'Total' ? { bold: true } : {}),
+                ...(r === last ? { id: `${LAST_LINE_ID}${c}` } : {}),
+              },
+              CODE_COLUMNS.has(headings[c]) ? breakableCode : undefined
+            )
           )
         ),
       ],

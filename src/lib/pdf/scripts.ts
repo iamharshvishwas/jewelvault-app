@@ -78,11 +78,29 @@ export function breakableText(text: string, longest = 24): string {
     .join('');
 }
 
-/** Text for a PDF: in runs by font (Hindi only while DEVANAGARI_SUPPORTED), each able to wrap, with the style given (bold, fontSize, alignment, ...). */
-export function pdfText(text: string, style: Record<string, unknown> = {}): PdfContent {
+/**
+ * A code (a design or SKU number, `MANGALSUTRA-00012-001`) that can wrap in a narrow table column: a zero-width space after each hyphen, because Unicode line breaking keeps a hyphen
+ * with the digit after it (rule LB25), and in a piece still longer than `longest` letters, one after every `longest` of them.
+ */
+export function breakableCode(text: string, longest = 8): string {
+  return text
+    .split('-')
+    .map((piece) => breakableText(piece, longest))
+    .join('-\u200B');
+}
+
+/**
+ * Text for a PDF: in runs by font (Hindi only while DEVANAGARI_SUPPORTED), each able to wrap, with the style given (bold, fontSize, alignment, ...). `breaks` gives each run its places
+ * to wrap: a long word's (breakableText), or a code's (breakableCode).
+ */
+export function pdfText(
+  text: string,
+  style: Record<string, unknown> = {},
+  breaks: (run: string) => string = breakableText
+): PdfContent {
   const { runs } = splitScripts(text, { devanagari: DEVANAGARI_SUPPORTED });
   return {
     ...style,
-    text: runs.map((run) => ({ text: breakableText(run.text), font: run.font })),
+    text: runs.map((run) => ({ text: breaks(run.text), font: run.font })),
   } as PdfContent;
 }

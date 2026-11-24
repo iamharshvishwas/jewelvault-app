@@ -1,5 +1,5 @@
-// PDF-1: reads a made PDF back for the tests: its pages, the text of each page by lines, and its pictures. The reader is pdf.js (Firefox's), written apart from the writer under
-// test (pdfmake). No `@/` import, so the Playwright tests can import this file too.
+// PDF-1: reads a made PDF back for the tests: its pages, the text of each page by lines, and its pictures; and (PDF-3) where each piece of text stands. The reader is pdf.js
+// (Firefox's), written apart from the writer under test (pdfmake). No `@/` import, so the Playwright tests can import this file too.
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 
 export interface MadePdf {
@@ -38,25 +38,51 @@ function pageText(items: TextItem[]): string {
     .join('\n');
 }
 
-export async function readMadePdf(bytes: Uint8Array): Promise<MadePdf> {
+/** The text items of each page (empty ones left out). */
+async function textItemsByPage(bytes: Uint8Array): Promise<TextItem[][]> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   // pdf.js takes the bytes it is given over, so it gets a copy.
   const pdf = await pdfjs.getDocument({ data: new Uint8Array(bytes), verbosity: 0 }).promise;
   try {
-    const pages: string[] = [];
+    const pages: TextItem[][] = [];
     for (let n = 1; n <= pdf.numPages; n++) {
       const content = await (await pdf.getPage(n)).getTextContent();
-      const items = content.items.filter(
-        (item): item is TextItem => 'str' in item && item.str !== ''
+      pages.push(
+        content.items.filter((item): item is TextItem => 'str' in item && item.str !== '')
       );
-      pages.push(pageText(items));
     }
-    const raw = new TextDecoder('latin1').decode(bytes);
-    const imageCount = raw.match(/\/Subtype\s*\/Image\b/g)?.length ?? 0;
-    return { pageCount: pdf.numPages, pages, imageCount };
+    return pages;
   } finally {
     await pdf.destroy();
   }
+}
+
+export async function readMadePdf(bytes: Uint8Array): Promise<MadePdf> {
+  const pages = await textItemsByPage(bytes);
+  const raw = new TextDecoder('latin1').decode(bytes);
+  const imageCount = raw.match(/\/Subtype\s*\/Image\b/g)?.length ?? 0;
+  return { pageCount: pages.length, pages: pages.map(pageText), imageCount };
+}
+
+/** A piece of text on a page and where it stands, in pt from the page's left and bottom edges. */
+export interface PlacedText {
+  str: string;
+  x: number;
+  y: number;
+  width: number;
+}
+
+/** The text of each page as pdf.js places it, for a check that nothing runs past a margin. */
+export async function readPlacedText(bytes: Uint8Array): Promise<PlacedText[][]> {
+  const pages = await textItemsByPage(bytes);
+  return pages.map((items) =>
+    items.map((item) => ({
+      str: item.str,
+      x: item.transform[4],
+      y: item.transform[5],
+      width: item.width,
+    }))
+  );
 }
 
 /** The text with every white space and every zero-width space (U+200B, see breakableText) taken out, for a check that does not depend on where a line wraps. */
