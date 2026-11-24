@@ -8,10 +8,9 @@ import { useBusinessToday } from '@/lib/businessClock';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { getDesigns } from '@/lib/designStore';
 import { imagesSettled } from '@/lib/imageWait';
-import { mgShown } from '@/lib/ledgerView';
 import { photoUrl } from '@/lib/photos';
 import { getSettings } from '@/lib/settingsStore';
-import { catalogueRows, type CatalogueRow } from '@/lib/stockCatalogue';
+import { catalogueRows, dayShown, grossShown, type CatalogueRow } from '@/lib/stockCatalogue';
 
 // FB-D2 (Siddhi #6): the ready-stock catalogue. The shop chooses the categories (none chosen: every category that has stock), the page shows each design that has a piece In Stock with its first
 // photo, design number, name, purity, the range of the gross weights of the pieces in stock and how many there are, and "Print / Save PDF" gives the browser's print of that sheet (the rules
@@ -25,15 +24,6 @@ const DESIGNS = ['users', 'categories', 'subcategories', 'designs', 'skus', 'set
 
 /** The longest the print waits for the pictures (a photo that never arrives is a paper without that photo, not a button that does nothing). */
 const PICTURES_WAIT_MS = 15_000;
-
-const day = (businessDate: string) =>
-  new Date(`${businessDate}T12:00:00.000Z`).toLocaleDateString('en-IN');
-
-function grossShown(row: CatalogueRow): string {
-  return row.grossMinMg === row.grossMaxMg
-    ? mgShown(row.grossMinMg)
-    : `${mgShown(row.grossMinMg).replace(/ g$/, '')} - ${mgShown(row.grossMaxMg)}`;
-}
 
 function Card({ row, printing }: { row: CatalogueRow; printing: boolean }) {
   return (
@@ -186,7 +176,7 @@ export default function StockCatalogueClient() {
             {shopName}
           </h2>
           <p className="text-sm text-muted-foreground">
-            Ready stock{today ? ` as of ${day(today)}` : ''}
+            Ready stock{today ? ` as of ${dayShown(today)}` : ''}
           </p>
         </div>
         {groups.length === 0 ? (
