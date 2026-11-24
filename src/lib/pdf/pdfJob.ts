@@ -1,7 +1,8 @@
 // PDF-2: the steps behind the Download PDF and Share buttons, with no screen in it: no window, document or navigator. The three things it needs (make the PDF, save it, share it) come
 // in as `deps`, and every change of state goes out through `onState`, so a test runs it with fakes and Task 4's component only draws the state.
 //   - a share that the browser refuses (`blocked`: the make was slow, so the old tap is too old) does not make the PDF again: the state is `ready`, and one more tap (`sendReady`) shares
-//     the same file, with the share called at once, inside that tap
+//     the same file, with the share called at once, inside that tap. If that share is refused as well, the tap was fresh and the browser still says no: the state is `failed` with
+//     the share message (going back to `ready` would loop with no word)
 //   - `stop` aborts the make; whatever the make or the share does after that is ignored, so nothing is delivered after Stop
 import type { ShareOutcome } from './deliver';
 import type { PdfFile } from './types';
@@ -42,8 +43,11 @@ export function createPdfJob(
     onState(next);
   }
 
-  /** Opens the share menu. `blocked` leaves the file ready for one more tap; a throw is a failure; `shared` and `cancelled` (the menu closed) are the end. */
-  async function shareFile(file: PdfFile, run: number): Promise<void> {
+  /**
+   * Opens the share menu. `blocked` leaves the file ready for one more tap, unless this share came from that tap (`again`: Send PDF), when it is a failure; a throw is a failure;
+   * `shared` and `cancelled` (the menu closed) are the end.
+   */
+  async function shareFile(file: PdfFile, run: number, again: boolean): Promise<void> {
     let outcome: ShareOutcome;
     try {
       outcome = await deps.share(file);
@@ -55,7 +59,14 @@ export function createPdfJob(
       return;
     }
     if (run !== current) return;
-    set(outcome === 'blocked' ? { step: 'ready', file } : { step: 'idle' });
+    if (outcome !== 'blocked') {
+      set({ step: 'idle' });
+    } else if (!again) {
+      set({ step: 'ready', file });
+    } else {
+      console.warn('The PDF could not be shared: the browser refused it again');
+      set({ step: 'failed', message: PDF_SHARE_FAILED });
+    }
   }
 
   async function start(intent: PdfIntent): Promise<void> {
@@ -84,7 +95,7 @@ export function createPdfJob(
     if (run !== current) return;
 
     if (intent === 'share') {
-      await shareFile(file, run);
+      await shareFile(file, run, false);
       return;
     }
     try {
@@ -105,7 +116,7 @@ export function createPdfJob(
     abort = null;
     set({ step: 'making', intent: 'share', done: 0, total: 0 });
     // No await before the share: it has to start inside the tap that called this.
-    await shareFile(file, run);
+    await shareFile(file, run, true);
   }
 
   function stop() {

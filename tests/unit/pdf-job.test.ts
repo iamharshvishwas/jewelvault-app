@@ -1,8 +1,9 @@
 // PDF-2: the PDF job (src/lib/pdf/pdfJob.ts), the small state machine behind Download PDF and Share, run with fakes for the three things it calls:
 //   - download: `making`, then `idle` once the file is saved
 //   - share: `shared` and `cancelled` end in `idle` (a menu the person closes is not a failure); `blocked` (the browser refused the old tap after a slow make) ends in `ready`, and
-//     `sendReady()` shares that same file at once, with no second make and nothing awaited before the share (the tap must still count as the person's own)
-//   - a make that fails, a share that throws, or a save that throws, ends in `failed` with its own message and is logged with `console.warn` (the person sees the sentence, the developer
+//     `sendReady()` shares that same file at once, with no second make and nothing awaited before the share (the tap must still count as the person's own); a share from `sendReady()`
+//     that is `blocked` again ends in `failed` with the share message (a fresh tap was refused too: going back to `ready` would loop with no word)
+//   - a make that fails, a share that throws or is refused again, or a save that throws, ends in `failed` with its own message and is logged with `console.warn` (the person sees the sentence, the developer
 //     the error); the AbortError that follows Stop is not a failure and is not logged
 //   - `stop()` aborts the make and ends in `idle`; what the make does later (resolve or reject) is ignored and nothing is delivered
 //   - a second `start` while making does nothing; the photo count reaches the screen
@@ -113,22 +114,30 @@ describe('PDF-2: the PDF job', () => {
     await sending;
   });
 
-  it('(3) a share that is blocked again leaves the same file ready; a double tap shares once', async () => {
+  it('(3) a share from Send PDF that is blocked again gives failed with the share message; a double tap shares once', async () => {
     const open = hold<ShareOutcome>();
     const calls: Array<Promise<ShareOutcome>> = [Promise.resolve('blocked'), open.promise];
     const share = vi.fn<PdfJobDeps['share']>(() => calls.shift() ?? Promise.resolve('shared'));
-    const { job, last } = setup({ share });
+    const { job, last, make } = setup({ share });
     await job.start('share');
+    expect(last()).toEqual({ step: 'ready', file });
 
     const first = job.sendReady();
     const again = job.sendReady(); // a second tap while the share is open
     expect(share).toHaveBeenCalledTimes(2);
 
-    // The share the person sees now is refused again: the same file stays ready.
+    // The share of the fresh tap is refused too: the browser will not share it, so the person is told to use Download PDF (no silent loop back to Send PDF).
     open.resolve('blocked');
     await first;
     await again;
-    expect(last()).toEqual({ step: 'ready', file });
+    expect(last()).toEqual({ step: 'failed', message: PDF_SHARE_FAILED });
+    expect(make).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      'The PDF could not be shared: the browser refused it again'
+    );
+    // and Send PDF is gone: no file is ready to send
+    await job.sendReady();
+    expect(share).toHaveBeenCalledTimes(2);
   });
 
   it('(3) sendReady does nothing when no file is ready', async () => {
