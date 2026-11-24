@@ -294,9 +294,9 @@ export default function EstimateViewClient() {
         </Link>
         <div className="flex flex-wrap items-center gap-2">
           <OwnerBillActions billId={invoice.id} />
-          {/* one per bill: a PDF made, or a share waiting for its second tap, never moves over to the next bill opened */}
+          {/* one per bill and its status: a PDF made, or a share waiting for its second tap, never moves over to the next bill opened, nor outlives a change of status (a bill cancelled while Send PDF waits drops the file made before) */}
           <PdfActions
-            key={invoice.id}
+            key={`${invoice.id}:${invoice.status}`}
             make={makePdf}
             shareTitle={`Estimate ${invoice.invoiceNumber}`}
             testIdPrefix="estimate-pdf"
