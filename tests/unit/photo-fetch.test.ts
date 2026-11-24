@@ -3,12 +3,14 @@
 //   - never more than `concurrency` (6 unless told) at a time; the progress at the start and after each photo, ending at (total, total)
 //   - a 404, a network error, an answer that is not a picture (`text/html`), a photo that never answers (past `timeoutMs`): that photo is in `failed`, the others arrive
 //   - Stop (the signal aborted): rejects with an AbortError and starts no new fetch; a signal aborted before the start fetches nothing
+//   - each fetch is `cache: 'no-store'`: never the copy the screen's img left in the cache, which has no CORS header
+//   - `everyPhotoFailed`: true only when there were photos to fetch and not one arrived (the catalogue's make then fails and says so); some failed, or none to fetch, is false
 //
 // The fetch is a fake (`fetchImpl`): no network. Node has no FileReader, so these tests also show the data URL is made without one.
 //
 // Run: npm test -- tests/unit/photo-fetch.test.ts
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchPhotoDataUrls } from '@/lib/pdf/photoFetch';
+import { everyPhotoFailed, fetchPhotoDataUrls } from '@/lib/pdf/photoFetch';
 
 // A 1 x 1 grey JPEG and a 1 x 1 gold PNG; and the PNG tests/e2e/stock-catalogue.spec.ts had before PDF-6 (now a JPEG), whose picture data is cut short (its IEND chunk is out of step), which
 // pdfmake cannot open.
@@ -75,6 +77,23 @@ describe('PDF-5 fetchPhotoDataUrls: the photos', () => {
     const { photos } = await fresh.fetchPhotoDataUrls([id], { fetchImpl });
     expect(calls).toEqual([`https://api.example.test/v1/photos/${id}/thumb`]);
     expect(photos.has(id)).toBe(true);
+  });
+
+  it("never the browser's cached copy: each fetch is `cache: 'no-store'`", async () => {
+    // The screen draws the same thumbnails with a plain img (no Origin, so no CORS header in the answer) and the API caches them for a year; a CORS fetch that took that copy would fail
+    // wherever a cache does not keep `Vary: Origin`. So the PDF's fetch never reads (nor writes) the cache.
+    const inits: Array<RequestInit | undefined> = [];
+    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      inits.push(init);
+      return picture(JPEG);
+    }) as typeof fetch;
+    const { photos } = await fetchPhotoDataUrls(['a', 'b'], { fetchImpl, urlOf });
+    expect(photos.size).toBe(2);
+    expect(inits).toHaveLength(2);
+    for (const init of inits) {
+      expect(init?.cache).toBe('no-store');
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+    }
   });
 
   it('never more than `concurrency` at a time: 3 when told, 6 unless told', async () => {
@@ -250,5 +269,41 @@ describe('PDF-5 fetchPhotoDataUrls: Stop', () => {
     expect(result.failed).toEqual([]);
     expect(calls).toEqual([]);
     expect(reports).toEqual([[0, 0]]);
+  });
+});
+
+describe('PDF-fix everyPhotoFailed: a catalogue with not one photo is not made', () => {
+  const result = (arrived: string[], failed: string[]) => ({
+    photos: new Map(arrived.map((id) => [id, `data:image/jpeg;base64,${id}`])),
+    failed,
+  });
+
+  it('every photo failed: true', () => {
+    expect(everyPhotoFailed(result([], ['a']))).toBe(true);
+    expect(everyPhotoFailed(result([], ['a', 'b', 'c']))).toBe(true);
+  });
+
+  it('some failed, none failed, or none to fetch: false (the failed cards show No photo)', () => {
+    expect(everyPhotoFailed(result(['a'], ['b', 'c']))).toBe(false);
+    expect(everyPhotoFailed(result(['a', 'b'], []))).toBe(false);
+    // a catalogue whose designs have no photo at all is made as it is
+    expect(everyPhotoFailed(result([], []))).toBe(false);
+  });
+
+  it('on what fetchPhotoDataUrls gives back: every photo 404 is true, one arriving is false', async () => {
+    const allMissing = fakeFetch(() => new Response('', { status: 404 }));
+    expect(
+      everyPhotoFailed(
+        await fetchPhotoDataUrls(['a', 'b'], { fetchImpl: allMissing.fetchImpl, urlOf })
+      )
+    ).toBe(true);
+    const oneArrives = fakeFetch((id) =>
+      id === 'b' ? picture(JPEG) : new Response('', { status: 404 })
+    );
+    expect(
+      everyPhotoFailed(
+        await fetchPhotoDataUrls(['a', 'b'], { fetchImpl: oneArrives.fetchImpl, urlOf })
+      )
+    ).toBe(false);
   });
 });

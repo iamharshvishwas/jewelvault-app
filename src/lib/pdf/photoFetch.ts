@@ -1,6 +1,7 @@
 // PDF-5: the photos of the catalogue PDF, fetched by the page and handed to pdfmake as data URLs. They are the 320 px thumbnails (`photoUrl(id, 'thumb')`, on the API's origin), which
 // the API serves with no cookie and with CORS for the website. Each distinct photo is asked for once, at most `concurrency` at a time. A photo that answers 404, fails on the network, answers
-// something that is not a picture the PDF can draw, or takes longer than `timeoutMs` is left out (`failed`: its card shows `No photo`) and the others go on: one photo never stops the paper.
+// something that is not a picture the PDF can draw, or takes longer than `timeoutMs` is left out (`failed`: its card shows `No photo`) and the others go on: one photo never stops the paper
+// (when not one arrives, `everyPhotoFailed`, the catalogue's make fails instead).
 // The progress is reported at the start, (0, total), so the screen can show `photos 0 of {total}` at once, and after each photo. Stop (the signal) ends it with an AbortError: the photos in
 // flight are told to stop and nothing new is started.
 // Pure: no window, document or navigator, and no FileReader (Node has none): the bytes are made base64 with btoa.
@@ -115,7 +116,9 @@ async function fetchOne(
   signal?.addEventListener('abort', giveUp);
   try {
     return await Promise.race([
-      fetchImpl(address(), { signal: controller.signal }).then(dataUrlOf),
+      // `no-store`: never the copy the screen's img left in the cache (asked with no Origin, so its answer has no CORS header, and kept for a year), which a CORS fetch could not read
+      // wherever a cache does not keep `Vary: Origin`
+      fetchImpl(address(), { signal: controller.signal, cache: 'no-store' }).then(dataUrlOf),
       gaveUp,
     ]);
   } catch {
@@ -174,4 +177,15 @@ export async function fetchPhotoDataUrls(
     await all;
   }
   return { photos, failed: ids.filter((photoId) => !photos.has(photoId)) };
+}
+
+/**
+ * True when there were photos to fetch and not one of them arrived (the API or the network is down): a catalogue of `No photo` cards only is not made, the make fails and says so.
+ * Some failed, or none to fetch (no design has a photo), is false: the PDF is made, with `No photo` on the cards whose photo failed.
+ */
+export function everyPhotoFailed(result: {
+  photos: ReadonlyMap<string, string>;
+  failed: readonly string[];
+}): boolean {
+  return result.failed.length > 0 && result.photos.size === 0;
 }

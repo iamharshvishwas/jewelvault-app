@@ -17,7 +17,8 @@ import { countIn, readPdf } from './pdf-text';
 //   pieces; the PDF Chromium makes of it has the number of each In Stock ring, no ring that is Sold out, no chain (not chosen), no price and no original weight; the biller and the staff open it too
 // PDF-S2 (PDF-6): Download PDF makes the catalogue as a PDF file in the browser (src/lib/pdf/cataloguePdf.ts), with the photos the page fetches from the API (another origin): chosen `Ring`, the file is
 //   `Stock Catalogue - Ring - {DD-MM-YYYY}.pdf` and holds the In Stock ring with the API's own photo and nothing else; slow photos are counted on the screen and Stop ends it with nothing saved; a photo
-//   that answers 404 is `No photo`; Share hands over one PDF file of the same name; at 375 x 812 the buttons take a tap; the biller and the staff have Download PDF too
+//   that answers 404 is `No photo` while the others arrive, and when every photo answers 404 no file is saved and the make-failed words show; Share hands over one PDF file of the same name; at
+//   375 x 812 the buttons take a tap; the biller and the staff have Download PDF too
 //
 // The designs and pieces are written as root in the lane's container (the screens that make them are proved in add-design.spec.ts). The category is the seeded `Ring` (the lane's seed has the singular
 // name; the brief's "Rings" is the same category). Everything the test made is taken out again.
@@ -493,14 +494,19 @@ test.describe('PDF-S2: the stock catalogue as a PDF file', () => {
     await expect(page.getByTestId('catalogue-pdf-error')).toHaveCount(0);
   });
 
-  test('a photo the API answers 404: the PDF is saved all the same, with No photo in its place', async ({
+  test('a photo the API answers 404 while the others arrive: the PDF is saved all the same, with No photo in its place', async ({
     page,
   }) => {
     const { apiUrl, webOrigin } = e2eLane();
     await openCatalogue(page, e2eLogin('owner'));
     await chooseRing(page);
-    // a real 404 for the site (with the CORS header), not a network error
-    await page.route(`${apiUrl}/v1/photos/*/thumb`, (route) =>
+    await page
+      .getByTestId('catalogue-category')
+      .filter({ hasText: /^Chain$/ })
+      .click();
+    await expect(card(page, 'W16-C1')).toHaveCount(1);
+    // the ring's photo is a real 404 for the site (with the CORS header), not a network error; the chain's photo arrives
+    await page.route(`${apiUrl}/v1/photos/${ids.ringPhoto}/thumb`, (route) =>
       route.fulfill({
         status: 404,
         headers: { 'access-control-allow-origin': webOrigin },
@@ -511,14 +517,52 @@ test.describe('PDF-S2: the stock catalogue as a PDF file', () => {
 
     const before = businessDay();
     const { name, bytes } = await pressDownloadPdf(page, 'catalogue-pdf');
-    expect(ringFileNames(before, businessDay())).toContain(name);
+    expect(
+      [...new Set([before, businessDay()])].map(
+        (day) => `Stock Catalogue - Ring, Chain - ${day}.pdf`
+      )
+    ).toContain(name);
     const pdf = await readMadePdf(bytes);
     const text = compact(pdf.pages.join('\n'));
     expect(text).toContain('W16-R1');
     expect(text).toContain(compact('2 pieces in stock'));
-    expect(text).toContain(compact('No photo'));
-    expect(pdf.imageCount).toBe(0);
+    expect(text, 'the ring whose photo failed').toContain(compact('No photo'));
+    expect(text).toContain('W16-C1');
+    // the chain's photo is in the file, the API's own picture byte for byte
+    expect(pdf.imageCount).toBeGreaterThanOrEqual(1);
+    expect(Buffer.from(bytes).indexOf(Buffer.from(JPEG_HEX, 'hex'))).toBeGreaterThan(0);
     await expect(page.getByTestId('catalogue-pdf-error')).toHaveCount(0);
+  });
+
+  test('every photo the API answers 404: no file is saved, the make-failed words show, and Download PDF is back', async ({
+    page,
+  }) => {
+    const { apiUrl, webOrigin } = e2eLane();
+    let downloads = 0;
+    page.on('download', () => (downloads += 1));
+    await openCatalogue(page, e2eLogin('owner'));
+    await chooseRing(page);
+    await page.route(`${apiUrl}/v1/photos/*/thumb`, (route) =>
+      route.fulfill({
+        status: 404,
+        headers: { 'access-control-allow-origin': webOrigin },
+        contentType: 'application/json',
+        body: '{"error":{"code":"JV_NOT_FOUND"}}',
+      })
+    );
+
+    const download = page.getByTestId('catalogue-pdf-download');
+    await download.click();
+    const error = page.getByTestId('catalogue-pdf-error');
+    await expect(error).toHaveText('The PDF could not be made. Please try again.', {
+      timeout: 120_000,
+    });
+    await expect(error).toHaveAttribute('role', 'alert');
+    await expect(page.getByTestId('catalogue-pdf-progress')).toHaveCount(0);
+    await expect(download).toBeEnabled();
+    // a moment more: still no file (a paper of `No photo` cards only is never saved)
+    await page.waitForTimeout(1_500);
+    expect(downloads, 'no file is saved').toBe(0);
   });
 
   test('Share hands the share menu one PDF file, with the same name as Download PDF gives', async ({

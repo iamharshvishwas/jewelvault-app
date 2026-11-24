@@ -12,7 +12,7 @@ import { imagesSettled } from '@/lib/imageWait';
 import { cataloguePdfDefinition } from '@/lib/pdf/cataloguePdf';
 import { catalogueFileName } from '@/lib/pdf/fileName';
 import type { PdfJobDeps } from '@/lib/pdf/pdfJob';
-import { fetchPhotoDataUrls } from '@/lib/pdf/photoFetch';
+import { everyPhotoFailed, fetchPhotoDataUrls } from '@/lib/pdf/photoFetch';
 import { photoUrl } from '@/lib/photos';
 import { getSettings } from '@/lib/settingsStore';
 import { catalogueRows, dayShown, grossShown, type CatalogueRow } from '@/lib/stockCatalogue';
@@ -100,7 +100,14 @@ export default function StockCatalogueClient() {
     const photoIds = groups.flatMap((group) =>
       group.rows.flatMap((row) => (row.photoId === null ? [] : [row.photoId]))
     );
-    const { photos } = await fetchPhotoDataUrls(photoIds, { signal, onProgress: report });
+    const fetched = await fetchPhotoDataUrls(photoIds, { signal, onProgress: report });
+    // not one photo arrived: no PDF of `No photo` cards is saved or shared; the make fails, so the person reads that it could not be made (some failed: those cards show `No photo`)
+    if (everyPhotoFailed(fetched)) {
+      throw new Error(
+        `None of the ${fetched.failed.length} photos of the catalogue could be fetched.`
+      );
+    }
+    const { photos } = fetched;
     const { makePdfBlob } = await import('@/lib/pdf/engine');
     // stopped while pdfmake was on its way: nothing is drawn
     if (signal.aborted) throw new DOMException('The PDF was stopped.', 'AbortError');
