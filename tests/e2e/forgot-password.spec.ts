@@ -21,8 +21,10 @@ import { typeSecret } from './secret';
 // a login of its own; tests 2, 3 and 4 one each, every one for a login made for that test alone), so it stays under 10 for the run and under 3 for each e-mail, and a retry makes new logins.
 // The lane's four logins are never used: a reset ends every session of its login and changes its password, and other specs sign in with them.
 //
-// THE PASSWORDS. Made at run time, typed with the keyboard (`typeSecret`, tests/e2e/secret.ts) and never printed, compared or put in a title: nothing here asserts on the value of a password field
-// (only on its `type` attribute) or on a mail's text as a whole (a failing assertion prints it, link included), and a check that a mail holds a link says true or false.
+// THE PASSWORDS. Made at run time, typed with the keyboard (`typeSecret`, tests/e2e/secret.ts) and never printed, compared or put in a title. Nothing here asserts on a password field once something
+// has been typed into it, not even on its `type` attribute: the field is a controlled React input, which keeps the typed text in its `value` attribute, and the call log of a failing assertion prints the
+// element it resolved to, `<input ... value="...">`. The type of a typed-into field is checked with the number of elements that match `input[type=...]`, and a failing `toHaveCount` prints only that number.
+// Nor does anything assert on a mail's text as a whole (a failing assertion prints it, link included): a check that a mail holds a link says true or false.
 //
 // Run: E2E=1 LANE=b JV_API_DIR=<checkout of jewelvault-api with the reset routes> npx playwright test tests/e2e/forgot-password.spec.ts --reporter=line
 
@@ -251,11 +253,17 @@ test.describe('forgot password by e-mail', () => {
     await expect(aside(page)).toHaveCount(0);
     await typeSecret(page, newPasswordField(page), chosen);
     await typeSecret(page, repeatField(page), chosen);
-    await expect(newPasswordField(page)).toHaveAttribute('type', 'password');
+    // counts and never the fields' own attributes: they hold what was typed (see THE PASSWORDS)
+    const hidden = page.locator('input[type="password"]');
+    const shown = page.locator('input[type="text"]');
+    await expect(hidden).toHaveCount(2);
+    await expect(shown).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Show what you typed' })).toHaveCount(2);
     await page.getByRole('button', { name: 'Show what you typed' }).first().click(); // the eye of "New password", the first field
-    await expect(newPasswordField(page)).toHaveAttribute('type', 'text');
-    await expect(repeatField(page)).toHaveAttribute('type', 'password');
+    await expect(shown).toHaveCount(1);
+    await expect(hidden).toHaveCount(1);
+    await expect(newPasswordField(page).and(shown)).toHaveCount(1); // it is "New password" that shows its text
+    await expect(repeatField(page).and(hidden)).toHaveCount(1); // and "Repeat the new password" that stays hidden
     await expect(page.getByRole('button', { name: 'Hide what you typed' })).toHaveCount(1);
 
     // saved
