@@ -1,6 +1,7 @@
 'use client';
 import React, { useEffect, useId, useReducer, useRef } from 'react';
 import { Loader2, X } from 'lucide-react';
+import PasswordField from '@/components/ui/PasswordField';
 import SaveButton from '@/components/ui/SaveButton';
 import { UNCONFIRMED_MESSAGE } from '@/lib/api/errorMap';
 import { EMPTY_PASSWORD_DIALOG, passwordDialogReducer } from '../lib/passwordDialog';
@@ -109,18 +110,17 @@ export default function ConfirmPasswordDialog({
         >
           <div className="text-sm text-foreground space-y-2">{summary}</div>
           <fieldset disabled={state.saving} className="min-w-0 space-y-1.5">
-            <label className="text-xs font-semibold text-foreground block">
-              Your password
-              <input
-                ref={field}
-                type="password"
-                data-testid="confirm-password-input"
-                value={state.password}
-                onChange={(event) => dispatch({ type: 'typed', password: event.target.value })}
-                autoComplete="current-password"
-                className="input-field text-sm mt-1.5 font-normal"
-              />
-            </label>
+            <PasswordField
+              label="Your password"
+              labelClassName="text-xs font-semibold text-foreground block"
+              inputClassName="input-field text-sm font-normal"
+              fieldClassName="mt-1.5"
+              inputRef={field}
+              data-testid="confirm-password-input"
+              value={state.password}
+              onChange={(event) => dispatch({ type: 'typed', password: event.target.value })}
+              autoComplete="current-password"
+            />
             <p className="text-xs text-muted-foreground">
               We ask for your password every time you change who can do what.
             </p>

@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import AppLogo from '@/components/ui/AppLogo';
+import PasswordField from '@/components/ui/PasswordField';
 import { signIn } from '@/lib/authStore';
 import { BUSINESS_NAME } from '@/lib/businessConfig';
 
@@ -56,17 +57,15 @@ export default function LoginScreen({ notice }: { notice: string | null }) {
               required
             />
           </label>
-          <label className="text-xs font-semibold text-muted-foreground block">
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="input-field mt-1"
-              autoComplete="current-password"
-              required
-            />
-          </label>
+          <PasswordField
+            label="Password"
+            labelClassName="text-xs font-semibold text-muted-foreground block"
+            inputClassName="input-field"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="current-password"
+            required
+          />
           {error && (
             <p role="alert" className="text-xs font-semibold text-red-600">
               {error}
