@@ -254,6 +254,9 @@ async function fillDesign(
 ) {
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByTestId('design-number-preview')).toHaveText('Number assigned when saved');
+  // the rows that add a category or a sub-category are on the screen of the owner and of staff (the add-category tick), as they always were
+  await expect(page.getByLabel('New category name')).toBeVisible();
+  await expect(page.getByLabel('New sub-category name')).toBeVisible();
   await page.getByLabel('Design Name').fill(options.name);
   await page.getByTestId('category-select').selectOption({ label: 'Ring' });
   await page.getByTestId('subcategory-select').selectOption({ label: 'Kundan' });

@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import AppLogo from '@/components/ui/AppLogo';
 import { BUSINESS_SHORT_NAME } from '@/lib/businessConfig';
-import { ROLE_LABEL, canAccessPath, initialsOf, signOut, type AuthSession } from '@/lib/authStore';
+import { can, canAccessPath } from '@/lib/access';
+import { initialsOf, signOut, type AuthSession } from '@/lib/authStore';
 import {
   LayoutDashboard,
   Package,
@@ -23,7 +24,7 @@ import {
   CreditCard,
   Layers,
   SlidersHorizontal,
-  Shield,
+  ShieldCheck,
   Hash,
   FileText,
   Gem,
@@ -43,8 +44,9 @@ interface NavItem {
   children?: NavItem[];
 }
 
-// C15: the public catalogue and its admin screen are not connected and not reachable in M1, so the menu does not offer them (the route table in authStore closes them as well).
-// FB-F1: the Order Book is, for every role (staff read it).
+// C15: the public catalogue and its admin screen are not connected and not reachable in M1, so the menu does not offer them (the route table in src/lib/access.ts closes them as well).
+// FB-F1: the Order Book is, for whoever may read the orders (the three roles of today).
+// Access and roles (Task 18): People & Roles is the last item. The route table opens it for the Super Admin alone (`superAdmin`: no tick grants it), so the menu offers it to nobody else.
 const NAV_ITEMS: NavItem[] = [
   {
     id: 'nav-dashboard',
@@ -203,12 +205,6 @@ const NAV_ITEMS: NavItem[] = [
       },
       { id: 'nav-taxes', label: 'Taxes', href: '/settings?tab=taxes', icon: <Hash size={15} /> },
       {
-        id: 'nav-users',
-        label: 'Users & Permissions',
-        href: '/settings?tab=users',
-        icon: <Shield size={15} />,
-      },
-      {
         id: 'nav-numbering',
         label: 'Numbering',
         href: '/settings?tab=numbering',
@@ -228,6 +224,12 @@ const NAV_ITEMS: NavItem[] = [
       },
     ],
   },
+  {
+    id: 'nav-people-roles',
+    label: 'People & Roles',
+    href: '/people-roles',
+    icon: <ShieldCheck size={18} />,
+  },
 ];
 
 interface SidebarProps {
@@ -241,10 +243,10 @@ interface SidebarProps {
   variant?: 'desktop' | 'drawer';
 }
 
-// U5: the role decides which menu items exist. An item is offered when its route is open to the role (the same table as
-// the route gate in authStore), and a group when at least one of its items is.
+// U5: the ticks decide which menu items exist. An item is offered when its route is open to the person (the same table as
+// the route gate, src/lib/access.ts; the session is the Holder: its ticks and flag), and a group when at least one of its items is.
 function navForRole(session: AuthSession): NavItem[] {
-  const open = (item: NavItem) => (item.href ? canAccessPath(session.role, item.href) : true);
+  const open = (item: NavItem) => (item.href ? canAccessPath(session, item.href) : true);
   return NAV_ITEMS.flatMap((item) => {
     if (!item.children) return open(item) ? [item] : [];
     const children = item.children.filter(open);
@@ -268,9 +270,9 @@ export default function Sidebar({
     new Set(
       drawer
         ? visibleNav.filter((item) => item.children).map((item) => item.id)
-        : session.role === 'staff'
-          ? ['nav-inventory', 'nav-stock']
-          : ['nav-inventory', 'nav-sales']
+        : can(session, 'bill_make')
+          ? ['nav-inventory', 'nav-sales']
+          : ['nav-inventory', 'nav-stock']
     )
   );
 
@@ -438,7 +440,7 @@ export default function Sidebar({
                 {session.displayName}
               </p>
               <p data-testid="session-role" className="text-xs text-muted-foreground">
-                {ROLE_LABEL[session.role]}
+                {session.isSuperAdmin ? 'Super Admin' : session.roleName}
               </p>
             </div>
             <button

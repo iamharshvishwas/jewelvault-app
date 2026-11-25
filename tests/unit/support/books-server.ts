@@ -2,13 +2,8 @@
 // `GET /v1/dashboard/health` and the newest rows of `GET /v1/health/checks?limit=`. It is spoken to through the REAL API client by a stubbed `fetch`, and it keeps the rules that
 // matter to the screens: the cash book answers the rows of the range asked for (both ends included), the owner's window is 400 days (422 past it) and a biller's is today and
 // yesterday of `today` (403 outside it), and only the owner reads the line.
-import type {
-  CheckRunWire,
-  DailyTotalWire,
-  DashboardHealth,
-  Role,
-  ReviewWire,
-} from '@/lib/api/types';
+import type { CheckRunWire, DailyTotalWire, DashboardHealth, ReviewWire } from '@/lib/api/types';
+import type { BuiltInRole as Role } from './access';
 
 export interface SeenRead {
   path: string;

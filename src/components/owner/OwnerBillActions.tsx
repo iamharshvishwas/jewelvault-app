@@ -11,9 +11,10 @@ import ReasonDialog from './ReasonDialog';
 import { useOwnerActions } from './useOwnerActions';
 
 // The owner's actions on a bill: CANCEL (X5) and RE-ISSUE (X10) (spec K1, K3, K6, X5, X10, A4; task WEB11). A bill is never edited and never deleted: a wrong bill is cancelled (it stays in the
-// books, marked Cancelled, with the reason), or re-issued, which cancels it and saves the corrected bill in one step, the money already received moving to the new one. The buttons are
-// drawn for the owner only, and only for a bill that is still active; a re-issue is offered for an estimate (dues brought forward have no lines to correct: cancel them and add a new
-// opening balance). The re-issue opens the billing screen with this bill's lines in it (`/billing-pos?reissue=<id>`), where the customer cannot be changed.
+// books, marked Cancelled, with the reason), or re-issued, which cancels it and saves the corrected bill in one step, the money already received moving to the new one. Each button is drawn for
+// the tick of its own call (Cancel a bill, Re-issue a bill; the owner holds both), and only for a bill that is still active; a re-issue is offered for an estimate (dues brought forward have no
+// lines to correct: cancel them and add a new opening balance). The re-issue opens the billing screen with this bill's lines in it (`/billing-pos?reissue=<id>`), where the customer cannot be
+// changed; so the link is drawn only for a person who may open that screen (`ownerActionFlags`: the tick and "Make bills").
 
 interface OwnerBillActionsProps {
   billId: string;
@@ -72,17 +73,18 @@ export default function OwnerBillActions({ billId, compact = false }: OwnerBillA
   useRowCacheVersion('bills');
   const [cancelling, setCancelling] = useState(false);
   const facts = getBillFacts(billId);
-  if (!allowed || !facts) return null;
+  if (!(allowed.cancel || allowed.reissue) || !facts) return null;
 
   // the buttons go as soon as the bill is cancelled, but the dialog stays until the owner closes it: it holds the answer (or the words of an outcome that could not be confirmed),
   // and the poll that follows the write may show the bill cancelled before the owner has read either
   const live = facts.status === 'active';
+  const mayReissue = allowed.reissue && facts.docType === 'estimate';
   const size = compact ? 'py-1 px-2 text-xs' : 'py-2 text-xs';
   return (
     <>
-      {live && (
+      {live && (allowed.cancel || mayReissue) && (
         <span data-testid="owner-bill-actions" className="inline-flex flex-wrap items-center gap-2">
-          {facts.docType === 'estimate' && (
+          {mayReissue && (
             <Link
               href={`/billing-pos?reissue=${facts.id}`}
               data-testid="reissue-bill"
@@ -91,14 +93,16 @@ export default function OwnerBillActions({ billId, compact = false }: OwnerBillA
               <FilePenLine size={13} /> Re-issue
             </Link>
           )}
-          <button
-            type="button"
-            data-testid="cancel-bill"
-            onClick={() => setCancelling(true)}
-            className={`inline-flex items-center gap-1 rounded-sm border border-red-200 font-semibold text-red-600 hover:bg-red-50 ${size}`}
-          >
-            <Ban size={13} /> Cancel
-          </button>
+          {allowed.cancel && (
+            <button
+              type="button"
+              data-testid="cancel-bill"
+              onClick={() => setCancelling(true)}
+              className={`inline-flex items-center gap-1 rounded-sm border border-red-200 font-semibold text-red-600 hover:bg-red-50 ${size}`}
+            >
+              <Ban size={13} /> Cancel
+            </button>
+          )}
         </span>
       )}
       {cancelling && (

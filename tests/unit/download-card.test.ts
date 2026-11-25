@@ -10,6 +10,8 @@ import { greenHealth } from './support/books-server';
 // T-E04 / T-R05 (the card, B3, I12, O53; task WEB12b): the owner's dashboard shows a "Download everything" card with the date of the last download; from 28 days after it (or after the first
 // night the system ran, for the first download) the card turns amber and says it is time; the line turns red after 35 days. The API counts the whole Asia/Kolkata days and says the state
 // (readHealth); the card repeats it and decides no threshold. After a download the card shows the file's name and the state the API gives next.
+// Access and roles (Task 18): the dashboard mounts the card for the person who holds the tick `download_all` (the owner of today) and for nobody else (tests/unit/dashboard-access.test.ts); the
+// card itself holds no role test, so this file draws it from the model alone.
 
 const view = (download: Partial<ReturnType<typeof greenHealth>['download']>): HealthView => ({
   state: 'ready',

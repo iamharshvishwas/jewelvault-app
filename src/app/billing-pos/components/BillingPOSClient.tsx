@@ -9,7 +9,6 @@ import BillingSummaryPanel from './BillingSummaryPanel';
 import RateGuardPanel from './RateGuardPanel';
 import { addCustomer, forgetBillTry, getCustomers, getNextInvoiceNumber } from '@/lib/appStore';
 import { usePricingCheck } from '@/lib/api/connection';
-import { useSession } from '@/lib/authStore';
 import {
   HELD_STATUSES,
   newBillingItem,
@@ -31,6 +30,7 @@ import { PREVIEW_MODE } from '@/lib/previewMode';
 import { isFirstBillOfTheDay, rateConfirmationNeeded } from '@/lib/rateGuard';
 import { freedByCancel, prepareReissue, type ReissueReady, type ReissueSetup } from '@/lib/reissue';
 import { businessToday, getDailyRates, getSettings } from '@/lib/settingsStore';
+import { useHolder } from '@/lib/useAccess';
 import type { Customer, Sku } from '@/lib/mockData';
 
 export type { BillingItem };
@@ -43,9 +43,9 @@ const SALE_TYPES: SaleType[] = ['Retail', 'Semi-Wholesale', 'Wholesale'];
 const isHeld = (status: string): status is HeldStatus =>
   (HELD_STATUSES as readonly string[]).includes(status);
 
-// The billing screen, and the same screen in RE-ISSUE mode (X10, WEB11): `/billing-pos?reissue=<bill id>` opens it with the lines of that bill in it, for the owner to correct. The
+// The billing screen, and the same screen in RE-ISSUE mode (X10, WEB11): `/billing-pos?reissue=<bill id>` opens it with the lines of that bill in it, for a person who may re-issue (the owner) to correct. The
 // customer is the old bill's and cannot change (K6); the pieces the old bill sold may be scanned again (the cancel frees them in the same transaction); the person may give a reason (optional, FB-D1); Save
-// sends the corrected bill to the old bill's re-issue instead of making a new bill, and the old bill is cancelled in the same step. For anyone but the owner, and for a bill that cannot
+// sends the corrected bill to the old bill's re-issue instead of making a new bill, and the old bill is cancelled in the same step. For a role without the re-issue tick, and for a bill that cannot
 // be re-issued, the screen says why and shows no form.
 export default function BillingPOSClient() {
   return (
@@ -64,10 +64,10 @@ function BillingRoute() {
 }
 
 function BillingEntry({ reissueId }: { reissueId: string | null }) {
-  const session = useSession();
+  const holder = useHolder();
   // decided once, when the screen opens: after the re-issue is saved the old bill is cancelled, and the screen must stay on the saved bill
   const [setup] = useState<ReissueSetup | null>(() =>
-    reissueId ? prepareReissue(reissueId, session.role) : null
+    reissueId ? prepareReissue(reissueId, holder) : null
   );
   if (setup && !setup.ok) {
     return (
@@ -118,7 +118,6 @@ function BillingScreen({ reissue }: { reissue: ReissueReady | null }) {
   const [rateAnswer, setRateAnswer] = useState<string | null>(null);
   // the question depends on the daily rates and on whether a bill dated today exists: draw again when a poll or a save changes either
   useRowCacheVersion('daily-rates', 'bills');
-  const session = useSession();
   const pricing = usePricingCheck();
   const billsAllowed = PREVIEW_MODE || pricing.state === 'match';
 
@@ -415,7 +414,6 @@ function BillingScreen({ reissue }: { reissue: ReissueReady | null }) {
             invoiceNumber={invoiceNumber}
             saleType={saleType}
             invoiceDate={invoiceDate}
-            role={session.role}
             billsAllowed={billsAllowed}
             locked={locked || askingForRates}
             saved={saved}

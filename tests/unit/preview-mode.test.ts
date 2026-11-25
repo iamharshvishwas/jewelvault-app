@@ -3,6 +3,9 @@
 // opens like this. authStore reads the variable once, when the module loads, so each case imports a fresh copy of it.
 // WEB02: the API client replaces the Supabase client here; in preview mode not one call may reach it, on start-up, sign-out or a click.
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { canAccessPath } from '@/lib/access';
+import { SYNC_RESOURCES } from '@/lib/api/types';
+import { PLAN_TICKS } from './support/access';
 
 /** Any use of the API client in preview mode is a failure: every member of it throws when it is touched. */
 const touched: string[] = [];
@@ -50,17 +53,23 @@ describe('preview mode', () => {
     }
   );
 
-  it('is on for "1": signed in as the owner, so every owner screen opens', async () => {
+  it('is on for "1": signed in as the owner with every tick and every resource, not the Super Admin, so every owner screen opens', async () => {
     const auth = await loadAuthStore('1');
+    const { holderOf } = await import('@/lib/useAccess'); // over the same fresh copy of authStore
     expect(auth.PREVIEW_MODE).toBe(true);
     const state = auth.getSessionState();
     expect(state.status).toBe('signedIn');
-    expect(state.role).toBe('owner');
+    expect(state.access).not.toBeNull();
+    expect(state.session?.role).toBe('owner');
     expect(state.session?.displayName).toBe('Preview');
     expect(state.session?.mustChangePassword).toBe(false);
+    expect([...(state.session?.permissions ?? [])]).toEqual([...PLAN_TICKS]);
+    expect(state.session?.isSuperAdmin).toBe(false);
+    expect([...(state.session?.reads ?? [])].sort()).toEqual([...SYNC_RESOURCES].sort());
     for (const route of ['/', '/billing-pos', '/reports', '/settings', '/inventory-management']) {
-      expect(auth.canAccessPath(state.role, route)).toBe(true);
+      expect(canAccessPath(holderOf(state), route)).toBe(true);
     }
+    expect(canAccessPath(holderOf(state), '/people-roles')).toBe(false);
   });
 
   it('never calls the API: not on start-up (a page subscribing), not on sign-out, and a sign-out empties the caches but stays on the preview', async () => {

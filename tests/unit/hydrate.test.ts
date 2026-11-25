@@ -31,6 +31,14 @@ import {
   uuid,
   type FakeApiOptions,
 } from './support/rows';
+import { accessFor, type BuiltInRole } from './support/access';
+
+/** What a built-in role reads, as its `me` says it (the recording of tests/unit/fixtures/access-golden.json). */
+const readsOf = (role: BuiltInRole) => accessFor(role).reads;
+/** The gate key of a built-in role: the access text of its `me`. */
+const accessOf = (role: BuiltInRole) => accessFor(role).access;
+/** What the layout starts the hydrate with for a built-in role. */
+const keyOf = (role: BuiltInRole) => ({ access: accessOf(role), reads: readsOf(role) });
 
 /** A hydrate over a fake API; `settled()` waits for the load that is running. */
 function setup(options: FakeApiOptions, extra: Partial<Parameters<typeof createHydrator>[0]> = {}) {
@@ -66,12 +74,12 @@ const smallShop = (): FakeApiOptions['tables'] => ({
 describe('T-E05 which resources a role loads (C3, A4)', () => {
   // FB-F1: the Order Book (FB-E1's `orders`) is read by all three roles: staff see the list too (without the customer, ruling A4)
   it('the owner loads all 16, the biller all but sku-private, staff the 7 of the stock side, the people and the orders', () => {
-    expect(resourcesFor('owner')).toHaveLength(16);
-    expect([...resourcesFor('owner')].sort()).toEqual([...SYNC_RESOURCES].sort());
-    expect(resourcesFor('biller')).toHaveLength(15);
-    expect(resourcesFor('biller')).toContain('orders');
-    expect(resourcesFor('biller')).not.toContain('sku-private');
-    expect([...resourcesFor('staff')].sort()).toEqual(
+    expect(resourcesFor(readsOf('owner'))).toHaveLength(16);
+    expect([...resourcesFor(readsOf('owner'))].sort()).toEqual([...SYNC_RESOURCES].sort());
+    expect(resourcesFor(readsOf('biller'))).toHaveLength(15);
+    expect(resourcesFor(readsOf('biller'))).toContain('orders');
+    expect(resourcesFor(readsOf('biller'))).not.toContain('sku-private');
+    expect([...resourcesFor(readsOf('staff'))].sort()).toEqual(
       [
         'categories',
         'daily-rates',
@@ -86,7 +94,7 @@ describe('T-E05 which resources a role loads (C3, A4)', () => {
   });
 
   it('the stock side comes first, the money side after it', () => {
-    const owner = resourcesFor('owner');
+    const owner = resourcesFor(readsOf('owner'));
     const stock: SyncResource[] = [
       'settings',
       'daily-rates',
@@ -114,10 +122,10 @@ describe('T-E05 which resources a role loads (C3, A4)', () => {
 describe('T-E05 the first hydrate (C2)', () => {
   it('asks for every resource of the role, the first page without a cursor and with the page size of the API (1,000)', async () => {
     const { hydrator, calls, cache } = setup({ tables: smallShop() });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(hydrator.getState().status).toBe('ready');
-    expect(new Set(calls.map((c) => c.resource))).toEqual(new Set(resourcesFor('owner')));
+    expect(new Set(calls.map((c) => c.resource))).toEqual(new Set(resourcesFor(readsOf('owner'))));
     for (const call of calls) {
       expect(call.updatedAfter).toBeUndefined();
       expect(call.afterKey).toBeUndefined();
@@ -132,13 +140,15 @@ describe('T-E05 the first hydrate (C2)', () => {
 
   it('a biller never asks for sku-private and staff never ask for the money side', async () => {
     const biller = setup({ tables: smallShop() });
-    biller.hydrator.start('biller', 1);
+    biller.hydrator.start(keyOf('biller'), 1);
     await biller.hydrator.settled();
     expect(biller.calls.map((c) => c.resource)).not.toContain('sku-private');
     const staff = setup({ tables: smallShop() });
-    staff.hydrator.start('staff', 1);
+    staff.hydrator.start(keyOf('staff'), 1);
     await staff.hydrator.settled();
-    expect(new Set(staff.calls.map((c) => c.resource))).toEqual(new Set(resourcesFor('staff')));
+    expect(new Set(staff.calls.map((c) => c.resource))).toEqual(
+      new Set(resourcesFor(readsOf('staff')))
+    );
     expect(staff.hydrator.getState().tablesTotal).toBe(8);
   });
 
@@ -146,7 +156,7 @@ describe('T-E05 the first hydrate (C2)', () => {
     const { hydrator } = setup({ tables: smallShop() });
     const seen: HydrateState[] = [];
     hydrator.subscribe(() => seen.push(hydrator.getState()));
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     expect(hydrator.getState().status).toBe('loading');
     expect(progressText(hydrator.getState())).toBe('0 of 16 tables');
     await hydrator.settled();
@@ -160,7 +170,7 @@ describe('T-E05 the first hydrate (C2)', () => {
 
   it('counts the rows it has loaded', async () => {
     const { hydrator } = setup({ tables: smallShop() });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     // users 1 + settings 2 + categories 1 + designs 2 + skus 3 + sku-private 3
     expect(hydrator.getState().rowsLoaded).toBe(12);
@@ -175,23 +185,23 @@ describe('T-E05 the first hydrate (C2)', () => {
         if (call.resource === 'customers') await held;
       },
     });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await vi.waitFor(() => expect(hydrator.getState().tablesDone).toBeGreaterThan(5));
     expect(hydrator.getState().status).toBe('loading');
-    expect(isGateOpen(hydrator.getState(), 'owner', 1)).toBe(false);
+    expect(isGateOpen(hydrator.getState(), accessOf('owner'), 1)).toBe(false);
     release();
     await hydrator.settled();
     expect(hydrator.getState().status).toBe('ready');
-    expect(isGateOpen(hydrator.getState(), 'owner', 1)).toBe(true);
+    expect(isGateOpen(hydrator.getState(), accessOf('owner'), 1)).toBe(true);
   });
 
   it('starting the same session twice is one load (the page layout asks again on every page)', async () => {
     const { hydrator, calls } = setup({ tables: smallShop() });
-    hydrator.start('owner', 1);
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     const count = calls.length;
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(calls).toHaveLength(count);
     expect(hydrator.getState().status).toBe('ready');
@@ -199,22 +209,27 @@ describe('T-E05 the first hydrate (C2)', () => {
 
   it('a new epoch (a login, a change of role) loads again from nothing', async () => {
     const { hydrator, calls, cache } = setup({ tables: smallShop() });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     const first = calls.length;
-    hydrator.start('biller', 2);
+    hydrator.start(keyOf('biller'), 2);
     expect(cache.size()).toBe(0); // the owner's data is gone before the biller's arrives
     await hydrator.settled();
     expect(calls.length).toBeGreaterThan(first);
-    expect(hydrator.getState()).toMatchObject({ status: 'ready', role: 'biller', epoch: 2 });
+    expect(hydrator.getState()).toMatchObject({
+      status: 'ready',
+      access: accessOf('biller'),
+      epoch: 2,
+    });
     expect(cache.count('sku-private')).toBe(0);
-    expect(isGateOpen(hydrator.getState(), 'owner', 1)).toBe(false);
+    expect(isGateOpen(hydrator.getState(), accessOf('owner'), 1)).toBe(false);
   });
 
   it('opens the gate only for the role and the epoch it was loaded for', () => {
     const ready: HydrateState = {
       status: 'ready',
-      role: 'owner',
+      access: accessOf('owner'),
+      resources: resourcesFor(readsOf('owner')),
       epoch: 3,
       tablesDone: 16,
       tablesTotal: 16,
@@ -223,19 +238,24 @@ describe('T-E05 the first hydrate (C2)', () => {
       firstServerTime: null,
       pollFrom: null,
     };
-    expect(isGateOpen(ready, 'owner', 3)).toBe(true);
-    expect(isGateOpen(ready, 'owner', 4)).toBe(false);
-    expect(isGateOpen(ready, 'biller', 3)).toBe(false);
-    expect(isGateOpen({ ...ready, status: 'loading' }, 'owner', 3)).toBe(false);
-    expect(isGateOpen({ ...ready, status: 'error' }, 'owner', 3)).toBe(false);
-    expect(isGateOpen({ ...ready, status: 'idle', role: null, epoch: null }, 'owner', 3)).toBe(
-      false
-    );
+    expect(isGateOpen(ready, accessOf('owner'), 3)).toBe(true);
+    expect(isGateOpen(ready, accessOf('owner'), 4)).toBe(false);
+    expect(isGateOpen(ready, accessOf('biller'), 3)).toBe(false);
+    expect(isGateOpen({ ...ready, status: 'loading' }, accessOf('owner'), 3)).toBe(false);
+    expect(isGateOpen({ ...ready, status: 'error' }, accessOf('owner'), 3)).toBe(false);
+    expect(
+      isGateOpen(
+        { ...ready, status: 'idle', access: null, resources: null, epoch: null },
+        accessOf('owner'),
+        3
+      )
+    ).toBe(false);
+    expect(isGateOpen(ready, null, 3)).toBe(false);
   });
 
   it('does nothing in a preview build (no API, the stores hold sample data)', async () => {
     const { hydrator, calls } = setup({ tables: smallShop() }, { preview: true });
-    hydrator.start('owner', 0);
+    hydrator.start(keyOf('owner'), 0);
     await hydrator.settled();
     expect(calls).toHaveLength(0);
   });
@@ -248,7 +268,7 @@ describe('T-F03 the cursor advances by the rows received, so a page cap lower th
 
   it('2,500 pieces all load in pages of 1,000', async () => {
     const { hydrator, cache, calls } = setup({ tables: { ...smallShop(), skus } });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(cache.count('skus')).toBe(2500);
     expect(calls.filter((c) => c.resource === 'skus')).toHaveLength(3);
@@ -256,7 +276,7 @@ describe('T-F03 the cursor advances by the rows received, so a page cap lower th
 
   it('2,500 pieces all load also when the API caps its pages at 500 (it answers 500 rows when 1,000 were asked for)', async () => {
     const { hydrator, cache, calls } = setup({ tables: { ...smallShop(), skus }, cap: 500 });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(hydrator.getState().status).toBe('ready');
     expect(cache.count('skus')).toBe(2500);
@@ -289,7 +309,7 @@ describe('T-F03 the cursor advances by the rows received, so a page cap lower th
       updated_by: null,
     }));
     const { hydrator, cache } = setup({ tables: { ...smallShop(), skus, customers }, cap: 500 });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(cache.count('skus')).toBe(2500);
     expect(cache.count('customers')).toBe(1500);
@@ -299,7 +319,7 @@ describe('T-F03 the cursor advances by the rows received, so a page cap lower th
     const same = at(10, 5);
     const designs = [1, 2, 3, 4, 5].map((n) => designRow(n, { updated_at: same }));
     const { hydrator, cache } = setup({ tables: { ...smallShop(), designs }, cap: 2 });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(cache.count('designs')).toBe(5);
   });
@@ -321,7 +341,7 @@ describe('T-F03 the cursor advances by the rows received, so a page cap lower th
         }
       },
     });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(cache.count('designs')).toBe(4);
     expect(cache.get('designs', uuid(301))?.name).toBe('new 1');
@@ -344,7 +364,7 @@ describe('T-F03 the cursor advances by the rows received, so a page cap lower th
     } as unknown as typeof api;
     const cache = createRowCache();
     const hydrator = createHydrator({ api: stuck, cache });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(hydrator.getState().status).toBe('error');
     expect(calls.filter((c) => c.resource === 'designs').length).toBeLessThan(10);
@@ -361,7 +381,7 @@ describe('T-F03 the cursor advances by the rows received, so a page cap lower th
       },
     } as unknown as typeof api;
     const hydrator = createHydrator({ api: odd, cache: createRowCache() });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(hydrator.getState().status).toBe('error');
   });
@@ -375,7 +395,7 @@ describe('T-E05 the first poll starts from the first page of the hydrate minus 3
   it('is the server_time of the earliest page asked for, minus 30 s, as six-decimal text', async () => {
     // the fake clock rises by a second with each call: the first call of the load is the one at second 100
     const { hydrator } = setup({ tables: smallShop() });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(hydrator.getState().firstServerTime).toBe(at(100));
     expect(hydrator.getState().pollFrom).toBe(at(70));
@@ -390,7 +410,7 @@ describe('T-E05 the first poll starts from the first page of the hydrate minus 3
         if (call.resource === 'settings') await held; // asked for first, answered last
       },
     });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await vi.waitFor(() => expect(hydrator.getState().tablesDone).toBeGreaterThan(8));
     release();
     await hydrator.settled();
@@ -401,7 +421,7 @@ describe('T-E05 the first poll starts from the first page of the hydrate minus 3
   it('is nothing until the load is whole, and again nothing after a reset', async () => {
     const { hydrator } = setup({ tables: smallShop() });
     expect(hydrator.getState().pollFrom).toBeNull();
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     expect(hydrator.getState().pollFrom).toBeNull();
     await hydrator.settled();
     expect(hydrator.getState().pollFrom).not.toBeNull();
@@ -419,7 +439,7 @@ describe('T-E05 the first poll starts from the first page of the hydrate minus 3
       }),
     } as unknown as typeof api;
     const hydrator = createHydrator({ api: odd, cache: createRowCache() });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(hydrator.getState().status).toBe('error');
   });
@@ -433,13 +453,13 @@ describe('T-E05 a failed load shows an error with a retry and never sample data 
         if (call.resource === 'skus') throw apiError('JV_INTERNAL', 500);
       },
     });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     const state = hydrator.getState();
     expect(state.status).toBe('error');
     expect(state.error).toBe('plain message of JV_INTERNAL');
     expect(cache.size()).toBe(0);
-    expect(isGateOpen(state, 'owner', 1)).toBe(false);
+    expect(isGateOpen(state, accessOf('owner'), 1)).toBe(false);
   });
 
   it("an error that is not the API's (a network failure, a bug) gets a plain sentence, never its own text", async () => {
@@ -449,7 +469,7 @@ describe('T-E05 a failed load shows an error with a retry and never sample data 
         if (call.resource === 'designs') throw new TypeError('secret detail of a bug');
       },
     });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(hydrator.getState().status).toBe('error');
     expect(hydrator.getState().error).toBe('The data could not be loaded. Try again.');
@@ -464,7 +484,7 @@ describe('T-E05 a failed load shows an error with a retry and never sample data 
         if (fail && call.resource === 'skus') throw apiError('JV_BUSY', 503);
       },
     });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(hydrator.getState().status).toBe('error');
     const callsBefore = calls.length;
@@ -476,12 +496,12 @@ describe('T-E05 a failed load shows an error with a retry and never sample data 
     expect(hydrator.getState()).toMatchObject({
       status: 'ready',
       error: null,
-      role: 'owner',
+      access: accessOf('owner'),
       epoch: 1,
     });
     expect(cache.count('skus')).toBe(3);
     const again = calls.slice(callsBefore);
-    expect(new Set(again.map((c) => c.resource))).toEqual(new Set(resourcesFor('owner')));
+    expect(new Set(again.map((c) => c.resource))).toEqual(new Set(resourcesFor(readsOf('owner'))));
     expect(again.every((c) => c.updatedAfter === undefined)).toBe(true); // from the start, not from where it stopped
   });
 
@@ -492,10 +512,10 @@ describe('T-E05 a failed load shows an error with a retry and never sample data 
         if (call.resource === 'designs') throw apiError('JV_INTERNAL', 500);
       },
     });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     const count = calls.length;
-    hydrator.start('owner', 1); // the layout asks again on a new page
+    hydrator.start(keyOf('owner'), 1); // the layout asks again on a new page
     await hydrator.settled();
     expect(calls).toHaveLength(count);
     expect(hydrator.getState().status).toBe('error');
@@ -513,7 +533,7 @@ describe('T-E05 a failed load shows an error with a retry and never sample data 
       { reviewRole }
     );
     holder.hydrator = hydrator;
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(reviewRole).toHaveBeenCalledTimes(1);
     expect(hydrator.getState().status).toBe('idle');
@@ -524,7 +544,7 @@ describe('T-E05 a failed load shows an error with a retry and never sample data 
   it('a 403 for a role that has not changed is an error with a retry', async () => {
     const reviewRole = vi.fn(async () => 'same' as const);
     const { hydrator } = setup({ tables: smallShop(), forbidden: ['customers'] }, { reviewRole });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(reviewRole).toHaveBeenCalledTimes(1);
     expect(hydrator.getState().status).toBe('error');
@@ -542,7 +562,7 @@ describe('T-E05 logout empties memory and stops the load (U8)', () => {
         if (call.resource === 'designs') await held;
       },
     });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await vi.waitFor(() => expect(calls.some((c) => c.resource === 'designs')).toBe(true));
     hydrator.reset();
     expect(hydrator.getState().status).toBe('idle');
@@ -558,13 +578,13 @@ describe('T-E05 logout empties memory and stops the load (U8)', () => {
 
   it('reset() after the load empties every resource and closes the gate', async () => {
     const { hydrator, cache } = setup({ tables: smallShop() });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(cache.size()).toBeGreaterThan(0);
     hydrator.reset();
     expect(cache.size()).toBe(0);
     for (const resource of SYNC_RESOURCES) expect(cache.count(resource), resource).toBe(0);
-    expect(isGateOpen(hydrator.getState(), 'owner', 1)).toBe(false);
+    expect(isGateOpen(hydrator.getState(), accessOf('owner'), 1)).toBe(false);
   });
 
   it('a late error from a load that was reset is not shown', async () => {
@@ -579,7 +599,7 @@ describe('T-E05 logout empties memory and stops the load (U8)', () => {
         }
       },
     });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await vi.waitFor(() => expect(calls.some((c) => c.resource === 'designs')).toBe(true));
     hydrator.reset();
     release();
@@ -606,7 +626,7 @@ describe('T-E05 logout empties memory and stops the load (U8)', () => {
     const session = createSessionStore({ api, host: null });
     const { hydrator, cache } = setup({ tables: smallShop() });
     bindToSession(hydrator, session.registerLogoutHook);
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(cache.size()).toBeGreaterThan(0);
     await session.signOut();
@@ -641,7 +661,7 @@ describe('T-E05 how many tables are asked for at once', () => {
         inFlight -= 1;
       },
     });
-    hydrator.start('owner', 1);
+    hydrator.start(keyOf('owner'), 1);
     await hydrator.settled();
     expect(most).toBeGreaterThan(1);
     expect(most).toBeLessThanOrEqual(3);

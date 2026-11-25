@@ -9,6 +9,7 @@ import {
   PAYMENT_MODES,
   billSaveFailure,
   buildBillBody,
+  cashReasonFor,
   inr,
   isPan,
   normalisePan,
@@ -36,6 +37,7 @@ import { updateSkuStatus } from '@/lib/designStore';
 import { buildReissueBody, reissueAsCreated, reissueFailure } from '@/lib/ownerActions';
 import { PREVIEW_MODE } from '@/lib/previewMode';
 import { formatGrams, formatRupees } from '@/lib/pricing';
+import { useHolder } from '@/lib/useAccess';
 
 interface BillingSummaryPanelProps {
   /** The live figures from pricing.ts (C12). */
@@ -51,8 +53,6 @@ interface BillingSummaryPanelProps {
   invoiceNumber: string;
   saleType: SaleType;
   invoiceDate: string;
-  /** The signed-in role: only the owner may give a reason for cash over the limit (Z1). */
-  role: string | null;
   /** C12: the API's pricing.ts is this build's. Save on bills is off while it is not. */
   billsAllowed: boolean;
   /** A save is on its way, or the bill is saved: nothing can be changed. */
@@ -99,7 +99,6 @@ export default function BillingSummaryPanel({
   invoiceNumber,
   saleType,
   invoiceDate,
-  role,
   billsAllowed,
   locked,
   saved,
@@ -109,6 +108,8 @@ export default function BillingSummaryPanel({
   onNewSale,
   reissue = null,
 }: BillingSummaryPanelProps) {
+  // Z1: only a person who holds "Take cash over the limit" may give a reason for cash over the limit
+  const holder = useHolder();
   const [payments, setPayments] = useState<PaymentEntry[]>([
     { id: 'pmt-1', mode: 'UPI', amount: '' },
   ]);
@@ -289,7 +290,7 @@ export default function BillingSummaryPanel({
       additionalCharges,
       notes,
       payments,
-      cashOverrideReason: role === 'owner' ? cashReason : '',
+      cashOverrideReason: cashReasonFor(holder, cashReason),
     });
     if ('error' in built) {
       setFailure({ message: built.error, cashLimit: null, pieceIds: [], unconfirmed: false });
@@ -323,8 +324,8 @@ export default function BillingSummaryPanel({
       }
     } catch (error) {
       const found = reissue
-        ? reissueFailure(error, { role, walkIn: reissue.walkIn })
-        : billSaveFailure(error, { role, walkIn: customer === null });
+        ? reissueFailure(error, { who: holder, walkIn: reissue.walkIn })
+        : billSaveFailure(error, { who: holder, walkIn: customer === null });
       setFailure(found);
       onProblemPieces(found.pieceIds);
     } finally {
@@ -363,7 +364,7 @@ export default function BillingSummaryPanel({
 
   const askForPan = saved !== null && saved.warnings.includes('PAN_MISSING');
   const invoiceReady = saved !== null && getInvoiceById(saved.billId) !== undefined;
-  const reasonShown = (failure?.cashLimit?.ownerMayGiveReason ?? false) || cashReason !== '';
+  const reasonShown = (failure?.cashLimit?.mayGiveReason ?? false) || cashReason !== '';
   // no bill total (a line cannot be priced, a figure is not a number) means nothing can be saved; the reason is under the button
   const saveDisabled =
     saving || locked || itemCount === 0 || !billsAllowed || preview.bill === null;
@@ -576,7 +577,7 @@ export default function BillingSummaryPanel({
         </div>
       </fieldset>
 
-      {/* Z1: the owner may give a reason for cash over the limit; a biller cannot, the owner enters that payment */}
+      {/* Z1: a person with the cash-over-limit tick (the owner) may give a reason for cash over the limit; a biller cannot, the owner enters that payment */}
       {!saved && reasonShown && (
         <div className="jewel-card p-4">
           <label className="text-xs font-semibold text-muted-foreground block">

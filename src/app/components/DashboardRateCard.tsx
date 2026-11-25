@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import { Save, TrendingUp } from 'lucide-react';
 import SaveButton from '@/components/ui/SaveButton';
-import { useSession } from '@/lib/authStore';
 import { sameDecimal } from '@/lib/cache/edit';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { dayLabel } from '@/lib/rateGuard';
@@ -14,9 +13,11 @@ import {
   type RateEntry,
   type RateInput,
 } from '@/lib/settingsStore';
+import { useCan } from '@/lib/useAccess';
 
-// The daily metal rates (spec D4, R2, Y8; task WEB05). A rate is one row for a day, a material and a purity. The owner may enter the rates of any day up to today and correct
-// today's; a biller enters today's, once for each purity, and cannot correct it. The API decides (this card only does not offer what it would refuse). A rate that is typed is
+// The daily metal rates (spec D4, R2, Y8; task WEB05). A rate is one row for a day, a material and a purity. A person who may back-date (`back_date`: the owner) may enter the rates of any day
+// up to today, and one who may correct (`rate_correct`: the owner) may correct today's; a person who holds only `rate_enter` (the biller) enters today's, once for each purity, and cannot
+// correct it. The card is drawn for `rate_enter`; the dashboard mounts it for the person who also corrects (src/lib/dashboardAccess.ts). The API decides (this card only does not offer what it would refuse). A rate that is typed is
 // sent, a rate that is only shown (the last one, to start from) is not: nothing is saved that the person did not type. Memory shows a correction at once; a new rate is shown
 // when the server has made its row. WEB16: every purity says which day its rate is from (the prototype's "Last updated" always said today), and a rate that is not from today says that it
 // is not confirmed today: the billing screen asks before the first bill of the day (src/lib/rateGuard.ts).
@@ -27,7 +28,7 @@ const idOf = (entry: Pick<RateEntry, 'material' | 'purity'>) =>
   `rate-${entry.material}-${entry.purity}`.toLowerCase();
 
 export default function DashboardRateCard() {
-  const { role } = useSession();
+  const can = useCan();
   // the card is drawn again when a poll or a save changes a rate or the list of purities
   useRowCacheVersion('daily-rates', 'settings');
   const [today] = useState(businessToday);
@@ -40,10 +41,12 @@ export default function DashboardRateCard() {
   const [saved, setSaved] = useState(false);
   const [problem, setProblem] = useState('');
 
-  if (role !== 'owner' && role !== 'biller') return null;
-  const isOwner = role === 'owner';
-  // a biller has today only (Y8)
-  const date = isOwner ? pickedDate : today;
+  // nothing to enter without the tick that enters a rate (and nothing before the person is known)
+  if (!can('rate_enter')) return null;
+  const mayPickDay = can('back_date');
+  const mayCorrect = can('rate_correct');
+  // without `back_date` the card is for today (Y8)
+  const date = mayPickDay ? pickedDate : today;
   const values = typed.date === date ? typed.values : {};
   const sheet = getRateSheet(date);
 
@@ -55,8 +58,8 @@ export default function DashboardRateCard() {
   /** Why a purity that has a rate for the day cannot be changed here, or null. */
   const lockedReason = (entry: RateEntry): string | null => {
     if (!entry.row) return null;
-    if (!isOwner) return 'Already set for today. Only the owner can correct it.';
     if (date !== today) return 'The rate of an earlier day cannot be corrected.';
+    if (!mayCorrect) return 'Already set for today. Your role cannot correct it.';
     return null;
   };
 
@@ -144,7 +147,7 @@ export default function DashboardRateCard() {
         </div>
 
         <div className="flex items-end gap-3">
-          {isOwner ? (
+          {mayPickDay ? (
             <label className="text-xs font-semibold text-muted-foreground">
               Rates for
               <input
@@ -224,7 +227,7 @@ export default function DashboardRateCard() {
       <div className="mt-3 flex items-center justify-between gap-3 text-xs">
         <p className="text-muted-foreground">
           Last updated: {lastDate ? dayLabel(lastDate) : '-'}
-          {!isOwner && ' · a biller enters the rate of today only'}
+          {!mayPickDay && ' · your role enters the rate of today only'}
         </p>
         {saved && (
           <p role="status" className="font-semibold text-emerald-600">

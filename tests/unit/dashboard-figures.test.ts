@@ -24,6 +24,7 @@ import {
   type Shop,
 } from './support/money-rows';
 import { FakeBooksApi, totalRow } from './support/books-server';
+import { PLAN_TICKS, holderFor, sessionFor, type RoleSpec } from './support/access';
 
 // ================================================================================================ the day, worked out by hand
 //
@@ -281,6 +282,12 @@ async function load({ preview = false, role = 'owner' as 'owner' | 'biller' } = 
   server.role = role;
   server.dailyTotals = [...CASH_BOOK];
   vi.stubGlobal('fetch', server.fetch);
+  // the customer card and the ledger page are the screens of a signed-in person (task 20b of the access plan: their money part follows `bill_view`, and nobody who is not known holds it): the person
+  // the server answers for; a preview build opens as the Owner (a render on the server side of React is given no session, so the person is stood in here too)
+  vi.doMock('@/lib/authStore', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/lib/authStore')>()),
+    useSession: () => sessionFor(preview ? 'owner' : role),
+  }));
   const [react, dom, cache, app, kpi, panels, sales, payments, evening, detail, ledgerClient] =
     await Promise.all([
       import('react'),
@@ -311,7 +318,9 @@ async function load({ preview = false, role = 'owner' as 'owner' | 'biller' } = 
       await app.reloadDailyTotals('2026-10-15', '2026-10-15');
       await app.reloadDailyTotals(month.from, month.to);
     },
-    kpi: () => draw(el(kpi.default, { role: 'owner' })),
+    /** The KPI grid for a person (the Owner unless said): the page gives it the holder of the session. */
+    kpi: (who: RoleSpec | null = 'owner') =>
+      draw(el(kpi.default, { holder: who === null ? null : holderFor(who) })),
     panels: () => draw(el(panels.default)),
     sales: () => draw(el(sales.default)),
     payments: () => draw(el(payments.default)),
@@ -326,6 +335,7 @@ async function load({ preview = false, role = 'owner' as 'owner' | 'biller' } = 
 }
 
 afterEach(() => {
+  vi.doUnmock('@/lib/authStore');
   vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -416,18 +426,133 @@ describe('PT-W12 T-B15 UNIT: the dashboard KPIs come from the selectors over V1 
 
   it("a biller sees no sales and no outstanding on the KPI grid (the grid is the owner's)", async () => {
     const w = await load();
-    const react = await import('react');
-    const dom = await import('react-dom/server');
-    const grid = (await import('@/app/components/DashboardKpiGrid')).default;
-    const html = dom.renderToStaticMarkup(react.createElement(grid, { role: 'biller' }));
+    const html = w.kpi('biller');
     for (const id of [
       'kpi-today-sales',
       'kpi-month-sales',
+      'kpi-month-tile',
       'kpi-outstanding',
       'kpi-cancelled-today',
+      'kpi-cancelled-month',
     ])
       expect(hasId(html, id)).toBe(false);
     expect(w.app).toBeDefined();
+  });
+});
+
+// Access and roles (Task 18): the tiles follow the ticks. The Owner's grid is the day-one grid; the Biller and Staff have the five stock tiles; the tiles of the takings need the bills AND
+// the Reports tick (the Biller reads the bills and has no Reports tick), the On Approval tile the Reports tick.
+describe('Task 18 UNIT: the KPI grid follows the ticks of the person', () => {
+  const TILES = [
+    "Today's Sales",
+    'Outstanding',
+    'On Approval',
+    'Total Designs',
+    'In Stock',
+    'Gold Stock',
+    'Silver Stock',
+    'Ageing 90+ Days',
+    'Month Sales',
+  ];
+  const STOCK_TILES = [
+    'Total Designs',
+    'In Stock',
+    'Gold Stock',
+    'Silver Stock',
+    'Ageing 90+ Days',
+  ];
+  const TAKINGS_IDS = [
+    'kpi-today-sales',
+    'kpi-month-sales',
+    'kpi-month-tile',
+    'kpi-outstanding',
+    'kpi-cancelled-today',
+    'kpi-cancelled-month',
+  ];
+  const tilesIn = (html: string) => TILES.filter((tile) => plain(html).includes(tile));
+  const ageingLink = (html: string) =>
+    /<a[^>]*href="([^"]*)"[^>]*>(?:(?!<\/a>)[\s\S])*Ageing 90\+ Days/.exec(html)?.[1];
+
+  it('the Owner has the nine tiles, in the order of today, and the Ageing tile opens Reports', async () => {
+    const w = await load();
+    const html = w.kpi('owner');
+    expect(tilesIn(html)).toEqual(TILES);
+    const order = TILES.map((tile) => plain(html).indexOf(tile));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(ageingLink(html)).toBe('/reports');
+  });
+
+  it('the Biller and Staff have the five stock tiles and no tile of the takings or On Approval, and the Ageing tile opens the Inventory', async () => {
+    const w = await load();
+    for (const who of ['biller', 'staff'] as const) {
+      const html = w.kpi(who);
+      expect(tilesIn(html), who).toEqual(STOCK_TILES);
+      for (const id of TAKINGS_IDS) expect(hasId(html, id), `${who} ${id}`).toBe(false);
+      expect(ageingLink(html), who).toBe('/inventory-management');
+    }
+  });
+
+  it('the five stock tiles say the same to everybody', async () => {
+    const w = await load();
+    /** From the first stock tile to the end of the Ageing tile: the five tiles that are not the owner's. */
+    const stockPart = (html: string) => {
+      const text = plain(html);
+      return text.slice(text.indexOf('Total Designs'), text.indexOf('review needed'));
+    };
+    const owner = stockPart(w.kpi('owner'));
+    expect(owner).toContain('physical SKUs');
+    for (const who of ['biller', 'staff'] as const) expect(stockPart(w.kpi(who)), who).toBe(owner);
+  });
+
+  it('a role with the bills but no Reports tick (the Biller) gets no takings; a role with the Reports tick but no bills gets no takings either, and no made-up zero', async () => {
+    const w = await load();
+    const reportsOnly = w.kpi({ ticks: ['reports_open'] });
+    expect(tilesIn(reportsOnly)).toEqual(STOCK_TILES);
+    for (const id of TAKINGS_IDS) expect(hasId(reportsOnly, id), id).toBe(false);
+    // it opens Reports, so the Ageing tile does
+    expect(ageingLink(reportsOnly)).toBe('/reports');
+
+    const billsOnly = w.kpi({ ticks: ['bill_view'] });
+    expect(tilesIn(billsOnly)).toEqual(STOCK_TILES);
+    for (const id of TAKINGS_IDS) expect(hasId(billsOnly, id), id).toBe(false);
+  });
+
+  it("a role with the bills and the Reports tick gets Today's Sales and Month Sales, with the figures of the selectors; Outstanding needs the customers, On Approval the billing screen", async () => {
+    const w = await load();
+    const html = w.kpi({ ticks: ['bill_view', 'reports_open'] });
+    expect(tilesIn(html)).toEqual(["Today's Sales", ...STOCK_TILES, 'Month Sales']);
+    expect(textOf(html, 'kpi-today-sales')).toBe('₹12,900');
+    expect(textOf(html, 'kpi-month-tile')).toBe('₹32,900');
+    expect(hasId(html, 'kpi-outstanding')).toBe(false);
+
+    const withLedger = w.kpi({ ticks: ['bill_view', 'customer_view', 'reports_open'] });
+    expect(tilesIn(withLedger)).toEqual([
+      "Today's Sales",
+      'Outstanding',
+      ...STOCK_TILES,
+      'Month Sales',
+    ]);
+    expect(textOf(withLedger, 'kpi-outstanding')).toBe('₹13,900');
+
+    const withBilling = w.kpi({ ticks: ['bill_view', 'bill_make', 'reports_open'] });
+    expect(tilesIn(withBilling)).toEqual([
+      "Today's Sales",
+      'On Approval',
+      ...STOCK_TILES,
+      'Month Sales',
+    ]);
+  });
+
+  it('a Super Admin (every tick and the flag) has the grid of the Owner', async () => {
+    const w = await load();
+    expect(w.kpi({ ticks: PLAN_TICKS, superAdmin: true })).toBe(w.kpi('owner'));
+  });
+
+  it('nobody known has the stock tiles and nothing else', async () => {
+    const w = await load();
+    const html = w.kpi(null);
+    expect(tilesIn(html)).toEqual(STOCK_TILES);
+    for (const id of TAKINGS_IDS) expect(hasId(html, id), id).toBe(false);
   });
 });
 

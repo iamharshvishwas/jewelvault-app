@@ -3,13 +3,14 @@
 //   - the lines of the old bill come over exactly as they were saved (the rate, the labour, the piroi, the other charges and the quantity as TEXT), on the same pieces, with the bill's own
 //     sale type, date, discount, additional charges and notes; the pieces of the old bill (Sold) are the ones the cancel frees, so they may be scanned again;
 //   - the customer is the old bill's and is locked (the walk-in stays the walk-in);
-//   - only the owner re-issues, and only a live estimate: a cancelled or already re-issued bill (with the bill that replaced it), an opening balance, an unknown bill, a piece that is not in
+//   - only a person who holds the re-issue tick (the owner among today's roles) re-issues, and only a live estimate: a cancelled or already re-issued bill (with the bill that replaced it), an opening balance, an unknown bill, a piece that is not in
 //     memory and an archived customer each give a sentence instead of a form.
 //
-// The stores are the real ones over a cache with the books in it (the role is the one thing passed in).
+// The stores are the real ones over a cache with the books in it (the person is the one thing passed in).
 //
 // Run: npm test -- tests/unit/reissue-setup.test.ts      (or: npm test -- -t PT-W11)
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { holderFor } from './support/access';
 import { at } from './support/rows';
 import { billRow, customerRow, id, itemRow, summaryRow } from './support/money-rows';
 import { categoryRow, designRow, rateRow, settingRow, skuRow } from './support/rows';
@@ -48,6 +49,7 @@ async function world() {
 }
 
 const WALK_IN = '00000000-0000-4000-8000-000000000001';
+const owner = holderFor('owner');
 
 /** An estimate of Priya: two lines (a By Weight piece and a Per Piece piece) as saved. */
 function estimate(over: Parameters<typeof billRow>[2] = {}) {
@@ -109,7 +111,7 @@ describe('PT-W11 the billing screen in re-issue mode starts from the bill it cor
         item_count: 2,
       }),
     ]);
-    const setup = ctx.reissue.prepareReissue(bill.id, 'owner');
+    const setup = ctx.reissue.prepareReissue(bill.id, owner);
     expect(setup.ok).toBe(true);
     if (!setup.ok) return;
     expect(setup.billNo).toBe('JV-0041');
@@ -142,24 +144,67 @@ describe('PT-W11 the billing screen in re-issue mode starts from the bill it cor
       ...lines,
       itemRow(walkinBill, 1, { sku_id: skuRow(3, 1).id, sku_no: skuRow(3, 1).sku_no }),
     ]);
-    const priya = ctx.reissue.prepareReissue(bill.id, 'owner');
+    const priya = ctx.reissue.prepareReissue(bill.id, owner);
     expect(priya.ok && priya.customer?.id).toBe(id.priya);
     expect(priya.ok && priya.walkIn).toBe(false);
     expect(priya.ok && priya.customerName).toBe('Priya Sharma');
-    const walkin = ctx.reissue.prepareReissue(walkinBill.id, 'owner');
+    const walkin = ctx.reissue.prepareReissue(walkinBill.id, owner);
     expect(walkin.ok && walkin.customer).toBeNull();
     expect(walkin.ok && walkin.walkIn).toBe(true);
     expect(walkin.ok && walkin.customerName).toBe('Walk-in Customer');
   });
 
-  it('only the owner re-issues: a biller, a staff user and a person not signed in get a sentence, not a form', () => {
+  it('only a role with the re-issue tick re-issues: a biller, a staff user and a person not signed in get a sentence, not a form (rule E: it says the role, not the owner)', () => {
     const { bill, lines } = estimate();
     ctx.rowCache.merge('bills', [bill]);
     ctx.rowCache.merge('bill-items', lines);
-    for (const role of ['biller', 'staff', null]) {
-      const setup = ctx.reissue.prepareReissue(bill.id, role);
-      expect(setup.ok, String(role)).toBe(false);
-      expect(!setup.ok && setup.message).toMatch(/only the owner/i);
+    // each person is labelled with their role (a holder printed as text is "[object Object]")
+    for (const [name, who] of [
+      ['biller', holderFor('biller')],
+      ['staff', holderFor('staff')],
+      ['nobody signed in', null],
+    ] as const) {
+      const setup = ctx.reissue.prepareReissue(bill.id, who);
+      expect(setup.ok, name).toBe(false);
+      expect(!setup.ok && setup.message).toBe('Your role cannot re-issue an estimate.');
+    }
+  });
+
+  it('the re-issue tick is the only one that matters: the Owner without it is refused, a role with only it (and what it needs) re-issues, and the Super Admin does', () => {
+    const { bill, lines } = estimate();
+    ctx.rowCache.merge('bills', [bill]);
+    ctx.rowCache.merge('bill-items', lines);
+    const everyTick = holderFor('owner');
+    const withoutTick = {
+      ...everyTick,
+      permissions: new Set([...everyTick.permissions].filter((tick) => tick !== 'bill_reissue')),
+    };
+    const refused = ctx.reissue.prepareReissue(bill.id, withoutTick);
+    expect(!refused.ok && refused.message).toBe('Your role cannot re-issue an estimate.');
+    // the tick with what the API says it needs (the customers and the bills): a role Siddhi can really save
+    const clerk = holderFor({ ticks: ['bill_reissue', 'customer_view', 'bill_view'] });
+    expect(ctx.reissue.prepareReissue(bill.id, clerk).ok).toBe(true);
+    expect(
+      ctx.reissue.prepareReissue(bill.id, holderFor({ ticks: ['bill_reissue'], superAdmin: true }))
+        .ok
+    ).toBe(true);
+    // none of the other 31 ticks re-issues on its own
+    const others = [...everyTick.permissions].filter((tick) => tick !== 'bill_reissue');
+    for (const tick of others)
+      expect(ctx.reissue.prepareReissue(bill.id, holderFor({ ticks: [tick] })).ok, tick).toBe(
+        false
+      );
+  });
+
+  it('a preview build has no server to re-issue to: the sentence says so, whoever is asking (the Owner included)', async () => {
+    vi.resetModules();
+    vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '1');
+    const { prepareReissue } = await import('@/lib/reissue');
+    for (const who of [owner, holderFor('biller'), null]) {
+      const setup = prepareReissue('00000000-0000-4000-8000-0000000000ff', who);
+      expect(!setup.ok && setup.message).toBe(
+        'Re-issuing needs the server, which this preview does not have.'
+      );
     }
   });
 
@@ -172,7 +217,7 @@ describe('PT-W11 the billing screen in re-issue mode starts from the bill it cor
     const fresh = billRow(43, id.priya, { bill_no: 'JV-0043', reissue_of: bill.id });
     ctx.rowCache.merge('bills', [bill, fresh]);
     ctx.rowCache.merge('bill-items', lines);
-    const setup = ctx.reissue.prepareReissue(bill.id, 'owner');
+    const setup = ctx.reissue.prepareReissue(bill.id, owner);
     expect(setup.ok).toBe(false);
     expect(!setup.ok && setup.message).toMatch(/already cancelled/);
     expect(!setup.ok && setup.message).toContain('JV-0043');
@@ -186,23 +231,23 @@ describe('PT-W11 the billing screen in re-issue mode starts from the bill it cor
       grand_total: '500.00',
     });
     ctx.rowCache.merge('bills', [opening]);
-    const setup = ctx.reissue.prepareReissue(opening.id, 'owner');
+    const setup = ctx.reissue.prepareReissue(opening.id, owner);
     expect(setup.ok).toBe(false);
     expect(!setup.ok && setup.message).toMatch(/opening balance/i);
     expect(!setup.ok && setup.message).toMatch(/cancel it and add a new/i);
   });
 
   it('an unknown bill, a piece that is not in memory and an archived customer each give a sentence', () => {
-    expect(
-      ctx.reissue.prepareReissue('00000000-0000-4000-8000-0000000000ff', 'owner')
-    ).toMatchObject({
-      ok: false,
-      message: expect.stringMatching(/not found/i),
-    });
+    expect(ctx.reissue.prepareReissue('00000000-0000-4000-8000-0000000000ff', owner)).toMatchObject(
+      {
+        ok: false,
+        message: expect.stringMatching(/not found/i),
+      }
+    );
     const { bill, lines } = estimate();
     ctx.rowCache.merge('bills', [bill]);
     ctx.rowCache.merge('bill-items', [{ ...lines[0], sku_no: 'NOT-IN-MEMORY-001' }]);
-    expect(ctx.reissue.prepareReissue(bill.id, 'owner')).toMatchObject({
+    expect(ctx.reissue.prepareReissue(bill.id, owner)).toMatchObject({
       ok: false,
       message: expect.stringMatching(/NOT-IN-MEMORY-001/),
     });
@@ -211,7 +256,7 @@ describe('PT-W11 the billing screen in re-issue mode starts from the bill it cor
     ctx.rowCache.merge('bill-items', [
       itemRow(archivedBill, 1, { sku_id: skuRow(3, 1).id, sku_no: skuRow(3, 1).sku_no }),
     ]);
-    expect(ctx.reissue.prepareReissue(archivedBill.id, 'owner')).toMatchObject({
+    expect(ctx.reissue.prepareReissue(archivedBill.id, owner)).toMatchObject({
       ok: false,
       message: expect.stringMatching(/archived/i),
     });
@@ -224,7 +269,7 @@ describe('PT-W11 a piece of the bill being corrected may be scanned again; no ot
     const { bill, lines } = estimate();
     ctx.rowCache.merge('bills', [bill]);
     ctx.rowCache.merge('bill-items', lines);
-    const setup = ctx.reissue.prepareReissue(bill.id, 'owner');
+    const setup = ctx.reissue.prepareReissue(bill.id, owner);
     if (!setup.ok) throw new Error('setup refused');
     expect(ctx.reissue.freedByCancel(setup, { id: skuRow(1, 1).id, status: 'Sold' })).toBe(true);
     expect(ctx.reissue.freedByCancel(setup, { id: skuRow(3, 1).id, status: 'Sold' })).toBe(false);

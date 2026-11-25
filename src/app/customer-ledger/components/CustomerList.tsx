@@ -8,9 +8,16 @@ interface CustomerListProps {
   customers: Customer[];
   selectedId: string | null;
   onSelect: (c: Customer) => void;
+  /** The balance beside a name is made from the balances, which a role needs "See bills" for (`money` of src/lib/ledgerAccess.ts): without it only the name and the mobile are drawn. */
+  balances: boolean;
 }
 
-export default function CustomerList({ customers, selectedId, onSelect }: CustomerListProps) {
+export default function CustomerList({
+  customers,
+  selectedId,
+  onSelect,
+  balances,
+}: CustomerListProps) {
   const [query, setQuery] = useState('');
 
   const filtered = customers.filter(
@@ -57,7 +64,7 @@ export default function CustomerList({ customers, selectedId, onSelect }: Custom
                 <p className="text-xs font-semibold text-foreground truncate">{customer.name}</p>
                 <p className="text-xs text-muted-foreground">{customer.mobile}</p>
               </div>
-              {customer.outstanding > 0 && (
+              {balances && customer.outstanding > 0 && (
                 <div className="flex items-center gap-1 text-amber-600">
                   <AlertCircle size={11} />
                   <span className="text-xs font-semibold font-tabular">

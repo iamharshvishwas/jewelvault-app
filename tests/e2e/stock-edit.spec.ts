@@ -544,12 +544,18 @@ test.describe('PT-W5: settings are one row for each section (D3, A4)', () => {
     );
   });
 
-  test('the users are shown and not edited here: logins belong to the admin tool', async ({
+  test('the people are neither listed nor edited in Settings: they are managed in People & Roles, which the Owner does not see', async ({
     page,
   }) => {
+    // the old address of the Users tab opens the first tab: there is no such tab any more
     await open(page, e2eLogin('owner'), '/settings?tab=users');
-    await expect(page.locator('section').getByText('Test owner')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Materials & Purities' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Users & Permissions' })).toHaveCount(0);
+    await expect(page.locator('section').getByText('Test owner')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Add User' })).toHaveCount(0);
+    // the one line that points to People & Roles is for the Super Admin: the Owner holds every business tick and is not one
+    await expect(page.getByText('People and roles are managed in')).toHaveCount(0);
+    await expect(page.locator('a[href="/people-roles"]')).toHaveCount(0);
   });
 });
 

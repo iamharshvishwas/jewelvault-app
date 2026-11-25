@@ -4,7 +4,8 @@ import Link from 'next/link';
 import AppLogo from '@/components/ui/AppLogo';
 import { Search, Bell, LogOut, Menu, Plus } from 'lucide-react';
 import { BUSINESS_SHORT_NAME } from '@/lib/businessConfig';
-import { canAccessPath, initialsOf, signOut, type AuthSession } from '@/lib/authStore';
+import { canAccessPath } from '@/lib/access';
+import { initialsOf, signOut, type AuthSession } from '@/lib/authStore';
 
 interface TopbarProps {
   onMenuClick: () => void;
@@ -56,7 +57,7 @@ export default function Topbar({ onMenuClick, menuOpen, session }: TopbarProps) 
           buttons off a phone, so the bar fits 375 px (it used to run to 469 px for the owner, its bell and avatar cut off) */}
       <div className="ml-auto flex items-center gap-2">
         {/* Quick Add */}
-        {canAccessPath(session.role, '/add-design') && (
+        {canAccessPath(session, '/add-design') && (
           <Link href="/add-design" className="btn-primary hidden max-sm:hidden sm:flex py-2">
             <Plus size={15} />
             <span>Add Design</span>
@@ -64,7 +65,7 @@ export default function Topbar({ onMenuClick, menuOpen, session }: TopbarProps) 
         )}
 
         {/* New Sale */}
-        {canAccessPath(session.role, '/billing-pos') && (
+        {canAccessPath(session, '/billing-pos') && (
           <Link href="/billing-pos" className="btn-secondary hidden max-md:hidden md:flex py-2">
             <span>New Sale</span>
           </Link>

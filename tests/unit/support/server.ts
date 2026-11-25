@@ -1,7 +1,8 @@
 // A fake JewelVault server for the unit tests of the poller (WEB04), spoken to through the REAL API client by a stubbed `fetch`.
 //
 // It answers what the poller and the hydrate ask for: `GET /v1/auth/me`, `GET /v1/sync/<resource>` (keyset pages, `next` when a page is full, `server_time`) and
-// `POST /v1/sync/poll` (all the resources of one call, `role`, a 403 for the whole call when the role may not read one of them, as the built API does). Rows
+// `POST /v1/sync/poll` (all the resources of one call, `role` and `access`, a 403 for the whole call when the role may not read one of them, as the built API does). The
+// person's role is a `RoleSpec` of tests/unit/support/access.ts: `me` carries its ticks, its access text and the resources it reads, and those are what it may read. Rows
 // carry the exact six-decimal stamps of the wire. A row can be stored as committed late (`visibleAt`): it has its stamp from the start, but no read sees it
 // before then, which is what a 20-second transaction does to a poll.
 //
@@ -11,9 +12,10 @@ import { vi } from 'vitest';
 import { createApiClient, type ApiClient } from '@/lib/api/client';
 import type { SyncResource } from '@/lib/api/types';
 import { createRowCache, type RowCache } from '@/lib/cache/cache';
-import { bindToSession, createHydrator, resourcesFor, type Hydrator } from '@/lib/cache/hydrate';
+import { bindToSession, createHydrator, type Hydrator } from '@/lib/cache/hydrate';
 import { formatStamp } from '@/lib/cache/stamp';
-import { createSessionStore, type AuthRole, type SessionStore } from '@/lib/authStore';
+import { createSessionStore, type SessionStore } from '@/lib/authStore';
+import { accessFor, type RoleSpec } from './access';
 
 /** 2026-10-15 09:00:00 UTC in microseconds: the zero of `stampAt`. */
 const ZERO_MICROS = Date.UTC(2026, 9, 15, 9, 0, 0) * 1000;
@@ -67,7 +69,7 @@ export const gatewayPage = () =>
   });
 
 export class FakeServer {
-  role: AuthRole = 'owner';
+  role: RoleSpec = 'owner';
   /** A user who is not active gets a 401 on every call (A10). */
   active = true;
   /** The API's own cap on the rows of a page. */
@@ -200,20 +202,29 @@ export class FakeServer {
     if (override) return override;
     if (!this.active) return refusal('JV_UNAUTHENTICATED', 401);
 
+    const access = accessFor(this.role);
     const user = {
       id: '00000000-0000-4000-8000-000000000001',
       email: 'person@jv.test',
       full_name: 'Test person',
-      role: this.role,
+      role: access.role,
       must_change_password: false,
+    };
+    const meUser = {
+      ...user,
+      role_name: access.roleName,
+      permissions: access.permissions,
+      is_super_admin: access.isSuperAdmin,
+      access: access.access,
+      reads: access.reads,
     };
     const life = { idle_timeout_s: 43200, absolute_expires_at: '2026-10-30T00:00:00.000000Z' };
     if (url.pathname === '/v1/auth/login') return json(200, { user, ...life });
-    if (seen.kind === 'me') return json(200, { user, ...life, pricing_sha256: null });
+    if (seen.kind === 'me') return json(200, { user: meUser, ...life, pricing_sha256: null });
     if (seen.kind === 'logout') return json(200, { ok: true });
     if (seen.kind === 'sync') {
       const resource = seen.resource as SyncResource;
-      if (!resourcesFor(this.role).includes(resource) || this.forbidden.has(resource))
+      if (!access.reads.includes(resource) || this.forbidden.has(resource))
         return refusal('JV_FORBIDDEN', 403);
       const after = seen.updatedAfter ? { updatedAt: seen.updatedAfter, key: seen.afterKey } : null;
       const { rows, next } = this.page(resource, after, seen.limit ?? this.cap);
@@ -221,7 +232,7 @@ export class FakeServer {
     }
     if (seen.kind === 'poll') {
       const asked = Object.keys(seen.cursors ?? {}) as SyncResource[];
-      const readable = resourcesFor(this.role);
+      const readable = access.reads;
       if (asked.some((r) => !readable.includes(r) || this.forbidden.has(r)))
         return refusal('JV_FORBIDDEN', 403);
       const serverTime = stampAt(this.now()); // before any page is read (C4)
@@ -231,7 +242,12 @@ export class FakeServer {
         const after = cursor ? { updatedAt: cursor.updated_at, key: cursor.key } : null;
         results[resource] = this.page(resource, after, seen.limit ?? this.cap);
       }
-      return json(200, { results, server_time: serverTime, role: this.role });
+      return json(200, {
+        results,
+        server_time: serverTime,
+        role: access.role,
+        access: access.access,
+      });
     }
     // a write the screen made (any POST that is not one of the above): the poller is to run at once after it
     if (url.pathname === '/v1/test-write') return json(200, { ok: true });
@@ -317,7 +333,7 @@ export const settingOf = (key: string, value: unknown, stamp: string): Row => ({
   updated_at: stamp,
 });
 
-export const userOf = (n: number, role: AuthRole, stamp: string): Row => ({
+export const userOf = (n: number, role: string, stamp: string): Row => ({
   id: uid(9, n),
   full_name: `Person ${n}`,
   role,
@@ -446,10 +462,11 @@ export function makeWorld(server: FakeServer = new FakeServer()): World {
   const cache = createRowCache();
   const hydrator = createHydrator({ api, cache, reviewRole: session.reviewRole });
   bindToSession(hydrator, session.registerLogoutHook);
-  // AppLayout: `useEffect(() => { if (status === 'signedIn' && role) startHydrate(role, epoch) })`
+  // AppLayout: `useEffect(() => { if (status === 'signedIn' && access && session) startHydrate({ access, reads: session.reads }, epoch) })`
   session.subscribe(() => {
     const s = session.getState();
-    if (s.status === 'signedIn' && s.role) hydrator.start(s.role, s.epoch);
+    if (s.status === 'signedIn' && s.access && s.session)
+      hydrator.start({ access: s.access, reads: s.session.reads }, s.epoch);
   });
   return { server, api, cache, session, hydrator, page: new FakePage(), logoutHooks: 0 };
 }

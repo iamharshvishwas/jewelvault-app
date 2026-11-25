@@ -3,10 +3,10 @@ import path from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import DesignTabs from '@/app/design-detail/components/DesignTabs';
-import ReportsClient from '@/app/reports/components/ReportsClient';
-import { canAccessPath, type AuthRole } from '@/lib/authStore';
+import { canAccessPath } from '@/lib/access';
+import { PLAN_TICKS, holderFor, sessionFor, type RoleSpec } from './support/access';
 import { inventoryExportRows } from '@/lib/inventoryExport';
 import type { Design, Sku } from '@/lib/mockData';
 
@@ -51,16 +51,18 @@ function strings(file: string): string[] {
 
 // FB-F1: the Order Book is built (on the API, FB-E1) and open to every role; the public catalogue and its admin screen stay hidden.
 const HIDDEN = ['/catalogue', '/customer-catalogue'];
-const ROLES: AuthRole[] = ['owner', 'biller', 'staff'];
+// the three built-in roles, and a Super Admin with every tick: no tick opens a hidden screen
+const ROLES: RoleSpec[] = ['owner', 'biller', 'staff', { ticks: PLAN_TICKS, superAdmin: true }];
 
 describe('T-E04 the hidden screens cannot be reached by URL', () => {
   it.each(HIDDEN.flatMap((route) => ROLES.map((role) => [route, role] as const)))(
-    '%s is closed to %s, and a sub-path or a query does not open it',
+    '%s is closed to %j, and a sub-path or a query does not open it',
     (route, role) => {
-      expect(canAccessPath(role, route)).toBe(false);
-      expect(canAccessPath(role, `${route}/`)).toBe(false);
-      expect(canAccessPath(role, `${route}?id=1`)).toBe(false);
-      expect(canAccessPath(role, `${route}/anything`)).toBe(false);
+      const who = holderFor(role);
+      expect(canAccessPath(who, route)).toBe(false);
+      expect(canAccessPath(who, `${route}/`)).toBe(false);
+      expect(canAccessPath(who, `${route}?id=1`)).toBe(false);
+      expect(canAccessPath(who, `${route}/anything`)).toBe(false);
     }
   );
 
@@ -129,7 +131,20 @@ describe('T-E04 the sample Audit and Sales tabs of the design page are gone', ()
 });
 
 describe('T-E04 the Reports screen has no date controls and no export buttons (C15, O32)', () => {
-  const html = renderToStaticMarkup(React.createElement(ReportsClient));
+  // the screen shows the tabs the person's ticks allow (Task 20), so it is drawn for the owner, whose screen it is
+  let html = '';
+  beforeAll(async () => {
+    vi.resetModules();
+    vi.doMock('@/lib/authStore', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('@/lib/authStore')>()),
+      useSession: () => sessionFor('owner'),
+    }));
+    const { default: ReportsClient } = await import('@/app/reports/components/ReportsClient');
+    html = renderToStaticMarkup(React.createElement(ReportsClient));
+  });
+  afterAll(() => {
+    vi.doUnmock('@/lib/authStore');
+  });
 
   it('draws no date field and no Excel, CSV or PDF button, and says nothing of exports', () => {
     expect(html).not.toMatch(/type="date"/);
@@ -243,21 +258,43 @@ describe('T-D03 (clause) no CSV export for a biller or staff holds the original 
       path.join(SRC, 'app/inventory-management/components/InventoryHeader.tsx'),
       'utf8'
     );
-    expect(header).toContain('inventoryExportRows(getDesigns(), role)');
+    expect(header).toContain('inventoryExportRows(getDesigns(), holder)');
     expect(header).not.toContain('originalNetWeight');
   });
 
   it("the owner's inventory export has the column, with the weight of every piece", () => {
-    const rows = inventoryExportRows(designs, 'owner');
+    const rows = inventoryExportRows(designs, holderFor('owner'));
     expect(rows).toHaveLength(2);
     expect(Object.keys(rows[0])).toContain('Original Net Weight (g)');
     expect(rows.map((r) => r['Original Net Weight (g)'])).toEqual([ORIGINAL, 8.001]);
   });
 
-  it.each(['biller', 'staff', null] as const)(
+  it('the column follows the secret-weight tick: a Super Admin and a role with only that tick have it, the Owner with that one tick taken away does not', () => {
+    for (const who of [
+      holderFor({ ticks: PLAN_TICKS, superAdmin: true }),
+      holderFor({ ticks: ['secret_weight'] }),
+    ]) {
+      const rows = inventoryExportRows(designs, who);
+      expect(rows.map((r) => r['Original Net Weight (g)'])).toEqual([ORIGINAL, 8.001]);
+    }
+    const ownerWithoutIt = holderFor({ ticks: PLAN_TICKS.filter((t) => t !== 'secret_weight') });
+    const rows = inventoryExportRows(designs, ownerWithoutIt);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(Object.keys(row).filter((k) => /original/i.test(k))).toEqual([]);
+      expect(Object.values(row)).not.toContain(ORIGINAL);
+    }
+  });
+
+  it.each([
+    ['biller', holderFor('biller')],
+    ['staff', holderFor('staff')],
+    ['a role with no tick', holderFor({ ticks: [] })],
+    ['nobody known', null],
+  ] as const)(
     'for %s the export has no such column, and no cell carries either weight',
-    (role) => {
-      const rows = inventoryExportRows(designs, role);
+    (_label, who) => {
+      const rows = inventoryExportRows(designs, who);
       expect(rows).toHaveLength(2);
       for (const row of rows) {
         expect(Object.keys(row).filter((k) => /original/i.test(k))).toEqual([]);

@@ -11,7 +11,10 @@ import {
   watchCustomerLedger,
 } from '@/lib/appStore';
 import SaveButton from '@/components/ui/SaveButton';
+import { can } from '@/lib/access';
+import { ledgerAccess, startLedgerWatch } from '@/lib/ledgerAccess';
 import { paiseShown } from '@/lib/ledgerView';
+import { useHolder } from '@/lib/useAccess';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import CustomerList from './CustomerList';
 import CustomerDetail from './CustomerDetail';
@@ -28,7 +31,13 @@ interface AddCustomerForm {
   notes: string;
 }
 
+// Task 20b of the access plan (DESIGN 6.2): the screen opens with "See customers" (`customer_view`); everything made from the bills and the balances (the total outstanding below, the balance beside each
+// name, the card's figures and tabs, and the ledger call) is the money part, which needs "See bills, payments and customer ledgers" (`bill_view`, src/lib/ledgerAccess.ts); "+ Add Customer" is "Add and
+// edit customers" (`customer_edit`). A role with the customers and not the bills sees the names, the button its tick allows, and one sentence on a card where the money would be.
 export default function CustomerLedgerClient() {
+  const holder = useHolder();
+  const { list, money } = ledgerAccess(holder);
+  const mayAddCustomer = can(holder, 'customer_edit');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -94,11 +103,12 @@ export default function CustomerLedgerClient() {
     return () => clearInterval(interval);
   }, [selectedId, books, linkedId]);
 
-  // C3: the ledger of the customer is read from the server when the card opens, and again whenever that customer's updated_at changes
+  // C3: the ledger of the customer is read from the server when the card opens, and again whenever that customer's updated_at changes. Only for a person who may read the bills: for anybody else the
+  // call is not made (the API would refuse it), and the card has no ledger to show
   useEffect(() => {
     if (!selectedCustomer?.id) return undefined;
-    return watchCustomerLedger(selectedCustomer.id);
-  }, [selectedCustomer?.id]);
+    return startLedgerWatch(holder, selectedCustomer.id, watchCustomerLedger);
+  }, [selectedCustomer?.id, holder]);
 
   // what the customers owe in all: the sum of V2 `outstanding` in whole paise (the selectors, C14), the same figure as the dashboard, not a sum of the floats on the list
   const totalOutstanding = computeOutstanding().outstandingPaise;
@@ -151,6 +161,9 @@ export default function CustomerLedgerClient() {
     }
   };
 
+  // the screen is "See customers": the route closes it for anybody without that tick, so this is never met in the app; without the customers there is nothing of the page to draw
+  if (!list) return null;
+
   return (
     <div className="space-y-4">
       {/* FB-D1: on paper only the open customer's ledger is printed (CustomerDetail), not the page around it */}
@@ -158,14 +171,23 @@ export default function CustomerLedgerClient() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Customer Ledger</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {customers.length} customer{customers.length !== 1 ? 's' : ''} ·{' '}
-            <span data-testid="ledger-total-outstanding">{paiseShown(totalOutstanding)}</span> total
-            outstanding
+            {customers.length} customer{customers.length !== 1 ? 's' : ''}
+            {money && (
+              <>
+                {' '}
+                · <span data-testid="ledger-total-outstanding">
+                  {paiseShown(totalOutstanding)}
+                </span>{' '}
+                total outstanding
+              </>
+            )}
           </p>
         </div>
-        <button onClick={() => setShowAddForm(true)} className="btn-primary py-2">
-          + Add Customer
-        </button>
+        {mayAddCustomer && (
+          <button onClick={() => setShowAddForm(true)} className="btn-primary py-2">
+            + Add Customer
+          </button>
+        )}
       </div>
 
       {/* Add Customer Modal */}
@@ -312,10 +334,11 @@ export default function CustomerLedgerClient() {
             customers={customers}
             selectedId={selectedCustomer?.id ?? null}
             onSelect={setSelectedCustomer}
+            balances={money}
           />
         </div>
         <div className="lg:col-span-3">
-          {selectedCustomer && ledger.state === 'failed' && (
+          {selectedCustomer && money && ledger.state === 'failed' && (
             <div
               role="alert"
               data-testid="ledger-error"
@@ -331,7 +354,7 @@ export default function CustomerLedgerClient() {
               </button>
             </div>
           )}
-          {selectedCustomer && ledger.state === 'loading' && ledger.empty && (
+          {selectedCustomer && money && ledger.state === 'loading' && ledger.empty && (
             <p
               data-testid="ledger-loading"
               className="mb-3 text-xs text-muted-foreground print:hidden"
@@ -352,8 +375,10 @@ export default function CustomerLedgerClient() {
             <div className="jewel-card p-12 text-center">
               <p className="text-sm text-muted-foreground">
                 {customers.length === 0
-                  ? 'No customers yet. Click "+ Add Customer" to get started.'
-                  : 'Select a customer to view their ledger'}
+                  ? `No customers yet.${mayAddCustomer ? ' Click "+ Add Customer" to get started.' : ''}`
+                  : money
+                    ? 'Select a customer to view their ledger'
+                    : 'Select a customer to see their details'}
               </p>
             </div>
           )}

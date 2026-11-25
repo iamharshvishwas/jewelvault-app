@@ -33,6 +33,7 @@ import { ApiError } from '@/lib/api/client';
 import type { CreateBillResponse } from '@/lib/api/types';
 import type { Sku } from '@/lib/mockData';
 import { priceBill } from '@/lib/pricing';
+import { holderFor } from './support/access';
 import { FakeBillApi } from './support/bill-server';
 import { allocationRow, receiptRow } from './support/money-rows';
 import { uuid } from './support/rows';
@@ -560,8 +561,8 @@ const apiError = (
   });
 
 describe('C13: each error code of a save has a plain sentence', () => {
-  const biller = { role: 'biller', walkIn: false };
-  const owner = { role: 'owner', walkIn: false };
+  const biller = { who: holderFor('biller'), walkIn: false };
+  const owner = { who: holderFor('owner'), walkIn: false };
 
   it('JV_CASH_LIMIT: a biller is told the owner enters the payment; the owner is asked for a reason', () => {
     const details = {
@@ -571,12 +572,12 @@ describe('C13: each error code of a save has a plain sentence', () => {
       date: '2026-10-15',
     };
     const forBiller = billSaveFailure(apiError('JV_CASH_LIMIT', details), biller);
-    expect(forBiller.cashLimit).toEqual({ ownerMayGiveReason: false });
+    expect(forBiller.cashLimit).toEqual({ mayGiveReason: false });
     expect(forBiller.message).toBe(
       'Cash from this customer today would reach the limit of ₹2,00,000 (₹1,50,000 already today, ₹60,000 on this bill). The owner enters this payment. Nothing was changed.'
     );
     const forOwner = billSaveFailure(apiError('JV_CASH_LIMIT', details), owner);
-    expect(forOwner.cashLimit).toEqual({ ownerMayGiveReason: true });
+    expect(forOwner.cashLimit).toEqual({ mayGiveReason: true });
     expect(forOwner.message).toContain('Give a reason of at least 10 characters and save again');
     expect(forOwner.message.endsWith('Nothing was changed.')).toBe(true);
   });
@@ -584,12 +585,37 @@ describe('C13: each error code of a save has a plain sentence', () => {
   it('JV_CASH_LIMIT for the walk-in says to select or create the customer, with no way round it', () => {
     const walkIn = billSaveFailure(
       apiError('JV_CASH_LIMIT', { limit: '200000.00', this_call: '200000.00', date: '2026-10-15' }),
-      { role: 'owner', walkIn: true }
+      { who: holderFor('owner'), walkIn: true }
     );
     expect(walkIn.cashLimit).toBeNull();
     expect(walkIn.message).toBe(
       'Select or create the customer: cash of ₹2,00,000 or more cannot be taken for the walk-in customer. Nothing was changed.'
     );
+  });
+
+  it('JV_CASH_LIMIT follows the tick, not the role: a role with only the cash-over-limit tick is asked for a reason, a role that takes payments without it is told the owner enters the payment', () => {
+    const details = {
+      limit: '200000.00',
+      cash_today: '150000.00',
+      this_call: '60000.00',
+      date: '2026-10-15',
+    };
+    const manager = { who: holderFor({ ticks: ['cash_over_limit'] }), walkIn: false };
+    const found = billSaveFailure(apiError('JV_CASH_LIMIT', details), manager);
+    expect(found.cashLimit).toEqual({ mayGiveReason: true });
+    expect(found.message).toContain('Give a reason of at least 10 characters and save again');
+    const withoutTick = {
+      who: holderFor({ ticks: ['bill_make', 'payment_receive'] }),
+      walkIn: false,
+    };
+    const refused = billSaveFailure(apiError('JV_CASH_LIMIT', details), withoutTick);
+    expect(refused.cashLimit).toEqual({ mayGiveReason: false });
+    expect(refused.message).toContain('The owner enters this payment.');
+    const nobody = billSaveFailure(apiError('JV_CASH_LIMIT', details), {
+      who: null,
+      walkIn: false,
+    });
+    expect(nobody.cashLimit).toEqual({ mayGiveReason: false });
   });
 
   it('JV_OVERPAYMENT gives both figures and says nothing was changed', () => {

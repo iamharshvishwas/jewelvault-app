@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { expect, test, type Page, type Request, type Route } from '@playwright/test';
 import { clearLoginCounters } from './clear-counters';
 import { noteApiCall, roomInTheMinute } from './pacing';
@@ -41,6 +43,11 @@ const SYNC_RESOURCES = [
   'customer-balances',
   'orders',
 ] as const;
+
+/** What each built-in role loaded the day before the access plan (tests/unit/fixtures/access-golden.json, recorded once and never edited, P1). */
+const GOLDEN = JSON.parse(
+  readFileSync(path.resolve(__dirname, '../unit/fixtures/access-golden.json'), 'utf8')
+) as { roles: Record<E2eRole, { resources: string[] }> };
 
 // ------------------------------------------------------------------------------------------------ the page
 
@@ -423,7 +430,7 @@ test.describe('T-E05: the data gate (C2, C8, U7, U8)', () => {
   test('each role loads exactly the tables the API lets it read, in pages of 1,000 from the start, and every page is answered', async ({
     page,
   }) => {
-    // the oracle: what the API says to each role, one resource at a time
+    // the oracle: what the API says to each role, one resource at a time; and what its `me` says it reads (R6), which is what the screen loads
     const allowed: Record<E2eRole, string[]> = { owner: [], biller: [], staff: [] };
     for (const role of ROLES) {
       const cookie = await apiSession(e2eLogin(role));
@@ -433,6 +440,32 @@ test.describe('T-E05: the data gate (C2, C8, U7, U8)', () => {
         if (answer.status === 200) allowed[role].push(resource);
       }
       allowed[role].sort();
+      const me = await asSite('GET', '/v1/auth/me', { cookie });
+      expect(me.status, `${role} me`).toBe(200);
+      const { reads, access } = (me.json as { user: { reads: string[]; access: string } }).user;
+      // `me.reads` is the recording of the day before the change (P1), and exactly what the API lets the role read
+      expect([...reads].sort(), `${role} me.reads`).toEqual(
+        [...GOLDEN.roles[role].resources].sort()
+      );
+      expect([...reads].sort(), `${role} me.reads against the oracle`).toEqual(allowed[role]);
+      // the API accepts the poll for exactly `me.reads`, and its answer carries the access text of `me`
+      const poll = await asSite('POST', '/v1/sync/poll', {
+        cookie,
+        body: { cursors: Object.fromEntries(reads.map((resource) => [resource, null])) },
+      });
+      expect(poll.status, `${role} poll of me.reads`).toBe(200);
+      expect((poll.json as { access: string }).access, `${role} poll access`).toBe(access);
+      // and refuses it, whole, when one resource more is asked for
+      const more = SYNC_RESOURCES.find((resource) => !reads.includes(resource));
+      if (more) {
+        const refused = await asSite('POST', '/v1/sync/poll', {
+          cookie,
+          body: {
+            cursors: Object.fromEntries([...reads, more].map((resource) => [resource, null])),
+          },
+        });
+        expect(refused.status, `${role} poll of me.reads and ${more}`).toBe(403);
+      }
     }
     expect(allowed.owner).toHaveLength(16);
     expect(allowed.staff).toContain('orders'); // FB-F1: staff read the Order Book

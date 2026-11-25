@@ -1,9 +1,9 @@
-// The flow behind the owner's "Download everything" button (spec B3, I12, O53; task WEB12b). The zip itself is made by src/lib/downloadEverything.ts; this file is what happens around it.
+// The flow behind the "Download everything" button (spec B3, I12, O53; task WEB12b; the tick `download_all`, DESIGN 6.2 R3). The zip itself is made by src/lib/downloadEverything.ts; this file is what happens around it.
 //
 //   1. A FRESH POLL. The zip is built from memory, so memory must be as new as the press: a poll that starts AFTER the press and completes. A poll that was already on its way when the
 //      button was pressed started earlier and may have missed a row written since, so the flow waits for the one behind it. If the poll fails, or does not finish within the time allowed,
 //      nothing is made: a copy of the books that might be a few minutes old is the one thing this button must not hand over without saying so.
-//   2. THE FILES. `buildDownload` from the cache rows (the owner's role decides the owner-only weight), the zip handed to the browser as a file.
+//   2. THE FILES. `buildDownload` from the cache rows (the person's `secret_weight` tick decides the original weight), the zip handed to the browser as a file.
 //   3. THE RECORD. `POST /v1/owner/download-record` with the business date and the number of rows of each of the twelve files (API35). The API compares each count with its own count of the
 //      table, give or take the rows made in the last two minutes, and only then stores `last_download` (one audit row). A count that does not match is JV_INVALID_INPUT and changes nothing.
 //   4. THE LINE. `reloadHealth` reads the dashboard line again, so the card and the line count from today.
@@ -15,14 +15,12 @@
 // This file talks to the client, so, like moneyServer.ts and booksServer.ts, the stores that the screens re-read every second do not import it (C9).
 import { api as siteApi, isApiError, type ApiClient } from '@/lib/api/client';
 import type { DownloadRecordResponse } from '@/lib/api/types';
-import {
-  getSessionState,
-  registerLogoutHook as siteRegisterLogoutHook,
-  type AuthRole,
-} from '@/lib/authStore';
+import { can, type Holder } from '@/lib/access';
+import { getSessionState, registerLogoutHook as siteRegisterLogoutHook } from '@/lib/authStore';
 import { DownloadBooksNotLoaded, buildDownload } from '@/lib/downloadEverything';
 import { saveFile } from '@/lib/exportUtils';
 import { businessDateOf } from '@/lib/selectors';
+import { holderOf } from '@/lib/useAccess';
 import { booksServer } from './booksServer';
 import { rowCache, type RowCache } from './cache';
 import { hydrator as siteHydrator, type Hydrator } from './hydrate';
@@ -41,8 +39,8 @@ export interface DownloadServerDeps {
   cache: RowCache;
   poller: Pick<Poller, 'getState' | 'subscribe' | 'pollNow'>;
   hydrator: Pick<Hydrator, 'getState'>;
-  /** The role of the signed-in person, or null. */
-  role: () => AuthRole | null;
+  /** The signed-in person (their ticks and flag), or null. */
+  holder: () => Holder | null;
   /** Hands the zip to the browser as a file. May throw. */
   save: (zip: Uint8Array<ArrayBuffer>, filename: string) => void;
   now: () => Date;
@@ -67,7 +65,7 @@ export interface DownloadServer {
 export const FRESH_POLL_TIMEOUT_MS = 60_000;
 
 const MESSAGES = {
-  owner: 'Only the owner can use Download everything.',
+  notAllowed: 'Your role cannot use Download everything.',
   loading: 'The books are still loading. Wait until the screen has finished loading and try again.',
   poll: 'The screen could not be brought up to date, so no file was made. Check the connection and try again.',
   files:
@@ -138,8 +136,8 @@ export function createDownloadServer(deps: DownloadServerDeps): DownloadServer {
       fileSaved,
     });
 
-    const role = deps.role();
-    if (role !== 'owner') return stop(MESSAGES.owner);
+    const who = deps.holder();
+    if (!can(who, 'download_all')) return stop(MESSAGES.notAllowed);
     if (hydrator.getState().status !== 'ready') return stop(MESSAGES.loading);
 
     set({ status: 'working', step: 'poll', text: 'Bringing the screen up to date…' });
@@ -150,7 +148,7 @@ export function createDownloadServer(deps: DownloadServerDeps): DownloadServer {
     let built;
     try {
       built = buildDownload({
-        role,
+        who,
         rows: (resource) => cache.rows(resource),
         date: businessDateOf(moment),
         modified: moment,
@@ -225,7 +223,7 @@ export const downloadServer: DownloadServer = createDownloadServer({
   cache: rowCache,
   poller: siteInstancePoller,
   hydrator: siteHydrator,
-  role: () => getSessionState().role,
+  holder: () => holderOf(getSessionState()),
   save: (zip, filename) => saveFile(zip, 'application/zip', filename, 60_000),
   now: () => new Date(),
   reloadHealth: () => booksServer.reloadHealth(),

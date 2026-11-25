@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { clearLoginCounters } from './clear-counters';
 import { e2eLogin, type E2eLogin } from './global-setup';
 import { roomInTheMinute } from './pacing';
@@ -13,6 +13,8 @@ import { roomInTheMinute } from './pacing';
 //      stock, says so and shows no other design; "View Design" opens the design of the piece, not the newest design; no sample text (the made-up design SET-00572, "Quick demo scans").
 //   3  no `jaishri.*` key is read or written during a session, the hidden Order Book's included (its store kept orders in `jaishri.orders.v1`); local storage, session storage and IndexedDB hold
 //      nothing of the application's.
+//   4  (access and roles, Task 19) the Inventory screen's Scan link and its Delete buttons (the grid, the table and the bulk bar) are the owner's: a biller and a staff user have none of them, and
+//      keep the buttons of everybody (Print Tags, Add Design).
 //
 // The rows are written as root in the lane's container: two designs, three pieces (one of them Sold) and the owner's weights of two of them. They are relative to the clock (the newest design is
 // the one an address with no design used to fall back to), and everything the tests made is taken out again.
@@ -399,4 +401,54 @@ test.describe('CL19-3 E2E: no jaishri.* key is read or written, and the browser 
       }
     }
   });
+});
+
+// ------------------------------------------------------------------------------------------------ 4: the owner controls of the Inventory screen
+
+test.describe('Task 19 E2E: the Scan link and the Delete buttons of the Inventory screen are the owner’s', () => {
+  test.describe.configure({ timeout: 240_000 });
+
+  /** Opens the Inventory screen as a person and waits until the designs of the test are drawn, so that an absence below is an absence and not a screen that has not loaded. */
+  async function openInventory(page: Page, who: E2eLogin) {
+    await open(page, who, '/inventory-management');
+    const main = page.getByRole('main');
+    await expect(main).toContainText(DESIGN_A.no, { timeout: 60_000 });
+    return main;
+  }
+  const cardOf = (page: Page) => page.locator('div.jewel-card', { hasText: DESIGN_A.no });
+  const scanLink = (main: Locator) => main.getByRole('link', { name: 'Scan', exact: true });
+  const gridDelete = (page: Page) => page.getByTitle('Delete design', { exact: true });
+  const tableDelete = (page: Page) => page.getByTitle('Delete Design', { exact: true });
+  const bulkDelete = (page: Page) => page.getByRole('button', { name: 'Delete', exact: true });
+
+  test('the owner has the Scan link, and the Delete button of the grid, of the bulk bar and of the table', async ({
+    page,
+  }) => {
+    const main = await openInventory(page, e2eLogin('owner'));
+    await expect(scanLink(main)).toBeVisible();
+    await expect(gridDelete(page).first()).toBeAttached();
+    await cardOf(page).locator('input[type="checkbox"]').check();
+    await expect(main).toContainText('1 selected');
+    await expect(bulkDelete(page)).toBeVisible();
+    await page.getByRole('button', { name: 'Show as table' }).click();
+    await expect(tableDelete(page).first()).toBeAttached();
+  });
+
+  for (const role of ['biller', 'staff'] as const) {
+    test(`${role}: no Scan link and no Delete button, in the grid, the bulk bar or the table; the buttons of everybody are there`, async ({
+      page,
+    }) => {
+      const main = await openInventory(page, e2eLogin(role));
+      await expect(main.getByRole('link', { name: 'Print Tags', exact: true })).toBeVisible();
+      await expect(main.getByRole('link', { name: 'Add Design', exact: true })).toBeVisible();
+      await expect(scanLink(main)).toHaveCount(0);
+      await expect(gridDelete(page)).toHaveCount(0);
+      await cardOf(page).locator('input[type="checkbox"]').check();
+      await expect(main).toContainText('1 selected');
+      await expect(bulkDelete(page)).toHaveCount(0);
+      await page.getByRole('button', { name: 'Show as table' }).click();
+      await expect(page.locator('tbody tr').first()).toBeVisible();
+      await expect(tableDelete(page)).toHaveCount(0);
+    });
+  }
 });

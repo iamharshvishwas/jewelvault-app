@@ -1,11 +1,12 @@
 'use client';
 
-// The session of the screen on the API: login, `me`, the role, the idle logout, and what a 401 or a 403 does (spec U1, U4 to U8, U11, C16,
-// C18). Task WEB02.
+// The session of the screen on the API: login, `me`, the person's access, the idle logout, and what a 401 or a 403 does (spec U1, U4 to U8, U11,
+// C16, C18). Task WEB02; keyed on the access text since the plan "access and roles" (Task 17, R5, R6, R15).
 //
 // There is no login library (U6). A person signs in with an e-mail address and a password at `POST /v1/auth/login`; the API puts the
-// session in the cookie `__Host-jv_session`, which JavaScript cannot read, and the role of the person is what `GET /v1/auth/me` says (U5, A2):
-// never what the login answered, and never anything kept in the browser. Nothing is written to localStorage, sessionStorage or IndexedDB
+// session in the cookie `__Host-jv_session`, which JavaScript cannot read, and what the person may do is what `GET /v1/auth/me` says (U5, A2):
+// the ticks of their role (`permissions`), the Super Admin flag, the resources they read (`reads`) and an opaque access text (`access`) that
+// changes whenever any of those change. Never what the login answered, and never anything kept in the browser. Nothing is written to localStorage, sessionStorage or IndexedDB
 // here (C8).
 //
 // ONE state lives at module level, so it does not depend on which page is open: every page wraps itself in AppLayout, and AppLayout (the
@@ -15,37 +16,40 @@
 //   loading             the screen is asking `me` (start-up)
 //   signedOut           the login screen; `notice` says why the person is back, when it is not their own doing
 //   mustChangePassword  a signed-in person whose password is a temporary one (U11): the change-password screen is the only screen
-//   signedIn            the app; `role` is the role of `me`
+//   signedIn            the app; `access` is the access text of `me` (the role key stays in `session` for display only)
 //   error               `me` could not be asked (no connection, a server that is down): a retry button, never the login screen
 //
 // What empties memory: the stores that hold business data (WEB03) and the pollers (WEB04) register one function each with
 // `registerLogoutHook`. Every end of a session runs all of them: a logout, the idle logout, any 401, another person signing in on top, and
-// a change of role (the gate then opens again with the new role: `epoch` counts the openings, so a store can hydrate again and the layout
-// can start the page afresh).
+// a change of access (the gate then opens again with the new ticks: `epoch` counts the openings, so a store can hydrate again and the layout
+// can start the page afresh). A change of access is a change of role or of the ticks of the same role (the Super Admin changed them, P6).
 //
-// A poller that gets `403 JV_FORBIDDEN`, or an answer whose `role` is not the one of the session, pauses and calls `reviewRole()` once: it
-// asks `me`, and gets 'changed' (memory emptied, gate open again with the new role), 'same' (show the error once), 'ended' (the login
+// A poller that gets `403 JV_FORBIDDEN`, or an answer whose `access` is not the one of the session, pauses and calls `reviewRole()` once: it
+// asks `me`, and gets 'changed' (memory emptied, gate open again with the new access), 'same' (show the error once), 'ended' (the login
 // screen is up) or 'unknown' (`me` could not be asked: nothing was changed).
 
 import { useSyncExternalStore } from 'react';
 import { api as siteApi, isApiError, type ApiClient, type ApiError } from '@/lib/api/client';
-import type { LoginResponse } from '@/lib/api/types';
+import { SYNC_RESOURCES, type MeResponse, type SyncResource } from '@/lib/api/types';
+import { TICK_KEYS, isTickKey, type TickKey } from '@/lib/access';
 import { PREVIEW_MODE } from '@/lib/previewMode';
-
-export type AuthRole = 'owner' | 'biller' | 'staff';
-
-export const ROLE_LABEL: Record<AuthRole, string> = {
-  owner: 'Owner',
-  biller: 'Biller',
-  staff: 'Staff',
-};
 
 export interface AuthSession {
   userId: string;
   email: string;
   /** The real name of the person, as the owner gave it to the admin door. */
   displayName: string;
-  role: AuthRole;
+  /** The key of the role, for display only: what the person may do is `permissions`. Any key is accepted (the Super Admin makes roles). */
+  role: string;
+  /** The name of the role, as the screen shows it. */
+  roleName: string;
+  isSuperAdmin: boolean;
+  /** The ticks of the role that this code knows; a tick key it does not know is left out. */
+  permissions: ReadonlySet<TickKey>;
+  /** The opaque access text of `me` (R5): compared, never read. */
+  access: string;
+  /** The resources the person reads, named as the poll names them; a name this code does not know is left out. */
+  reads: readonly SyncResource[];
   /** The password is a temporary one and must be changed before anything else (U11). */
   mustChangePassword: boolean;
 }
@@ -59,48 +63,21 @@ export function initialsOf(name: string): string {
   return (first + last).toUpperCase();
 }
 
-function isRole(value: unknown): value is AuthRole {
-  return value === 'owner' || value === 'biller' || value === 'staff';
-}
+const SYNC_SET: ReadonlySet<string> = new Set(SYNC_RESOURCES);
+const isSyncResource = (value: unknown): value is SyncResource =>
+  typeof value === 'string' && SYNC_SET.has(value);
 
-// ------------------------------------------------------------------------------------------------ screens by role
-
-// Spec 1.3, "Screens by role": a front-end rule that mirrors the rules of the API (the API is the real wall, section 3). A route that is
-// not in this list is closed to everybody, which is how the screens that are "hidden in M1" (/catalogue,
-// /customer-catalogue) stay hidden. FB-F1 opened /order-book: the owner and the biller make and move orders, staff read the list (the screen draws no button for them). /scan-detail is not in the table of 1.3; it stays as the prototype had it, for the owner only.
-const SCREENS: ReadonlyArray<{ path: string; roles: readonly AuthRole[] }> = [
-  { path: '/', roles: ['owner', 'biller', 'staff'] },
-  { path: '/billing-pos', roles: ['owner', 'biller'] },
-  { path: '/estimate', roles: ['owner', 'biller'] },
-  { path: '/customer-ledger', roles: ['owner', 'biller'] },
-  { path: '/inventory-management', roles: ['owner', 'biller', 'staff'] },
-  { path: '/design-detail', roles: ['owner', 'biller', 'staff'] },
-  { path: '/print-tags', roles: ['owner', 'biller', 'staff'] },
-  { path: '/stock-catalogue', roles: ['owner', 'biller', 'staff'] },
-  { path: '/order-book', roles: ['owner', 'biller', 'staff'] },
-  { path: '/add-design', roles: ['owner', 'staff'] },
-  { path: '/edit-stock', roles: ['owner', 'staff'] },
-  { path: '/reports', roles: ['owner'] },
-  { path: '/settings', roles: ['owner'] },
-  { path: '/activity-log', roles: ['owner'] },
-  { path: '/scan-detail', roles: ['owner'] },
-];
-
-function normalisePath(pathname: string): string {
-  const path = pathname.split(/[?#]/)[0] ?? '';
-  const trimmed = path.length > 1 ? path.replace(/\/+$/, '') : path;
-  return trimmed || '/';
-}
-
-/** May this role open this route (or follow this link, which may carry a query)? A person with no role opens nothing. */
-export function canAccessPath(role: AuthRole | null, pathname: string): boolean {
-  if (!role) return false;
-  const path = normalisePath(pathname);
-  const screen = SCREENS.find((s) =>
-    s.path === '/' ? path === '/' : path === s.path || path.startsWith(`${s.path}/`)
+/** The `me` user carries the fields of the access plan (R6): an older API that does not send them cannot open the app. */
+function hasAccessFields(user: MeResponse['user']): boolean {
+  return (
+    typeof user.access === 'string' &&
+    user.access !== '' &&
+    Array.isArray(user.permissions) &&
+    Array.isArray(user.reads)
   );
-  return Boolean(screen && screen.roles.includes(role));
 }
+
+// The screens a person may open are in src/lib/access.ts (`canAccessPath` over the ticks of `useHolder`).
 
 // ------------------------------------------------------------------------------------------------ idle logout and the activity call
 
@@ -128,26 +105,26 @@ export type SessionStatus = 'loading' | 'signedOut' | 'mustChangePassword' | 'si
 export interface SessionState {
   status: SessionStatus;
   session: AuthSession | null;
-  /** The role of the session while the app is open (status "signedIn"); null in every other state, so that no route opens. */
-  role: AuthRole | null;
+  /** The key of the gates (hydrate, poll, layout): the access text of the session while the app is open (status "signedIn"); null in every other state. */
+  access: string | null;
   /** Why the person is looking at the login screen (the session ended, 12 hours idle), or null. */
   notice: string | null;
   /** Why `me` could not be asked (status "error"), or null. */
   error: string | null;
-  /** How many times the gate has been opened for a person and a role: it goes up on a login, at start-up and on a change of role. */
+  /** How many times the gate has been opened for a person and an access: it goes up on a login, at start-up and on a change of access. */
   epoch: number;
 }
 
 const LOADING: SessionState = {
   status: 'loading',
   session: null,
-  role: null,
+  access: null,
   notice: null,
   error: null,
   epoch: 0,
 };
 
-/** The answer of `reviewRole`: see the top of this file. */
+/** The answer of `reviewRole`: see the top of this file. 'same' means the same person, state and access text. */
 export type RoleReview = 'changed' | 'same' | 'ended' | 'unknown';
 
 export interface SignInResult {
@@ -171,7 +148,7 @@ export interface SessionDeps {
   api: SessionApi;
   /** Default: the window and the document of the page, or none on the server. `null` is none. */
   host?: SessionHost | null;
-  /** Preview mode: open as the owner and call nothing (see PREVIEW_MODE). */
+  /** Preview mode: open with every tick and call nothing (see PREVIEW_MODE). */
   preview?: boolean;
 }
 
@@ -190,16 +167,22 @@ export interface SessionStore {
   registerLogoutHook(hook: () => void): () => void;
 }
 
-const PREVIEW_STATE: SessionState = {
+/** The preview: the Owner's role with every tick and every resource, not the Super Admin (the preview has no People & Roles to run). */
+export const PREVIEW_STATE: SessionState = {
   status: 'signedIn',
   session: {
     userId: 'preview',
     email: 'preview@example.invalid',
     displayName: 'Preview',
     role: 'owner',
+    roleName: 'Owner',
+    isSuperAdmin: false,
+    permissions: new Set(TICK_KEYS),
+    access: 'preview',
+    reads: [...SYNC_RESOURCES],
     mustChangePassword: false,
   },
-  role: 'owner',
+  access: 'preview',
   notice: null,
   error: null,
   epoch: 0,
@@ -307,11 +290,14 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
   }
 
   // ---- a person arrives: the state of `me`
-  /** Opens the gate for the person `me` describes (U5, U11). Pass hooksRun when memory has been emptied already. */
-  function settle(me: LoginResponse, { hooksRun = false }: { hooksRun?: boolean } = {}): void {
+  /**
+   * Opens the gate for the person `me` describes (U5, U11, R15). Any role key is accepted; tick keys and resource names this code does not know are left out (a later
+   * release may drop one). Pass hooksRun when memory has been emptied already.
+   */
+  function settle(me: MeResponse, { hooksRun = false }: { hooksRun?: boolean } = {}): void {
     const user = me.user;
-    if (!isRole(user.role)) {
-      console.warn('The API sent a role this screen does not know');
+    if (!hasAccessFields(user)) {
+      console.warn('The API did not say what this person may do');
       setState({ ...LOADING, status: 'error', error: NOT_CONNECTED, epoch: state.epoch });
       return;
     }
@@ -322,7 +308,7 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
     // Another person signing in on top of a signed-in one (another tab): the first person's data goes first.
     if (wasIn && !sameUser && !hooksRun) runHooks();
     const unchanged =
-      sameUser && !mustChange && previous.status === 'signedIn' && previous.role === user.role;
+      sameUser && !mustChange && previous.status === 'signedIn' && previous.access === user.access;
     lastActivitySent = Date.now(); // the login and `me` count as activity on the server (U4)
     setState({
       status: mustChange ? 'mustChangePassword' : 'signedIn',
@@ -331,16 +317,22 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
         email: user.email,
         displayName: user.full_name || user.email,
         role: user.role,
+        roleName:
+          typeof user.role_name === 'string' && user.role_name !== '' ? user.role_name : user.role,
+        isSuperAdmin: user.is_super_admin === true,
+        permissions: new Set(user.permissions.filter(isTickKey)),
+        access: user.access,
+        reads: [...new Set(user.reads.filter(isSyncResource))],
         mustChangePassword: mustChange,
       },
-      role: mustChange ? null : user.role,
+      access: mustChange ? null : user.access,
       notice: null,
       error: null,
       epoch: unchanged ? previous.epoch : previous.epoch + 1,
     });
   }
 
-  /** U5: at start-up the screen asks `me`; the role it returns decides what exists. */
+  /** U5: at start-up the screen asks `me`; the ticks it returns decide what exists. */
   async function bootstrap(): Promise<void> {
     const mine = ++generation;
     if (state.status !== 'loading') setState({ ...LOADING, epoch: state.epoch });
@@ -414,7 +406,7 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
       return { error: messageOf(error, TRY_AGAIN) };
     }
     try {
-      const me = await api.me(); // U5: after login the screen asks `me`; its role is the role
+      const me = await api.me(); // U5: after login the screen asks `me` (the login answer does not say what the person may do)
       if (mine !== generation) return { error: TRY_AGAIN };
       settle(me);
       return { error: null };
@@ -442,19 +434,26 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
     if (preview || !watching(state)) return { error: 'Sign in first.' };
     listen();
     const mine = generation;
-    let changed: LoginResponse;
     try {
-      changed = await api.changePassword(currentPassword, newPassword);
+      await api.changePassword(currentPassword, newPassword);
     } catch (error) {
       return { error: changePasswordMessage(error) };
     }
     if (mine !== generation) return { error: PASSWORD_CHANGED_SIGN_IN };
-    let me: LoginResponse = changed;
+    let me: MeResponse;
     try {
-      me = await api.me(); // also fills the pricing check of C12
+      me = await api.me(); // what the person may do (the answer of the change does not say it); also fills the pricing check of C12
     } catch (error) {
       if (isApiError(error) && error.status === 401) return { error: PASSWORD_CHANGED_SIGN_IN };
-      // `me` could not be asked: the answer of the change is as good (the person is in); the pricing check waits for the next `me`
+      if (mine !== generation) return { error: PASSWORD_CHANGED_SIGN_IN };
+      // `me` could not be asked: the password is changed and the person is in, but the app cannot open without `me`: the "Try again" screen asks it again
+      setState({
+        ...LOADING,
+        status: 'error',
+        error: messageOf(error, NOT_CONNECTED),
+        epoch: state.epoch,
+      });
+      return { error: null };
     }
     if (mine !== generation) return { error: PASSWORD_CHANGED_SIGN_IN };
     settle(me);
@@ -489,7 +488,7 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
     return done;
   }
 
-  // ---- U6, C18: a 403 from the poll, or a poll answer with another role
+  // ---- U6, C18: a 403 from the poll, or a poll answer with another access text
   function reviewRole(): Promise<RoleReview> {
     if (preview) return Promise.resolve('same');
     if (reviewing) return reviewing; // two 403s at the same moment are one `me`
@@ -497,7 +496,7 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
     listen();
     const mine = generation;
     const run = (async (): Promise<RoleReview> => {
-      let me: LoginResponse;
+      let me: MeResponse;
       try {
         me = await api.me();
       } catch (error) {
@@ -507,12 +506,13 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
       if (mine !== generation) return 'ended'; // the person left while `me` was on its way
       const previous = state;
       const mustChange = me.user.must_change_password === true;
+      // the same person, in the same state, with the same access text: the role key alone is not compared (the same key with other ticks is a change, P6)
       const same =
         previous.session?.userId === me.user.id &&
         previous.status === (mustChange ? 'mustChangePassword' : 'signedIn') &&
-        previous.role === (mustChange ? null : me.user.role);
+        previous.access === (mustChange ? null : me.user.access);
       if (same) return 'same';
-      runHooks(); // the owner-only data, sku_private and the audit data included; the pollers stop
+      runHooks(); // what the old access could read (sku_private, the money side, the audit data) goes; the pollers stop
       settle(me, { hooksRun: true });
       return 'changed';
     })().finally(() => {
@@ -612,7 +612,7 @@ export function createSessionStore(deps: SessionDeps): SessionStore {
 
 // ------------------------------------------------------------------------------------------------ the store of the site
 
-/** Preview mode (see src/lib/previewMode.ts): the front end opens as the owner with no login and no server, on sample data. Off unless the build says so. WEB15 removes it. */
+/** Preview mode (see src/lib/previewMode.ts): the front end opens with every tick (PREVIEW_STATE), with no login and no server, on sample data. Off unless the build says so. WEB15 removes it. */
 export { PREVIEW_MODE };
 
 const store = createSessionStore({ api: siteApi, preview: PREVIEW_MODE });
@@ -624,7 +624,7 @@ export const signIn = store.signIn;
 export const signOut = store.signOut;
 export const changePassword = store.changePassword;
 export const retrySession = store.retry;
-/** A poller calls this once for each 403 JV_FORBIDDEN, and when a poll answer names another role than the session's (U6, C18). */
+/** A poller calls this once for each 403 JV_FORBIDDEN, and when a poll answer names another access text than the session's (U6, C18). */
 export const reviewRole = store.reviewRole;
 /**
  * U8: logout empties every in-memory cache and stops every poller. The stores that hold business data (WEB03) and the pollers (WEB04)
@@ -633,7 +633,7 @@ export const reviewRole = store.reviewRole;
  */
 export const registerLogoutHook = store.registerLogoutHook;
 
-/** U7: pages read the role from here. The server and the first client render say "loading", so the HTML matches. */
+/** U7: pages read the session from here (what they may do through `useCan` of src/lib/useAccess.ts). The server and the first client render say "loading", so the HTML matches. */
 export function useSession(): SessionState {
   return useSyncExternalStore(store.subscribe, store.getState, () => LOADING);
 }

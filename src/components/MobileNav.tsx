@@ -10,7 +10,8 @@ import {
   ScanLine,
   ShoppingCart,
 } from 'lucide-react';
-import { canAccessPath, type AuthSession } from '@/lib/authStore';
+import { canAccessPath } from '@/lib/access';
+import type { AuthSession } from '@/lib/authStore';
 
 const MOBILE_NAV = [
   { id: 'mnav-home', label: 'Home', href: '/', icon: <LayoutDashboard size={20} /> },
@@ -36,8 +37,8 @@ const MOBILE_NAV = [
 
 export default function MobileNav({ session }: { session: AuthSession }) {
   const pathname = usePathname();
-  // U5: only the screens the role may open (the same table as the route gate in authStore).
-  const visibleNav = MOBILE_NAV.filter((item) => canAccessPath(session.role, item.href));
+  // U5: only the screens the person may open (the same table as the route gate, src/lib/access.ts; the session is the Holder).
+  const visibleNav = MOBILE_NAV.filter((item) => canAccessPath(session, item.href));
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 bg-card border-t border-border z-50 lg:hidden">

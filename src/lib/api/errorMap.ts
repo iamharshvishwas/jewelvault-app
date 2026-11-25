@@ -4,7 +4,9 @@
 //     input or the reason (JV_INVALID_INPUT, JV_NOT_ALLOWED) the API's sentence is kept, because it never repeats a value;
 //   - an unknown error (JV_INTERNAL), a JV_BUSY that failed again after its one automatic retry, a lost connection, a gateway that stays down and an answer that cannot be read say
 //     "Could not confirm that this was saved." (S8: a connection lost during COMMIT leaves it unknown), and the screen reads the customer's books again at once (C17);
-//   - a code this build does not know is treated like JV_INTERNAL: the generic message. The detail (the code, the status, the request id) goes to the console only, never to the person.
+//   - a code this build does not know is treated like JV_INTERNAL: the generic message. The detail (the code, the status, the request id) goes to the console only, never to the person;
+//   - the Super Admin's writes of People & Roles ask for her password again (R9), and three refusals of such a write have words of their own: the wrong password, the pause after wrong
+//     ones, and a role changed by someone else. They are chosen by `confirmsPassword`, so the same refusal of any other call keeps the words above.
 //
 // This file is pure: it makes no call and keeps nothing. `client.ts` builds every ApiError message from it, and the pure helpers of the screens (billing.ts, payments.ts,
 // ownerActions.ts) take their general sentences from here. tests/unit/error-map.test.ts (PT-U11) asserts that every code of S8 is mapped on purpose.
@@ -64,15 +66,49 @@ export interface MessageOptions {
   /** The sentence the API sent in the body: used for JV_INVALID_INPUT and JV_NOT_ALLOWED only, never for anything else. */
   serverMessage?: string;
   details?: Record<string, unknown>;
+  /** The call is one of the Super Admin's People & Roles writes: it carries her password again, and a refusal of that has the words of `passwordWriteMessage`. */
+  confirmsPassword?: boolean;
+  /** The seconds of `Retry-After` of the answer (the pause after wrong passwords names its end this way). */
+  retryAfterS?: number | null;
 }
 
 const has = (table: object, key: string) => Object.prototype.hasOwnProperty.call(table, key);
 const sentence = (text: string) => (/[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
 
+/** The wait of a pause in words: whole minutes, rounded up (900 seconds is 15 minutes, 61 is 2), and "a few minutes" when the answer named none. */
+function minutesWords(retryAfterS: number | null | undefined): string {
+  if (typeof retryAfterS !== 'number' || !Number.isFinite(retryAfterS) || retryAfterS <= 0)
+    return 'a few minutes';
+  const minutes = Math.ceil(retryAfterS / 60);
+  return minutes === 1 ? '1 minute' : `${minutes} minutes`;
+}
+
+/** What a wrong password says (R9: a 422 on the field `password`, never a 401, which would end the session). */
+export const WRONG_PASSWORD_MESSAGE = 'Your password is not correct.';
+/** A role saved from an older copy: the screen has to read it again before anything is saved (nothing was written). */
+export const ROLE_CHANGED_MESSAGE = 'This was changed by someone else. Reload and try again.';
+
+/**
+ * The words of the three refusals of a Super Admin write that are not the general ones, or null for any other refusal (which then has the words of the map below, with the API's own
+ * sentence for JV_INVALID_INPUT and JV_NOT_ALLOWED).
+ */
+function passwordWriteMessage(code: string, options: MessageOptions): string | null {
+  if (code === 'JV_INVALID_INPUT' && options.details?.field === 'password')
+    return WRONG_PASSWORD_MESSAGE;
+  if (code === 'JV_RATE_LIMITED')
+    return `Too many wrong passwords. Try again in ${minutesWords(options.retryAfterS)}.`;
+  if (code === 'JV_STALE') return ROLE_CHANGED_MESSAGE;
+  return null;
+}
+
 /** The plain message for a code (C13). Never the code, never a detail of the server. */
 export function plainMessage(code: string, options: MessageOptions = {}): string {
   const write = options.write ?? true;
   if (code === 'JV_FORBIDDEN' && options.details?.reason === 'inactive') return NOT_ACTIVE_MESSAGE;
+  if (options.confirmsPassword) {
+    const own = passwordWriteMessage(code, options);
+    if (own !== null) return own;
+  }
   if (has(REFUSED_BEFORE_ANY_WRITE, code)) {
     const own =
       SERVER_SENTENCE.has(code) && options.serverMessage?.trim()

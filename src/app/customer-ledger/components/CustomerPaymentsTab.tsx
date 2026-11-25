@@ -10,7 +10,7 @@ import type { LedgerEntry } from '@/lib/mockData';
 import { PREVIEW_MODE } from '@/lib/previewMode';
 
 // The Payments tab of the customer card: the receipts of the customer (money, silver, an opening advance) and, below them, the refunds (spec Y1, Y7, Y10, S7; tasks WEB10 and WEB11). A
-// receipt is never deleted: the owner VOIDS it (a Void button on each live row, owner only), and a voided one stays in the list tagged Voided. A refund is money handed back; it is
+// receipt is never deleted: a person who may void a payment (the owner) VOIDS it (a Void button on each live row), and a voided one stays in the list tagged Voided. A refund is money handed back; it is
 // listed apart, with its own Void button, because a payment whose money was already handed back cannot be voided until the refund is ("void the refund first"). A biller sees the rows
 // and no button. The prototype's Delete button exists in a preview build only.
 
@@ -44,7 +44,7 @@ export default function CustomerPaymentsTab({
 }: CustomerPaymentsTabProps) {
   const owner = useOwnerActions();
   useRowCacheVersion('receipts');
-  const showAction = PREVIEW_MODE || owner;
+  const showAction = PREVIEW_MODE || owner.voidPayment;
 
   const isVoided = (entry: LedgerEntry): boolean =>
     !!entry.paymentId &&

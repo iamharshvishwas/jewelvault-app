@@ -39,8 +39,10 @@ import {
   rupeesShown,
   voidedReceipts,
 } from '@/lib/ledgerView';
+import { NO_MONEY, ledgerAccess } from '@/lib/ledgerAccess';
 import type { Customer, LedgerEntry } from '@/lib/mockData';
 import { PREVIEW_MODE } from '@/lib/previewMode';
+import { useHolder } from '@/lib/useAccess';
 import CustomerInvoiceList from './CustomerInvoiceList';
 import CustomerLedgerPrint from './CustomerLedgerPrint';
 import CustomerLedgerTable from './CustomerLedgerTable';
@@ -53,11 +55,15 @@ import ReceivePaymentPanel from './ReceivePaymentPanel';
 // opening-balance bill is no purchase. The bills are the customer's rows of V1,
 // the ledger is V3 as the server sent it. The screen is drawn again when memory changes (a poll, a payment of this browser); the ledger, which is read from the server after the card opens and
 // again after a change, has no event of its own, so it is looked at once a second and drawn again only when it is another ledger.
-// The prototype's Delete buttons exist in a preview build only: a bill, a payment and a customer are never deleted on the API. WEB11: the owner (and nobody else) has "Hand money back" (X11)
-// and "Opening balance" (X12) here, a Void on each receipt of the Payments tab (X4) and Cancel and Re-issue on each bill of the Invoices tab (X5, X10).
+// The prototype's Delete buttons exist in a preview build only: a bill, a payment and a customer are never deleted on the API. WEB11: the owner (and nobody else among today's roles) has "Hand money
+// back" (X11) and "Opening balance" (X12) here, a Void on each receipt of the Payments tab (X4) and Cancel and Re-issue on each bill of the Invoices tab (X5, X10); since Task 20 of the access plan
+// each of them follows its own tick (Give a refund, Add an opening balance, Void a payment, Cancel a bill, Re-issue a bill).
 // FB-D1: "Print / Save PDF" asks the browser to print the customer's ledger. On paper the card is only its sheet (CustomerLedgerPrint, the rules `.ledger-card-root` and `.print-ledger-sheet` of
 // src/styles/tailwind.css), whichever tab is open. The sheet is a second copy of every row, so it is in the page only while something is printing (Wave 2 fix 1): the button draws it, and then
 // asks the browser to print; the browser's own print (Ctrl/Cmd+P, the menu) draws it at `beforeprint` and drops it at `afterprint`.
+// Task 20b of the access plan (DESIGN 6.2: "Customer Ledger opens with M1, its ledger part needs M2"): everything on the card except the customer's own row (the figures, the three tabs, the buttons that take or
+// give money, the print sheet) is the MONEY part and is for a person who may read the bills (`bill_view`, `money` of src/lib/ledgerAccess.ts). `CustomerDetail`, at the end of this file, draws the whole
+// card (`CustomerCard`) for them; for anybody else it draws the customer (name, kind, mobile, e-mail, address, GST: "See customers") and ONE sentence where the money would be.
 
 const TABS = [
   { id: 'ctab-ledger', label: 'Ledger' },
@@ -85,12 +91,60 @@ interface CustomerDetailProps {
   onDeleted?: () => void;
 }
 
-export default function CustomerDetail({ customer, onDeleted }: CustomerDetailProps) {
+/** The customer: the name, the kind, the mobile, the e-mail, the address and the GST number are the customer's own row ("See customers"), so every person who has the screen reads them. */
+function CustomerHeading({ customer }: { customer: Customer }) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-lg font-bold text-primary">
+        {customer.name.charAt(0)}
+      </div>
+      <div>
+        <h2 className="text-lg font-bold text-foreground">{customer.name}</h2>
+        <p className="text-[11px] font-semibold text-primary mt-0.5">{customer.customerType}</p>
+        <div className="flex flex-wrap gap-3 mt-1">
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Phone size={11} /> {customer.mobile}
+          </span>
+          {customer.email && (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Mail size={11} /> {customer.email}
+            </span>
+          )}
+          {customer.address && (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <MapPin size={11} /> {customer.address}
+            </span>
+          )}
+        </div>
+        {customer.gstNumber && (
+          <p className="text-xs text-muted-foreground mt-1">GST: {customer.gstNumber}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The card of a person who may not read the bills: the customer, and one sentence where the money would be. Nothing is made up (no zero), nothing is asked of the server. */
+function CustomerWithoutMoney({ customer }: { customer: Customer }) {
+  return (
+    <div className="space-y-4 fade-in">
+      <div className="jewel-card p-5 space-y-4">
+        <CustomerHeading customer={customer} />
+        <p data-testid="ledger-no-money" className="text-sm text-muted-foreground">
+          {NO_MONEY}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** The whole card, with the money part: for a person who may read the bills. */
+function CustomerCard({ customer, onDeleted }: CustomerDetailProps) {
   const [activeTab, setActiveTab] = useState('ctab-ledger');
   const [showPaymentPanel, setShowPaymentPanel] = useState(false);
   const [showRefundPanel, setShowRefundPanel] = useState(false);
   const [showOpeningPanel, setShowOpeningPanel] = useState(false);
-  const ownerActions = useOwnerActions();
+  const owner = useOwnerActions();
   const walkIn = customer.id === WALK_IN_ID;
   const [ledger, setLedger] = useState<LedgerEntry[]>(() => getLedgerForCustomer(customer.id));
   const [printing, setPrinting] = useState(false);
@@ -239,35 +293,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
       <div className="jewel-card p-5">
         {/* on a phone the buttons go under the name, in rows that wrap (beside it they squeezed the name into three lines) */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-lg font-bold text-primary">
-              {customer.name.charAt(0)}
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-foreground">{customer.name}</h2>
-              <p className="text-[11px] font-semibold text-primary mt-0.5">
-                {customer.customerType}
-              </p>
-              <div className="flex flex-wrap gap-3 mt-1">
-                <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Phone size={11} /> {customer.mobile}
-                </span>
-                {customer.email && (
-                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <Mail size={11} /> {customer.email}
-                  </span>
-                )}
-                {customer.address && (
-                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <MapPin size={11} /> {customer.address}
-                  </span>
-                )}
-              </div>
-              {customer.gstNumber && (
-                <p className="text-xs text-muted-foreground mt-1">GST: {customer.gstNumber}</p>
-              )}
-            </div>
-          </div>
+          <CustomerHeading customer={customer} />
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             <button onClick={() => setShowPaymentPanel((p) => !p)} className="btn-primary py-2">
               <CreditCard size={14} />
@@ -282,27 +308,27 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
               <Printer size={14} />
               Print / Save PDF
             </button>
-            {ownerActions && (
-              <>
-                <button
-                  type="button"
-                  data-testid="open-refund"
-                  onClick={() => setShowRefundPanel((p) => !p)}
-                  className="btn-secondary py-2"
-                >
-                  <Banknote size={14} />
-                  Hand Money Back
-                </button>
-                <button
-                  type="button"
-                  data-testid="open-opening"
-                  onClick={() => setShowOpeningPanel((p) => !p)}
-                  className="btn-secondary py-2"
-                >
-                  <FilePlus size={14} />
-                  Opening Balance
-                </button>
-              </>
+            {owner.refund && (
+              <button
+                type="button"
+                data-testid="open-refund"
+                onClick={() => setShowRefundPanel((p) => !p)}
+                className="btn-secondary py-2"
+              >
+                <Banknote size={14} />
+                Hand Money Back
+              </button>
+            )}
+            {owner.openingBalance && (
+              <button
+                type="button"
+                data-testid="open-opening"
+                onClick={() => setShowOpeningPanel((p) => !p)}
+                className="btn-secondary py-2"
+              >
+                <FilePlus size={14} />
+                Opening Balance
+              </button>
             )}
             {PREVIEW_MODE && (
               <button
@@ -338,7 +364,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
       {showPaymentPanel && (
         <ReceivePaymentPanel customer={customer} onClose={() => setShowPaymentPanel(false)} />
       )}
-      {ownerActions && showRefundPanel && (
+      {owner.refund && showRefundPanel && (
         <RefundPanel
           customerId={customer.id}
           customerName={customer.name}
@@ -346,7 +372,7 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
           onClose={() => setShowRefundPanel(false)}
         />
       )}
-      {ownerActions && showOpeningPanel && (
+      {owner.openingBalance && showOpeningPanel && (
         <OpeningBalancePanel
           customerId={customer.id}
           customerName={customer.name}
@@ -400,4 +426,10 @@ export default function CustomerDetail({ customer, onDeleted }: CustomerDetailPr
       {printing && <CustomerLedgerPrint customer={customer} entries={ledger} />}
     </div>
   );
+}
+
+/** The card of the customer a person opened: the whole card for one who may read the bills (`bill_view`), the customer and one sentence for one who may not (task 20b of the access plan). */
+export default function CustomerDetail(props: CustomerDetailProps) {
+  const { money } = ledgerAccess(useHolder());
+  return money ? <CustomerCard {...props} /> : <CustomerWithoutMoney customer={props.customer} />;
 }

@@ -5,20 +5,24 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Archive, ArrowLeft, Save, Trash2 } from 'lucide-react';
 import SaveButton from '@/components/ui/SaveButton';
-import { PREVIEW_MODE, useSession } from '@/lib/authStore';
+import { PREVIEW_MODE } from '@/lib/authStore';
 import { getCategories, getSubcategories } from '@/lib/catalogStore';
 import { useSavingAllowed } from '@/lib/api/connection';
 import { SaveError } from '@/lib/cache/edit';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { getDesigns, removeSku, setSkuStatus, upsertDesign } from '@/lib/designStore';
 import { getLocations } from '@/lib/settingsStore';
+import { stockAccess } from '@/lib/stockAccess';
+import { useHolder } from '@/lib/useAccess';
 import type { Design, Material, Purity, SellingMethod, Sku, SkuStatus } from '@/lib/mockData';
 import ChooseDesign from './ChooseDesign';
 
 // Edit Existing Stock (spec C5 (a), A5; task WEB05). The screen shows the design as it is in memory. The first change makes the person's working copy, and the design as
 // it was at that moment is kept beside it: Save sends one write for each row that changed, with only the fields that changed and the stamp of THAT design, so a row that
-// somebody else saved meanwhile is answered stale and reloaded, never overwritten (src/lib/designStore.ts, src/lib/cache/edit.ts). The owner-only weight is not an ordinary edit
+// somebody else saved meanwhile is answered stale and reloaded, never overwritten (src/lib/designStore.ts, src/lib/cache/edit.ts). The original (secret) weight is not an ordinary edit
 // and is not changed here; a piece is never deleted (S7).
+// What a person may change follows their ticks (src/lib/stockAccess.ts): the metal, the purity and the selling method of a design are `design_material`, the status of a piece and the
+// Archive button are `stock_status`, the original weight is shown for `secret_weight`; everything else on the screen is an ordinary edit (`stock_edit`, which opens the screen).
 // WEB06: the status of a piece has its own step (X9 set_sku_status): choosing a status, or pressing Archive, is ONE call for that piece, and the piece shows the new status once
 // the API has answered (a Sold piece cannot be changed, and any status can be refused). While there are unsaved changes the status cannot be changed, so that the stamp of
 // the piece the changes were started from is still the one the API holds when Save sends them.
@@ -39,6 +43,8 @@ const STATUSES: SkuStatus[] = [
 ];
 const MATERIALS: Material[] = ['Gold', 'Silver'];
 const SELLING_METHODS: SellingMethod[] = ['By Weight', 'Per Piece'];
+/** The title of a field that the person's role cannot change: it is shown, and cannot be used. */
+const YOUR_ROLE_CANNOT_CHANGE = 'Your role cannot change this.';
 
 const numberValue = (value: string) => (value.trim() === '' ? 0 : Number(value));
 
@@ -101,10 +107,9 @@ export default function EditStockClient() {
   return <EditStockForm key={pick.design.id} stored={pick.design} />;
 }
 
-function EditStockForm({ stored }: { stored: Design }) {
+export function EditStockForm({ stored }: { stored: Design }) {
   const router = useRouter();
-  const { role } = useSession();
-  const isOwner = role === 'owner';
+  const access = stockAccess(useHolder());
   const savingAllowed = useSavingAllowed();
 
   const [work, setWork] = useState<WorkingCopy | null>(null);
@@ -302,14 +307,14 @@ function EditStockForm({ stored }: { stored: Design }) {
               ))}
             </select>
           </label>
-          {/* only the owner changes the material, the purity and the selling method of a design (A5) */}
+          {/* the metal, the purity and the selling method of a design are changed by a person who holds the metal tick (A5) */}
           <label className="text-xs font-semibold">
             Material
             <select
               className="input-field mt-1"
               value={design.material}
-              disabled={!isOwner}
-              title={isOwner ? undefined : 'Only the owner can change this.'}
+              disabled={!access.designMaterial}
+              title={access.designMaterial ? undefined : YOUR_ROLE_CANNOT_CHANGE}
               onChange={(e) => updateDesign('material', e.target.value as Material)}
             >
               {MATERIALS.map((material) => (
@@ -322,8 +327,8 @@ function EditStockForm({ stored }: { stored: Design }) {
             <input
               className="input-field mt-1"
               value={design.purity}
-              disabled={!isOwner}
-              title={isOwner ? undefined : 'Only the owner can change this.'}
+              disabled={!access.designMaterial}
+              title={access.designMaterial ? undefined : YOUR_ROLE_CANNOT_CHANGE}
               onChange={(e) => updateDesign('purity', e.target.value as Purity)}
             />
           </label>
@@ -332,8 +337,8 @@ function EditStockForm({ stored }: { stored: Design }) {
             <select
               className="input-field mt-1"
               value={design.sellingMethod}
-              disabled={!isOwner}
-              title={isOwner ? undefined : 'Only the owner can change this.'}
+              disabled={!access.designMaterial}
+              title={access.designMaterial ? undefined : YOUR_ROLE_CANNOT_CHANGE}
               onChange={(e) => updateDesign('sellingMethod', e.target.value as SellingMethod)}
             >
               {SELLING_METHODS.map((method) => (
@@ -388,20 +393,23 @@ function EditStockForm({ stored }: { stored: Design }) {
                       className="input-field text-xs w-36"
                       value={sku.status}
                       disabled={
-                        !PREVIEW_MODE &&
-                        (!savingAllowed ||
-                          statusBusy !== null ||
-                          work !== null ||
-                          sku.status === 'Sold')
+                        !access.changeStatus ||
+                        (!PREVIEW_MODE &&
+                          (!savingAllowed ||
+                            statusBusy !== null ||
+                            work !== null ||
+                            sku.status === 'Sold'))
                       }
                       title={
-                        PREVIEW_MODE
-                          ? undefined
-                          : sku.status === 'Sold'
-                            ? 'A sold piece is changed by cancelling or re-issuing its bill.'
-                            : work !== null
-                              ? 'Save your changes first, then change the status.'
-                              : undefined
+                        !access.changeStatus
+                          ? YOUR_ROLE_CANNOT_CHANGE
+                          : PREVIEW_MODE
+                            ? undefined
+                            : sku.status === 'Sold'
+                              ? 'A sold piece is changed by cancelling or re-issuing its bill.'
+                              : work !== null
+                                ? 'Save your changes first, then change the status.'
+                                : undefined
                       }
                       onChange={(e) => {
                         const status = e.target.value as SkuStatus;
@@ -437,6 +445,7 @@ function EditStockForm({ stored }: { stored: Design }) {
                         Delete SKU
                       </SaveButton>
                     ) : (
+                      access.changeStatus &&
                       sku.status !== 'Sold' &&
                       sku.status !== 'Archived' && (
                         <SaveButton
@@ -463,8 +472,8 @@ function EditStockForm({ stored }: { stored: Design }) {
                     step="0.001"
                     onChange={(value) => updateSku(sku.id, 'grossWeight', value)}
                   />
-                  {/* the owner's weight is the owner's alone, and is entered when the piece is made */}
-                  {isOwner && (
+                  {/* the original weight is for the person who holds the secret-weight tick, and is entered when the piece is made */}
+                  {access.originalWeight && (
                     <EditNumber
                       label="Original Net Wt (g)"
                       value={sku.originalNetWeight}
