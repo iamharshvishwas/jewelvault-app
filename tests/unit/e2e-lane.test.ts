@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as e2e from '../../scripts/e2e-lane.mjs';
-import globalSetup, { LOGINS, ROLES, e2eLane, e2eLogin } from '../e2e/global-setup';
+import globalSetup, { LOGINS, ROLES, e2eLane, e2eLogin, e2eOutbox } from '../e2e/global-setup';
 
 // WEB00: the pure parts of the end-to-end lane (scripts/e2e-lane.mjs): ports, the environment of the API, the admin
 // command's input and output, the lane's env file. None of these tests needs Docker, the API or a browser: the whole
@@ -178,6 +178,35 @@ describe('the environment of the API process', () => {
 
   it('asks for a log level that keeps request lines but no body', () => {
     expect(make().LOG_LEVEL).toBe('info');
+  });
+
+  it('sets no mail variable unless the lane gives an outbox', () => {
+    const env = make({ PATH: '/usr/bin', JV_SMTP_HOST: 'mail.example.com' });
+    for (const name of ['JV_MAIL_OUTBOX_DIR', 'JV_MAIL_FROM', 'JV_RESET_LINK_BASE', 'JV_SMTP_HOST'])
+      expect(env).not.toHaveProperty(name);
+  });
+
+  it('turns on the outbox mailer with a folder, a sender and a link that opens the lane’s own site, and never an SMTP variable (the API refuses both together)', () => {
+    const env = e2e.apiProcessEnv({
+      base: { PATH: '/usr/bin', JV_SMTP_HOST: 'mail.example.com', JV_SMTP_PASSWORD: 'nope' },
+      db,
+      apiPort: 4229,
+      webOrigin: 'http://localhost:4228',
+      adminTokenHash: 'a'.repeat(64),
+      outboxDir: '/x/.lanes/b/outbox',
+    }) as Record<string, string>;
+    expect(env).toMatchObject({
+      JV_MAIL_OUTBOX_DIR: '/x/.lanes/b/outbox',
+      JV_MAIL_FROM: e2e.LANE_MAIL_FROM,
+      JV_RESET_LINK_BASE: 'http://localhost:4228/reset-password',
+    });
+    expect(Object.keys(env).filter((name) => name.startsWith('JV_SMTP_'))).toEqual([]);
+    expect(env.JV_RESET_LINK_BASE).not.toContain('#'); // the API adds `#t=<token>` itself
+  });
+
+  it('keeps each lane’s outbox in its own folder, next to its env file', () => {
+    expect(e2e.outboxDir('b', '/x')).toBe(path.join('/x', '.lanes', 'b', 'outbox'));
+    expect(e2e.outboxDir('a', '/x')).not.toBe(e2e.outboxDir('b', '/x'));
   });
 });
 
@@ -404,6 +433,13 @@ describe('the global setup of the Playwright tests (tests/e2e/global-setup.ts)',
     });
     vi.stubEnv('JV_E2E_SUPER_PASSWORD', '');
     expect(() => e2eLogin('super')).toThrow(/JV_E2E_SUPER_PASSWORD.*global setup did not run/);
+  });
+
+  it('gives a test the folder the lane’s API writes its mails to, and a plain message when the lane did not start', () => {
+    vi.stubEnv('JV_E2E_OUTBOX', '/x/.lanes/b/outbox');
+    expect(e2eOutbox()).toBe('/x/.lanes/b/outbox');
+    vi.stubEnv('JV_E2E_OUTBOX', '');
+    expect(() => e2eOutbox()).toThrow(/JV_E2E_OUTBOX.*global setup did not run/);
   });
 
   it('gives a test the addresses and the admin token of the lane', () => {

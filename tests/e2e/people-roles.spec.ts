@@ -19,6 +19,7 @@ import { clearLoginCounters } from './clear-counters';
 import { e2eLane, e2eLogin, type E2eLogin } from './global-setup';
 import { roomInTheMinute } from './pacing';
 import { PHONE, expectNoSidewaysScroll, expectTappable } from './phone';
+import { typeSecret } from './secret';
 
 // People & Roles (access and roles, Task 26 part 1; DESIGN 6.5; the screen is Tasks 22 to 25), in a real browser against the real API of a lane. Each test signs in through the real login
 // screen with the lane's logins: the Super Admin is the fourth login of the lane (`npm run admin -- make-super-admin`, tests/e2e/README.md).
@@ -43,7 +44,7 @@ import { PHONE, expectNoSidewaysScroll, expectTappable } from './phone';
 //      no longer offers the role
 //
 // THE PASSWORD. The Super Admin's own password asks for itself again on every write (R9). It comes from `process.env` (through `e2eLogin`) and is typed into the field by the keyboard: Playwright
-// writes the text of `fill` and `type` into the log of a failed action, the keyboard it does not (`typeSecret`). A test never prints it, never compares it and never puts it in a title.
+// writes the text of `fill` and `type` into the log of a failed action, the keyboard it does not (`typeSecret`, tests/e2e/secret.ts). A test never prints it, never compares it and never puts it in a title.
 // Nor does it assert on an element that holds one, or on a container that holds the temporary password: a failing `toContainText` prints the whole text it was given (twice) and a failing
 // `toBeVisible` prints the element it found, `<code ...>PASSWORD</code>`, so the sentences of the dialog are asserted on the elements that hold them (`getByText`, a heading) and the element of
 // the password is only counted (`toHaveCount`), which prints a number.
@@ -71,15 +72,6 @@ const TIME_TO_SIGN_IN = 60_000;
 const aside = (page: Page) => page.locator('aside').first();
 
 // ------------------------------------------------------------------------------------------------ the screen
-
-/**
- * Types a password into a field without Playwright writing it into a log: `fill` and `type` put their text in the call log of an action that fails, the keyboard does not. The field is clicked
- * first, so that the keys go to it. Nothing asserts on the value either (a failed assertion prints what it received).
- */
-async function typeSecret(page: Page, field: Locator, secret: string): Promise<void> {
-  await field.click();
-  await page.keyboard.type(secret);
-}
 
 /** Signs in through the login screen and waits until the application is on screen (the sidebar names the person). */
 async function signInAs(page: Page, who: E2eLogin): Promise<void> {
