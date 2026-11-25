@@ -12,6 +12,7 @@ import { newBillingItem, type BillingItem } from '@/lib/billing';
 import type { Sku } from '@/lib/mockData';
 import { at, categoryRow, rateRow, settingRow, uuid } from './support/rows';
 import { billRow } from './support/money-rows';
+import { sessionFor } from './support/access';
 
 const TODAY = '2026-10-15';
 
@@ -300,7 +301,7 @@ async function drawCard(
   vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
   vi.doMock('@/lib/authStore', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/lib/authStore')>()),
-    useSession: () => ({ role }),
+    useSession: () => sessionFor(role),
   }));
   const [{ rowCache }, settings, { default: Card }] = await Promise.all([
     import('@/lib/cache/cache'),

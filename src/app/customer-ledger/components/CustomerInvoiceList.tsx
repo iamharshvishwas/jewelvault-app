@@ -1,11 +1,16 @@
+'use client';
 import React from 'react';
 import Link from 'next/link';
 import OwnerBillActions from '@/components/owner/OwnerBillActions';
+import { canAccessPath } from '@/lib/access';
 import type { Invoice } from '@/lib/mockData';
 import { gramsShown, rupeesShown } from '@/lib/ledgerView';
+import { useHolder } from '@/lib/useAccess';
 
 // The bills of one customer with the figures of V1 (spec section 11): received, pending, the silver still owed and the status are the server's, written the same way as on the customer card
 // and the estimate (src/lib/ledgerView.ts). The dues brought forward are listed too, as an opening balance, and so is a cancelled bill: the pending of the bills adds up to the card's outstanding.
+// A link is drawn only to a screen the person may open (Task 20b of the access plan, `canAccessPath`): the estimate and the billing screen open with "Make bills", which a role that only reads the
+// bills does not hold, and it reads the number of a bill as text instead of being sent to a page that says "Not available for your role".
 interface CustomerInvoiceListProps {
   invoices: Invoice[];
 }
@@ -29,6 +34,9 @@ const HEADINGS = [
 ];
 
 export default function CustomerInvoiceList({ invoices }: CustomerInvoiceListProps) {
+  const holder = useHolder();
+  const opens = (href: string) => canAccessPath(holder, href);
+
   if (invoices.length === 0) {
     return (
       <div className="text-center py-10">
@@ -36,9 +44,11 @@ export default function CustomerInvoiceList({ invoices }: CustomerInvoiceListPro
         <p className="text-xs text-muted-foreground mt-1">
           Invoices will appear here once sales are recorded for this customer.
         </p>
-        <Link href="/billing-pos" className="btn-primary mt-3 inline-flex py-2 text-xs">
-          + New Sale
-        </Link>
+        {opens('/billing-pos') && (
+          <Link href="/billing-pos" className="btn-primary mt-3 inline-flex py-2 text-xs">
+            + New Sale
+          </Link>
+        )}
       </div>
     );
   }
@@ -61,15 +71,20 @@ export default function CustomerInvoiceList({ invoices }: CustomerInvoiceListPro
         <tbody className="divide-y divide-border">
           {invoices.map((inv) => {
             const finePending = inv.fineWeightPending ?? 0;
+            const estimate = `/estimate?id=${inv.id}`;
             return (
               <tr key={`inv-list-${inv.id}`} data-testid="invoice-row" className="table-row-hover">
                 <td className="px-3 py-3">
-                  <Link
-                    href={`/estimate?id=${inv.id}`}
-                    className="font-mono font-bold text-primary hover:underline"
-                  >
-                    {inv.invoiceNumber}
-                  </Link>
+                  {opens(estimate) ? (
+                    <Link
+                      href={estimate}
+                      className="font-mono font-bold text-primary hover:underline"
+                    >
+                      {inv.invoiceNumber}
+                    </Link>
+                  ) : (
+                    <span className="font-mono font-bold text-foreground">{inv.invoiceNumber}</span>
+                  )}
                 </td>
                 <td className="px-3 py-3 text-muted-foreground whitespace-nowrap">
                   {new Date(inv.date).toLocaleDateString('en-IN')}
@@ -108,12 +123,14 @@ export default function CustomerInvoiceList({ invoices }: CustomerInvoiceListPro
                 </td>
                 <td className="px-3 py-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Link
-                      href={`/estimate?id=${inv.id}`}
-                      className="text-xs text-primary hover:underline font-semibold"
-                    >
-                      View
-                    </Link>
+                    {opens(estimate) && (
+                      <Link
+                        href={estimate}
+                        className="text-xs text-primary hover:underline font-semibold"
+                      >
+                        View
+                      </Link>
+                    )}
                     <OwnerBillActions billId={inv.id} compact />
                   </div>
                 </td>

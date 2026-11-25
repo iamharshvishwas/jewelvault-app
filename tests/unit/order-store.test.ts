@@ -6,7 +6,7 @@
 // Nothing is read from or written to browser storage, the old key included.
 //
 //   - `ordersDue(today)`: the orders due today, tomorrow, the day after, or overdue (the Asia/Kolkata business day the caller gives), never a delivered or cancelled one
-//   - `orderActions(status, role)`: only the forward step of open -> in_progress -> ready -> delivered and Cancel; a delivered order is cancelled by the owner only; staff get none (F-extra-2)
+//   - `orderActions(status, who)`: only the forward step of open -> in_progress -> ready -> delivered and Cancel; a delivered order is cancelled only by a person who may change a closed order (the owner); a person who may not edit orders (staff) gets none (F-extra-2)
 //   - staff never get a customer's name or mobile (ruling A4, F-extra-1): the store does not look the customer up for them
 //   - no photo on a delivered or cancelled order (F-extra-5)
 //
@@ -17,6 +17,7 @@ import ts from 'typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { OrderRow } from '@/lib/api/types';
 import { ORDER_CHAIN, ORDER_STATUS_LABEL, orderActions } from '@/lib/orderStatus';
+import { holderFor } from './support/access';
 import { at, uuid } from './support/rows';
 
 const API = 'http://localhost:4229';
@@ -238,26 +239,29 @@ describe('FB-F1 ordersDue(today): due in 2 days or overdue, and not delivered or
 
 describe('FB-F1 the status buttons follow the plan chain (F-extra-2)', () => {
   it('open -> in_progress -> ready -> delivered, one forward step at a time, and Cancel', () => {
-    expect(orderActions('open', 'biller').map((a) => a.to)).toEqual(['in_progress', 'cancelled']);
-    expect(orderActions('in_progress', 'biller').map((a) => a.to)).toEqual(['ready', 'cancelled']);
-    expect(orderActions('ready', 'biller').map((a) => a.to)).toEqual(['delivered', 'cancelled']);
-    expect(orderActions('ready', 'owner').map((a) => a.label)).toEqual([
+    const biller = holderFor('biller');
+    const owner = holderFor('owner');
+    expect(orderActions('open', biller).map((a) => a.to)).toEqual(['in_progress', 'cancelled']);
+    expect(orderActions('in_progress', biller).map((a) => a.to)).toEqual(['ready', 'cancelled']);
+    expect(orderActions('ready', biller).map((a) => a.to)).toEqual(['delivered', 'cancelled']);
+    expect(orderActions('ready', owner).map((a) => a.label)).toEqual([
       'Mark Delivered',
       'Cancel order',
     ]);
   });
 
-  it('delivered -> cancelled is the owner only; a cancelled order has no button; staff get none', () => {
-    expect(orderActions('delivered', 'owner').map((a) => a.to)).toEqual(['cancelled']);
-    expect(orderActions('delivered', 'biller')).toEqual([]);
-    expect(orderActions('cancelled', 'owner')).toEqual([]);
+  it('delivered -> cancelled needs the tick for a closed order (the owner has it, the biller has not); a cancelled order has no button; staff get none', () => {
+    expect(orderActions('delivered', holderFor('owner')).map((a) => a.to)).toEqual(['cancelled']);
+    expect(orderActions('delivered', holderFor('biller'))).toEqual([]);
+    expect(orderActions('cancelled', holderFor('owner'))).toEqual([]);
     for (const status of Object.keys(ORDER_CHAIN) as Array<keyof typeof ORDER_CHAIN>)
-      expect(orderActions(status, 'staff')).toEqual([]);
+      expect(orderActions(status, holderFor('staff'))).toEqual([]);
   });
 
   it('no backward step is offered, though the API allows one (one table to change: ORDER_CHAIN)', () => {
-    expect(orderActions('ready', 'owner').map((a) => a.to)).not.toContain('in_progress');
-    expect(orderActions('in_progress', 'owner').map((a) => a.to)).not.toContain('open');
+    const owner = holderFor('owner');
+    expect(orderActions('ready', owner).map((a) => a.to)).not.toContain('in_progress');
+    expect(orderActions('in_progress', owner).map((a) => a.to)).not.toContain('open');
   });
 
   it('the words of the five statuses', () => {

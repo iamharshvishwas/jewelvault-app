@@ -12,9 +12,10 @@ import { readAuditPage } from '@/lib/cache/booksServer';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import { getSettings } from '@/lib/settingsStore';
 
-// FB-D4 (Siddhi #12): the owner's activity log. Who logged in and out, and every change the shop's books took, newest first, in India time, in plain words (src/lib/activityLog.ts). The
+// FB-D4 (Siddhi #12): the Activity Log. Who logged in and out, and every change the shop's books took, newest first, in India time, in plain words (src/lib/activityLog.ts). The
 // screen reads ONE page of 200 rows from `GET /v1/audit-log` when it opens and one more for each press of "Load more": a shop whose log has 10,000 rows draws 200 until it is asked for more.
-// Nothing is changed or deleted here; the API gives the log to the owner alone.
+// Nothing is changed or deleted here. The log is for a person whose role holds "See the Activity Log and health checks" (`activity_log`): the screen opens for that tick (SCREENS of src/lib/access.ts) and
+// the API gives the log to the same tick; among today's roles that is the owner alone.
 
 const Row = React.memo(function Row({ id, line }: { id: number; line: AuditLine }) {
   return (

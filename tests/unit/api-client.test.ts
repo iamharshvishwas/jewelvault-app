@@ -702,6 +702,126 @@ describe('PT-W1 api client: offline (C7)', () => {
   });
 });
 
+// ------------------------------------------------------------------------------------------------ a call that is never tried again
+
+// Final review of the website (Ruling AB): the nine writes of People & Roles carry no Idempotency-Key, so the retries above (a gateway answer, a page that is not JSON, a JV_BUSY) could
+// send a write that had GONE THROUGH a second time, and be refused for a clash with its own work. A call can say `retry: false`: its first answer is its answer. Every call that does not
+// say it keeps the retries of the tests above, exactly.
+describe('PT-W1 api client: a call that says `retry: false` is never tried again by the client', () => {
+  const NO_RETRY = { retry: false } as const;
+  /** What a gateway, a proxy or a half-started app answers: no JV_ body. */
+  const NOT_FROM_THE_API: Array<[string, () => Response]> = [
+    ['a 502 page', () => html(502)],
+    ['a 503 page', () => html(503)],
+    ['a 504 page', () => html(504)],
+    ['a 502 with JSON that is not an S8 body', () => json(502, { message: 'Bad gateway' })],
+    [
+      'a 200 that is not JSON',
+      () => new Response('Welcome', { status: 200, headers: { 'content-type': 'text/plain' } }),
+    ],
+    ['an empty 200', () => new Response('', { status: 200 })],
+  ];
+
+  it.each(NOT_FROM_THE_API)(
+    'a write that meets %s: one try, no wait, GATEWAY, "Could not confirm that this was saved.", and the re-read hook runs once',
+    async (_name, bad) => {
+      // the second answer would be a success: the first one is the answer
+      const { client, calls, waits } = make(bad(), json(200, { ok: true }));
+      const reread = vi.fn();
+      client.onUnconfirmedSave(reread);
+      const error = await failure(client.post('/v1/anything', { x: 1 }, NO_RETRY));
+      expect(calls).toHaveLength(1);
+      expect(waits).toEqual([]);
+      expect(error.code).toBe('GATEWAY');
+      expect(error.message).toBe('Could not confirm that this was saved.');
+      expect(error.unconfirmed).toBe(true);
+      expect(error.idempotencyKey).toBeNull();
+      expect(reread).toHaveBeenCalledTimes(1);
+      // what the call met is told, as it is after the retries have given up: "Waking up" stays until one call works
+      expect(client.getConnectionStatus()).toBe('waking');
+    }
+  );
+
+  it('a JV_BUSY is the answer too: one try, no wait, and a write says it could not be confirmed (the API never promises that nothing was changed)', async () => {
+    const { client, calls, waits } = make(
+      refusal('JV_BUSY', 503, 'Busy.', {}, { 'retry-after': '1' }),
+      json(200, { ok: true })
+    );
+    const reread = vi.fn();
+    client.onUnconfirmedSave(reread);
+    const error = await failure(client.post('/v1/anything', { x: 1 }, NO_RETRY));
+    expect(calls).toHaveLength(1);
+    expect(waits).toEqual([]);
+    expect(error.code).toBe('JV_BUSY');
+    expect(error.message).toBe('Could not confirm that this was saved.');
+    expect(error.unconfirmed).toBe(true);
+    expect(reread).toHaveBeenCalledTimes(1);
+  });
+
+  it('a read-only call that says it is not retried says "busy" and not "saved", and is not retried either', async () => {
+    const { client, calls, waits } = make(refusal('JV_BUSY', 503), json(200, { ok: true }));
+    const error = await failure(
+      client.post('/v1/anything', undefined, { readOnly: true, retry: false })
+    );
+    expect(calls).toHaveLength(1);
+    expect(waits).toEqual([]);
+    expect(error.message).toMatch(/busy/i);
+    expect(error.unconfirmed).toBe(false);
+  });
+
+  it('the same answers, asked of a call that does not say it, are retried as before: the option is the only switch', async () => {
+    for (const options of [{}, { retry: true }, WRITE, { ...WRITE, retry: true }]) {
+      const gateway = make(html(502), json(200, { ok: true }));
+      await expect(gateway.client.post('/v1/anything', { x: 1 }, options)).resolves.toEqual({
+        ok: true,
+      });
+      expect(gateway.calls, JSON.stringify(options)).toHaveLength(2);
+      expect(gateway.waits, JSON.stringify(options)).toEqual([1000]);
+
+      const busy = make(
+        refusal('JV_BUSY', 503, 'Busy.', {}, { 'retry-after': '1' }),
+        json(200, {})
+      );
+      await busy.client.post('/v1/anything', { x: 1 }, options);
+      expect(busy.calls, JSON.stringify(options)).toHaveLength(2);
+      expect(busy.waits, JSON.stringify(options)).toEqual([1000]);
+    }
+  });
+
+  it('it changes nothing else: a success, a refusal of the API (and its words), the 401 hook and a lost connection behave as they do for any call', async () => {
+    const ok = make(json(201, { customer: { id: 'c1' } }));
+    await expect(ok.client.post('/v1/customers', { name: 'A' }, NO_RETRY)).resolves.toEqual({
+      customer: { id: 'c1' },
+    });
+    expect(ok.client.getConnectionStatus()).toBe('ok');
+
+    const refused = make(refusal('JV_NOT_ALLOWED', 409, 'The Owner role is fixed.'));
+    const error = await failure(refused.client.post('/v1/x', {}, NO_RETRY));
+    expect(error.message).toBe('The Owner role is fixed. Nothing was changed.');
+    expect(error.nothingChanged).toBe(true);
+    expect(error.unconfirmed).toBe(false);
+
+    const ended = make(refusal('JV_SESSION_EXPIRED', 401));
+    const gate = vi.fn();
+    ended.client.onUnauthorized(gate);
+    await failure(ended.client.post('/v1/x', {}, NO_RETRY));
+    expect(gate).toHaveBeenCalledTimes(1);
+
+    const lost = make(new TypeError('Failed to fetch'));
+    const offline = await failure(lost.client.post('/v1/x', {}, NO_RETRY));
+    expect(offline.code).toBe('NETWORK');
+    expect(lost.client.getConnectionStatus()).toBe('offline');
+  });
+
+  it('the write is still "finished" once for the poller, however it ended', async () => {
+    const { client } = make(html(502), json(200, { ok: true }));
+    const done = vi.fn();
+    client.onWriteFinished(done);
+    await failure(client.post('/v1/anything', { x: 1 }, NO_RETRY));
+    expect(done).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('PT-W1 api client: polling back-off (C7)', () => {
   it('waits 8 seconds between polls, then 8, 16 and 30 seconds after failures, and stays at 30', () => {
     expect([...POLL_BACKOFF_MS]).toEqual([8000, 16000, 30000]);

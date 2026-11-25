@@ -10,6 +10,8 @@ import {
   buildDownload,
   type DownloadFile,
 } from '@/lib/downloadEverything';
+import { TICK_KEYS } from '@/lib/access';
+import { holderFor, type RoleSpec } from './support/access';
 import { parseCsv } from './support/csv';
 import { allocationRow, billRow, customerRow, itemRow, receiptRow } from './support/money-rows';
 import {
@@ -181,9 +183,10 @@ function book(): Partial<Record<SyncResource, object[]>> {
   };
 }
 
-const build = (role: 'owner' | 'biller' | 'staff' = 'owner', cache = book()) =>
+/** The zip for a person (the owner unless said); null is nobody who is known. The person's ticks decide the original weight (`secret_weight`). */
+const build = (who: RoleSpec | null = 'owner', cache = book()) =>
   buildDownload({
-    role,
+    who: who === null ? null : holderFor(who),
     rows: (resource) => cache[resource] ?? [],
     date: '2026-10-19',
     modified: new Date(2026, 9, 19, 10, 30, 0),
@@ -518,12 +521,25 @@ describe('T-E04 / T-R05 a cell that starts with =, +, -, @, a tab or a carriage 
   });
 });
 
-describe('T-R05 / T-D03 the owner-only weight is in the zip only for the owner', () => {
+describe('T-R05 / T-D03 the original weight is in the zip only for a person who holds the secret-weight tick', () => {
+  const weightOf = (built: ReturnType<typeof build>) => {
+    const skus = csv(built.zip, 'skus.csv');
+    return { skus, column: skus.header.indexOf('original_net_weight') };
+  };
+  /** No file of the zip holds the column or the value, even when the books handed in hold the private rows. */
+  const holdsNoWeight = (built: ReturnType<typeof build>) => {
+    for (const [name, text] of files(built.zip)) {
+      expect(text, name).not.toContain('original_net_weight');
+      expect(text, name).not.toContain(OWNER_WEIGHT);
+      expect(text, name).not.toContain('8.001');
+    }
+    expect(csv(built.zip, 'skus.csv').header).toEqual(HEADERS.skus);
+  };
+
   it('the owner gets original_net_weight in skus.csv, piece by piece', () => {
-    const skus = csv(build('owner').zip, 'skus.csv');
-    const weight = skus.header.indexOf('original_net_weight');
-    expect(weight).toBe(skus.header.length - 1);
-    const bySku = new Map(skus.rows.map((r) => [r[0], r[weight]]));
+    const { skus, column } = weightOf(build('owner'));
+    expect(column).toBe(skus.header.length - 1);
+    const bySku = new Map(skus.rows.map((r) => [r[0], r[column]]));
     expect(bySku.get(uuid(1001))).toBe(OWNER_WEIGHT);
     expect(bySku.get(uuid(1002))).toBe('8.001');
   });
@@ -532,15 +548,27 @@ describe('T-R05 / T-D03 the owner-only weight is in the zip only for the owner',
     'for a %s no file has the column and no file holds the weight, even when the books handed in hold it',
     (role) => {
       // `rows` returns sku-private rows here, as a careless caller could: the builder must not use them
-      const built = build(role);
-      for (const [name, text] of files(built.zip)) {
-        expect(text, name).not.toContain('original_net_weight');
-        expect(text, name).not.toContain(OWNER_WEIGHT);
-        expect(text, name).not.toContain('8.001');
-      }
-      expect(csv(built.zip, 'skus.csv').header).toEqual(HEADERS.skus);
+      holdsNoWeight(build(role));
     }
   );
+
+  it('a role follows the tick: a role with only the secret-weight tick gets the column, the Owner without it does not, and a Super Admin does', () => {
+    const only = weightOf(build({ ticks: ['secret_weight'] }));
+    expect(only.column).toBe(only.skus.header.length - 1);
+    expect(only.skus.rows.find((r) => r[0] === uuid(1001))?.[only.column]).toBe(OWNER_WEIGHT);
+    holdsNoWeight(build({ ticks: TICK_KEYS.filter((tick) => tick !== 'secret_weight') }));
+    expect(weightOf(build({ ticks: TICK_KEYS, superAdmin: true })).column).toBeGreaterThan(0);
+  });
+
+  it('nobody who is not known, and a role with no tick at all, get no weight', () => {
+    holdsNoWeight(build(null));
+    holdsNoWeight(build({ ticks: [] }));
+  });
+
+  it('no other single tick brings the weight in: it is the secret-weight tick and no other', () => {
+    for (const tick of TICK_KEYS.filter((key) => key !== 'secret_weight'))
+      holdsNoWeight(build({ ticks: [tick] }));
+  });
 });
 
 describe('T-R05 the people: names and roles, never a hash', () => {

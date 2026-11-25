@@ -8,7 +8,7 @@ import {
   BUSINESS_TAGLINE,
 } from '@/lib/businessConfig';
 import { DEFAULT_CATEGORIES, DEFAULT_CATEGORY_PREFIXES } from '@/lib/catalogStore';
-import type { DailyRateRow, UserRow } from '@/lib/api/types';
+import type { DailyRateRow } from '@/lib/api/types';
 import { rowCache } from '@/lib/cache/cache';
 import { SaveError, editRow, insertRow, putSettingValue, sameDecimal } from '@/lib/cache/edit';
 import { stampMicros } from '@/lib/cache/stamp';
@@ -22,7 +22,8 @@ import { PREVIEW_MODE } from '@/lib/previewMode';
 //     gets the prototype's labels for the sections it does not read.
 //   - Task WEB05 (C5 (a)) puts the changes on the API. `saveSettings` writes each section that changed as ONE row, `PUT /v1/settings/<key>` with `{ value }`: the last write wins,
 //     so there is no stale check and nothing is reloaded on a conflict; memory shows the new value at once and goes back if the write fails. The people (`users`) are not a
-//     setting: logins are made with the admin tool. The rates are not settings either: `saveDailyRates` writes `daily_rates` rows (D4, Y8).
+//     setting: the Super Admin runs the logins and roles in People & Roles, and `users` here is only who a login is, by id and name, for the screens that say who did something
+//     (the Activity Log). The rates are not settings either: `saveDailyRates` writes `daily_rates` rows (D4, Y8).
 //   - In a preview build (until WEB15) the store is the prototype's, in this page only. Nothing is kept in browser storage in either.
 
 export interface MaterialSetting {
@@ -38,13 +39,10 @@ export interface CustomFieldSetting {
   required: boolean;
 }
 
+/** A login as the screens that name people need it: who it is. What a login may do is the ticks of its role (People & Roles), never a guess made here. */
 export interface UserSetting {
   id: string;
   name: string;
-  role: 'Owner' | 'Admin' | 'Billing Staff' | 'Inventory Staff';
-  canSeeOriginalWeight: boolean;
-  canEditStock: boolean;
-  active: boolean;
 }
 
 export interface AppSettings {
@@ -130,16 +128,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     gstPercent: 0,
     estimateTaxPercent: 0,
   },
-  users: [
-    {
-      id: 'user-owner',
-      name: BUSINESS_OWNER_NAME,
-      role: 'Owner',
-      canSeeOriginalWeight: true,
-      canEditStock: true,
-      active: true,
-    },
-  ],
+  users: [{ id: 'user-owner', name: BUSINESS_OWNER_NAME }],
   numbering: {
     designPadding: 5,
     skuPadding: 3,
@@ -193,12 +182,6 @@ const objectOf = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 const setting = (key: string): unknown => rowCache.get('settings', key)?.value;
-
-const ROLE_LABEL: Record<UserRow['role'], UserSetting['role']> = {
-  owner: 'Owner',
-  biller: 'Billing Staff',
-  staff: 'Inventory Staff',
-};
 
 const stampOrZero = (stamp: string): number => {
   try {
@@ -259,16 +242,7 @@ function buildSettings(): AppSettings {
     } as AppSettings['taxes'],
     users: rowCache
       .rows('users')
-      .map(
-        (user): UserSetting => ({
-          id: user.id,
-          name: user.full_name,
-          role: ROLE_LABEL[user.role] ?? 'Billing Staff',
-          canSeeOriginalWeight: user.role === 'owner',
-          canEditStock: user.role !== 'biller',
-          active: user.active,
-        })
-      )
+      .map((user): UserSetting => ({ id: user.id, name: user.full_name }))
       .sort((a, b) => a.name.localeCompare(b.name)),
     numbering: {
       ...DEFAULT_SETTINGS.numbering,

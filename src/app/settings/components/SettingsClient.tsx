@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useState, useSyncExternalStore } from 'react';
+import Link from 'next/link';
 import SaveButton from '@/components/ui/SaveButton';
+import { canAccessPath } from '@/lib/access';
 import { useRowCacheVersion } from '@/lib/cache/useRowCache';
 import {
   createCategory,
@@ -15,11 +17,13 @@ import {
 } from '@/lib/catalogStore';
 import { getDesigns } from '@/lib/designStore';
 import { getSettings, saveSettings, type AppSettings } from '@/lib/settingsStore';
+import { useHolder } from '@/lib/useAccess';
 
 // Settings (spec D3, C5 (a), SEC-04; task WEB05). Every section is one row of the shop's settings and is saved on its own with its own Save button: a value is sent when
 // the person says so, not on each key press (the last write wins, so a half-typed value must never be what is stored). The categories and sub-categories are rows of their own
-// (a new one is shown when the server has made it; a rename and a removal are shown at once). The people are the shop's logins, made and changed with the owner's admin tool,
-// so the list is shown and not edited here (SEC-04). The daily metal rates are entered on the dashboard, one for each day and purity (D4).
+// (a new one is shown when the server has made it; a rename and a removal are shown at once). The people are not a setting: the Super Admin runs the shop's logins and roles in
+// People & Roles (/people-roles), so this screen lists nobody; it points to that screen, for the person who may open it and for nobody else (access and roles, Task 22). The daily
+// metal rates are entered on the dashboard, one for each day and purity (D4).
 
 const TABS = [
   ['materials', 'Materials & Purities'],
@@ -28,7 +32,6 @@ const TABS = [
   ['tag-templates', 'Tag Templates'],
   ['invoice-settings', 'Estimate Settings'],
   ['taxes', 'Taxes'],
-  ['users', 'Users & Permissions'],
   ['numbering', 'Numbering'],
   ['business', 'Business Settings'],
 ] as const;
@@ -52,7 +55,8 @@ const PREFIX_RULE = /^[A-Z0-9]{2,6}$/;
 
 export default function SettingsClient() {
   // drawn again when a poll or a save changes what is in memory
-  useRowCacheVersion('settings', 'daily-rates', 'categories', 'subcategories', 'users', 'skus');
+  useRowCacheVersion('settings', 'daily-rates', 'categories', 'subcategories', 'skus');
+  const holder = useHolder();
   const settings = getSettings();
   const categories = getCategories();
   const urlTab = useSyncExternalStore(noSubscription, readTabFromUrl, () => null);
@@ -257,6 +261,15 @@ export default function SettingsClient() {
           <p className="text-sm text-muted-foreground">
             Working controls for Jaishri Gold Palace Pvt Ltd. Each section has its own Save button.
           </p>
+          {canAccessPath(holder, '/people-roles') && (
+            <p data-testid="settings-people-roles" className="text-sm text-muted-foreground mt-1">
+              People and roles are managed in{' '}
+              <Link href="/people-roles" className="font-semibold text-primary hover:underline">
+                People & Roles
+              </Link>
+              .
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {message && (
@@ -675,32 +688,6 @@ export default function SettingsClient() {
             <SectionSave busy={busy} onSave={() => void saveSection('taxes', 'Taxes saved.')}>
               Save Taxes
             </SectionSave>
-          </Panel>
-        )}
-
-        {tab === 'users' && (
-          <Panel
-            title="Users & Permissions"
-            description="The people who can sign in. Logins are made, changed and switched off by the owner with the admin tool; this list shows who they are and what each role may do."
-          >
-            <div className="space-y-2">
-              {settings.users.map((user) => (
-                <div
-                  key={user.id}
-                  className="grid md:grid-cols-[1fr_150px_160px_130px_100px] gap-2 items-center border border-border rounded-sm p-3"
-                >
-                  <strong className="text-sm">{user.name}</strong>
-                  <span className="text-xs text-muted-foreground">{user.role}</span>
-                  <span className="text-xs">
-                    {user.canSeeOriginalWeight ? 'Sees original weight' : 'No original weight'}
-                  </span>
-                  <span className="text-xs">
-                    {user.canEditStock ? 'Edits stock' : 'Cannot edit stock'}
-                  </span>
-                  <span className="text-xs">{user.active ? 'Active' : 'Switched off'}</span>
-                </div>
-              ))}
-            </div>
           </Panel>
         )}
 

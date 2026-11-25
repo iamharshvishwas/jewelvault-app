@@ -10,6 +10,7 @@
 //   - THE WORDS. `paymentSaveFailure` gives the plain sentence for each error code of the two saves (C13), with the figures named where the API sends them.
 //
 // This file makes no network call and keeps nothing between calls.
+import { can, type Holder } from './access';
 import type { ReceiptAllocationRow, RecordPaymentResponse, SettleFineResponse } from './api/types';
 import { CASH_REASON_MAX, CASH_REASON_MIN, PAYMENT_MODES, inr, type PaymentMode } from './billing';
 import type { Invoice } from './mockData';
@@ -56,7 +57,7 @@ export interface PaymentInput {
   billId: string;
   reference: string;
   notes: string;
-  /** Z1: the owner's reason for cash over the limit; blank is none. Only the owner's screen passes one. */
+  /** Z1: the reason for cash over the limit; blank is none. Only a person with the cash-over-limit tick passes one (`cashReasonFor` of src/lib/billing.ts). */
   cashOverrideReason: string;
 }
 
@@ -313,15 +314,15 @@ export function savedFineFrom(response: SettleFineResponse): SavedFine {
 export interface PaymentFailure {
   /** The plain sentence for the person. */
   message: string;
-  /** JV_CASH_LIMIT: the screen offers the owner the field for a reason. */
-  cashLimit: { ownerMayGiveReason: boolean } | null;
+  /** JV_CASH_LIMIT: the screen offers the field for a reason to a person who may give one (`cash_over_limit`). */
+  cashLimit: { mayGiveReason: boolean } | null;
   /** The outcome is not known: the same action can be saved again with the same key (L5). */
   unconfirmed: boolean;
 }
 
 export interface FailureContext {
-  /** The signed-in role. Only the owner may give a reason for cash over the limit (Z1). */
-  role: string | null;
+  /** The signed-in person. Only a person who holds "Take cash over the limit" (`cash_over_limit`: the owner among today's roles) may give a reason for cash over the limit (Z1). */
+  who: Holder | null;
   /** The customer is the walk-in (K5). */
   walkIn: boolean;
   /** A payment (X2) or a silver settlement (X3). */
@@ -388,17 +389,17 @@ export function paymentSaveFailure(error: unknown, context: FailureContext): Pay
       }
       const today = rupeesDetail(details, 'cash_today', true);
       const thisCall = rupeesDetail(details, 'this_call', true);
-      const owner = context.role === 'owner';
+      const mayGiveReason = can(context.who, 'cash_over_limit');
       return {
         ...none,
-        cashLimit: { ownerMayGiveReason: owner },
+        cashLimit: { mayGiveReason },
         message:
           `Cash from this customer today would reach the limit of ${limit}` +
           (today && thisCall
             ? ` (${today} already today, ${thisCall} in ${fine ? 'this settlement' : 'this payment'})`
             : '') +
           '. ' +
-          (owner
+          (mayGiveReason
             ? `Give a reason of at least ${CASH_REASON_MIN} characters and save again, or take part of it by UPI, card or bank transfer.`
             : 'The owner enters this payment.') +
           ` ${NOTHING_CHANGED}`,
@@ -480,7 +481,7 @@ export function paymentSaveFailure(error: unknown, context: FailureContext): Pay
       if (field === 'cash_override_reason') {
         return {
           ...none,
-          message: `Only the owner can give a reason for cash over the limit; the owner enters this payment. ${NOTHING_CHANGED}`,
+          message: `Your role cannot give a reason for cash over the limit; the owner enters this payment. ${NOTHING_CHANGED}`,
         };
       }
       return { ...none, message: error.message };

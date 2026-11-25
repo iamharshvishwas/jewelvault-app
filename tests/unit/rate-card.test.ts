@@ -1,12 +1,15 @@
 // WEB05: the rate card offers each role what the API allows it (spec D4, Y8): the owner any day up to today and a correction of today's rate, a biller today only and no
 // correction. The API is the wall (tests/e2e/stock-edit.spec.ts proves the answers); the card does not offer what would be refused. The card is drawn here on the server
 // side of React (renderToStaticMarkup) over the real stores and a cache with rates in it; the role is the one thing stood in for.
+// Access and roles (Task 18): the card asks for ticks and not for a role key. `rate_enter` is what it needs to be drawn at all, `back_date` is what gives the day to pick (without it
+// the card is for today), `rate_correct` is what lets a rate that has a row for today be changed. The words of a refusal say "your role", not "the owner".
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { categoryRow, rateRow, settingRow } from './support/rows';
+import { sessionFor, type RoleSpec } from './support/access';
 
-let role: 'owner' | 'biller' | 'staff' | null = 'owner';
+let role: RoleSpec | null = 'owner';
 
 async function draw(who: typeof role, rates: Array<Parameters<typeof rateRow>[1]> = []) {
   role = who;
@@ -14,7 +17,7 @@ async function draw(who: typeof role, rates: Array<Parameters<typeof rateRow>[1]
   vi.stubEnv('NEXT_PUBLIC_PREVIEW_MODE', '');
   vi.doMock('@/lib/authStore', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/lib/authStore')>()),
-    useSession: () => ({ role }),
+    useSession: () => sessionFor(role),
   }));
   const [{ rowCache }, settings, { default: Card }] = await Promise.all([
     import('@/lib/cache/cache'),
@@ -82,7 +85,8 @@ describe('PT-W5 the rate card offers each role what the API allows it (D4, Y8)',
       /<input[^>]*aria-label="Gold 22K rate \(per gram\)"[^>]*>/.exec(biller.html)?.[0] ?? '';
     expect(closed).toContain('value="7350.00"');
     expect(closed).toContain('disabled');
-    expect(biller.html).toContain('Only the owner can correct it');
+    expect(biller.html).toContain('Your role cannot correct it');
+    expect(biller.html).not.toContain('Only the owner');
     // a purity with no row for today is open to the biller
     const free =
       /<input[^>]*aria-label="Gold 18K rate \(per gram\)"[^>]*>/.exec(biller.html)?.[0] ?? '';
@@ -96,5 +100,52 @@ describe('PT-W5 the rate card offers each role what the API allows it (D4, Y8)',
     const input = /<input[^>]*aria-label="Gold 22K rate \(per gram\)"[^>]*>/.exec(html)?.[0] ?? '';
     expect(input).toContain('value="7300.00"');
     expect(input).not.toContain('disabled');
+  });
+});
+
+describe('Task 18: the card follows the ticks of the role, not its key', () => {
+  const rates = [{ material: 'Gold' as const, purity: '22K', rate_per_gram: '7350.00' }];
+  const input = (html: string, label: string) =>
+    new RegExp(`<input[^>]*aria-label="${label} rate \\(per gram\\)"[^>]*>`).exec(html)?.[0] ?? '';
+
+  it('is drawn for whoever may enter a rate, and for nobody else: not Staff, not a role with no tick, not a role that corrects but cannot enter', async () => {
+    expect((await draw({ ticks: ['rate_enter'] })).html).toContain('Save Rates');
+    expect((await draw({ ticks: [] })).html).toBe('');
+    expect((await draw({ ticks: ['rate_correct', 'back_date'] })).html).toBe('');
+  });
+
+  it('a role that enters and corrects but may not back-date has no day to pick, and can correct the rate of today in place', async () => {
+    const { html } = await draw({ ticks: ['rate_enter', 'rate_correct'] }, rates);
+    expect(html).not.toContain('type="date"');
+    expect(html).toContain('Rates for today');
+    expect(html).toContain(' · your role enters the rate of today only');
+    const open = input(html, 'Gold 22K');
+    expect(open).toContain('value="7350.00"');
+    expect(open).not.toContain('disabled');
+    expect(html).not.toContain('Your role cannot correct it');
+  });
+
+  it("a role that may back-date has the day to pick, up to today, and cannot correct today's rate unless it holds the Correct tick", async () => {
+    const withoutCorrect = await draw({ ticks: ['rate_enter', 'back_date'] }, rates);
+    expect(withoutCorrect.html).toContain('type="date"');
+    expect(withoutCorrect.html).toContain(`max="${withoutCorrect.today}"`);
+    expect(withoutCorrect.html).not.toContain('your role enters the rate of today only');
+    const closed = input(withoutCorrect.html, 'Gold 22K');
+    expect(closed).toContain('value="7350.00"');
+    expect(closed).toContain('disabled');
+    expect(withoutCorrect.html).toContain('Your role cannot correct it');
+
+    const withCorrect = await draw({ ticks: ['rate_enter', 'back_date', 'rate_correct'] }, rates);
+    expect(withCorrect.html).toContain('type="date"');
+    expect(input(withCorrect.html, 'Gold 22K')).not.toContain('disabled');
+  });
+
+  it('the words the owner reads do not change: the day to pick, a rate that is open to correct, and no "your role" anywhere', async () => {
+    const { html } = await draw('owner', rates);
+    expect(html).toContain('Rates for');
+    expect(html).toContain('type="date"');
+    expect(html).not.toContain('your role');
+    expect(html).not.toContain('Your role');
+    expect(input(html, 'Gold 22K')).not.toContain('disabled');
   });
 });

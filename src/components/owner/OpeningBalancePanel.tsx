@@ -18,7 +18,7 @@ import { FiguresNote } from './ReasonDialog';
 
 // The opening-balance form (X12; spec D15, IM5, Y8, K5; task WEB11): what a customer owed on the first day (dues, and silver due) and what they had paid in advance (money, and silver),
 // dated by the owner (any day up to today). Used for the corrections after the import and for customers created later. Dues make an opening bill (OB-nnnn) that is not a sale; an advance is a
-// receipt; an advance and dues of one customer net off. The walk-in customer holds no advance (K5): its form takes dues only. The panel is drawn for the owner only (the card decides).
+// receipt; an advance and dues of one customer net off. The walk-in customer holds no advance (K5): its form takes dues only. The panel is drawn for a person who may add an opening balance (the card decides, by the tick of that call).
 
 interface OpeningBalancePanelProps {
   customerId: string;

@@ -4,7 +4,7 @@ import { lanePorts } from './scripts/e2e-ports.cjs';
 // End-to-end tests live in tests/e2e. Installing the packages does not download a browser: run
 // `npx playwright install chromium` once on a machine that will run the tests.
 //
-// They run against a lane: a MariaDB container, the API built from JV_API_DIR and three test users, which the global setup starts
+// They run against a lane: a MariaDB container, the API built from JV_API_DIR and four test logins (owner, biller, staff, Super Admin), which the global setup starts
 // before the first test and stops after the last (scripts/e2e-lane.mjs, WEB00). Nothing starts unless E2E=1 says so:
 //   LANE=b JV_API_DIR=../jewelvault-api E2E=1 npx playwright test tests/e2e/harness.spec.ts
 //

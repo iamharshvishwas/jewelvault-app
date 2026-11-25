@@ -8,6 +8,8 @@
 // `photo_files`, `clock_ahead`) are optional, because an API built before RV3a does not send them, and they decide nothing: the screen never invents a reason from a figure.
 //
 // Three layers: `buildHealthLine` (the model, pure), the store that reads the two calls (`createBooksServer`), and the card drawn from the model (`HealthLineView`, server-side React).
+// Access and roles (Task 18): the line is read, and mounted on the dashboard, for the person who holds the tick `activity_log` (the owner of today): the API refuses the two calls to everybody else,
+// and the page mounts the line for that tick only (tests/unit/dashboard-access.test.ts). The refusal of a biller below is that API answer, drawn from the fake server.
 //
 // Run: npm test -- tests/unit/health-line.test.ts      (or: npm test -- -t PT-W12)
 import { afterEach, describe, expect, it, vi } from 'vitest';

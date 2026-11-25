@@ -13,7 +13,8 @@ import DashboardEveningCheck from './components/DashboardEveningCheck';
 import DashboardOverduePanel from './components/DashboardOverduePanel';
 import DashboardOrdersPanel from './components/DashboardOrdersPanel';
 import { BUSINESS_LOCATION, BUSINESS_NAME } from '@/lib/businessConfig';
-import { useSession } from '@/lib/authStore';
+import { dashboardAccess } from '@/lib/dashboardAccess';
+import { useHolder } from '@/lib/useAccess';
 
 const noSubscription = () => () => {};
 
@@ -29,10 +30,11 @@ function todayLabel() {
 export default function HomePage() {
   // The date is empty in the static HTML (it would be the day of the build) and today's on the screen.
   const dateLabel = useSyncExternalStore(noSubscription, todayLabel, () => '');
-  // U7: the role comes from the one session of the application, never from a read of the page's own. Until it is known
-  // (and AppLayout shows nothing of the page until then) the page asks for the least.
-  const { role: signedInRole } = useSession();
-  const role = signedInRole ?? 'staff';
+  // U7: what the person may do comes from the one session of the application, never from a read of the page's own. Until it is known
+  // (and AppLayout shows nothing of the page until then) nobody holds a tick, so the page asks for the least. Each block is shown for the ticks of the data it
+  // reads and of the action it offers (src/lib/dashboardAccess.ts); the quick actions and the KPI grid decide their own items from the holder.
+  const holder = useHolder();
+  const show = dashboardAccess(holder);
 
   return (
     <AppLayout>
@@ -47,38 +49,38 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* The owner's health line: the nightly check, the backups, the Download everything reminder (spec section 12) */}
-        {role === 'owner' && <DashboardHealthLine />}
+        {/* The health line: the nightly check, the backups, the Download everything reminder (spec section 12) */}
+        {show.healthLine && <DashboardHealthLine />}
 
-        {/* The owner's monthly Download everything: the date of the last one, the reminder, the button (spec B3, O53) */}
-        {role === 'owner' && <DashboardDownloadCard />}
+        {/* The monthly Download everything: the date of the last one, the reminder, the button (spec B3, O53) */}
+        {show.downloadCard && <DashboardDownloadCard />}
 
         {/* Quick Actions */}
-        <DashboardQuickActions role={role} />
+        <DashboardQuickActions holder={holder} />
 
         {/* Daily Rates */}
-        {role === 'owner' && <DashboardRateCard />}
+        {show.rateCard && <DashboardRateCard />}
 
         {/* KPI Grid */}
-        <DashboardKpiGrid role={role} />
+        <DashboardKpiGrid holder={holder} />
 
-        {/* FB-F1: the orders due in the next 2 days or overdue, for every role (staff without the customer) */}
-        <DashboardOrdersPanel />
+        {/* FB-F1: the orders due in the next 2 days or overdue, for whoever reads the orders (without the customer for whoever may not see customers) */}
+        {show.ordersPanel && <DashboardOrdersPanel />}
 
-        {/* FB-D3: the customers with a payment pending for more than 60 days (V1), for the owner and the biller */}
-        {(role === 'owner' || role === 'biller') && <DashboardOverduePanel />}
+        {/* FB-D3: the customers with a payment pending for more than 60 days (V1), for whoever reads the bills and the customers: the owner and the biller */}
+        {show.overduePanel && <DashboardOverduePanel />}
 
-        {/* The owner's evening check: today's Cash net, today's UPI net, the total outstanding (V4, V2) */}
-        {role === 'owner' && <DashboardEveningCheck />}
+        {/* The evening check: today's Cash net, today's UPI net, the total outstanding (V4, V2) */}
+        {show.eveningCheck && <DashboardEveningCheck />}
 
         {/* Charts */}
-        {role === 'owner' && <DashboardCharts />}
+        {show.charts && <DashboardCharts />}
 
         {/* Recent Designs */}
         <RecentDesignsGrid />
 
         {/* Activity Panels */}
-        {role === 'owner' && <DashboardActivityPanels />}
+        {show.activityPanels && <DashboardActivityPanels />}
       </div>
     </AppLayout>
   );

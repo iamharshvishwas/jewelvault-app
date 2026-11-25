@@ -3,8 +3,8 @@
 import React, { useRef, useState } from 'react';
 import { CalendarClock, ImagePlus, Phone, User } from 'lucide-react';
 import SaveButton from '@/components/ui/SaveButton';
+import type { Holder } from '@/lib/access';
 import { newUuid } from '@/lib/api/client';
-import type { Role } from '@/lib/api/types';
 import {
   addOrderPhoto,
   canAddPhoto,
@@ -12,13 +12,20 @@ import {
   setOrderStatus,
   type OrderView,
 } from '@/lib/orderStore';
-import { daysUntil, dueLabel, isClosedOrder, orderActions } from '@/lib/orderStatus';
+import {
+  daysUntil,
+  dueLabel,
+  isClosedOrder,
+  orderActions,
+  orderBookAccess,
+} from '@/lib/orderStatus';
 import { MAX_ORIGINAL_BYTES, photoUrl, prepareImage } from '@/lib/photos';
 import { dayLabel } from '@/lib/rateGuard';
 
-// FB-F1: one order of the Order Book. Staff see the number, the description, the delivery date, the status and the photos, and nothing else: no customer, no status button, no photo
-// control (ruling A4, F-extra-1). The owner and the biller see the customer too, the next step of the chain and Cancel (src/lib/orderStatus.ts, F-extra-2), and add a photo while the
-// order is not delivered or cancelled (F-extra-5). Cancel asks once more before it is sent.
+// FB-F1: one order of the Order Book. A person without "See customers" sees the number, the description, the delivery date, the status and the photos, and no customer (ruling A4, F-extra-1);
+// a person without "Make and change orders" has no status button and no photo control either (staff, among today's roles). Whoever holds those ticks (the owner and the biller) sees the customer,
+// the next step of the chain and Cancel (src/lib/orderStatus.ts, F-extra-2), and adds a photo while the order is not delivered or cancelled (F-extra-5); a delivered order is cancelled only
+// by a person who may change a closed order. Cancel asks once more before it is sent.
 
 export const STATUS_STYLE: Readonly<Record<OrderView['status'], string>> = {
   open: 'bg-sky-100 text-sky-800',
@@ -30,15 +37,16 @@ export const STATUS_STYLE: Readonly<Record<OrderView['status'], string>> = {
 
 export default function OrderCard({
   order,
-  role,
+  holder,
   today,
 }: {
   order: OrderView;
-  role: Role | null;
+  /** The person looking at the book: their ticks decide the customer line, the photo control and the buttons. */
+  holder: Holder | null;
   today: string;
 }) {
-  const staffView = role !== 'owner' && role !== 'biller';
-  const actions = orderActions(order.status, role);
+  const access = orderBookAccess(holder);
+  const actions = orderActions(order.status, holder);
   const [busy, setBusy] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [error, setError] = useState('');
@@ -88,7 +96,7 @@ export default function OrderCard({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-mono text-sm font-bold text-primary">{order.orderNo}</p>
-          {!staffView && (
+          {access.customers && (
             <p
               data-testid="order-customer"
               className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm"
@@ -132,7 +140,7 @@ export default function OrderCard({
         </p>
       )}
 
-      {(order.photoIds.length > 0 || (!staffView && canAddPhoto(order))) && (
+      {(order.photoIds.length > 0 || (access.edit && canAddPhoto(order))) && (
         <div className="flex flex-wrap items-center gap-2">
           {order.photoIds.map((photoId) => (
             <a
@@ -153,7 +161,7 @@ export default function OrderCard({
               />
             </a>
           ))}
-          {!staffView && canAddPhoto(order) && (
+          {access.edit && canAddPhoto(order) && (
             <label className="flex h-16 w-16 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-border text-[11px] text-muted-foreground hover:border-primary">
               <ImagePlus size={16} />
               Add photo

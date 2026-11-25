@@ -1113,9 +1113,10 @@ test.describe("PT-W11: a biller sees none of these actions, and the API refuses 
 
     // the address of a re-issue is not a way in
     await page.goto(`/billing-pos?reissue=${ids.bills.s1}`);
-    await expect(page.getByTestId('reissue-refused')).toContainText('Only the owner can re-issue', {
-      timeout: 60_000,
-    });
+    await expect(page.getByTestId('reissue-refused')).toContainText(
+      'Your role cannot re-issue an estimate',
+      { timeout: 60_000 }
+    );
     await expect(page.getByTestId('save-bill')).toHaveCount(0);
 
     // and the wall is the API: the biller's own calls are refused and change nothing

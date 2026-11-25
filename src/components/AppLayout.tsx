@@ -8,7 +8,9 @@ import Topbar from './Topbar';
 import LoginScreen from './LoginScreen';
 import ChangePasswordScreen from './ChangePasswordScreen';
 import ConnectionBanner from './ConnectionBanner';
-import { PREVIEW_MODE, canAccessPath, retrySession, signOut, useSession } from '@/lib/authStore';
+import { canAccessPath } from '@/lib/access';
+import { PREVIEW_MODE, retrySession, signOut, useSession } from '@/lib/authStore';
+import { holderOf } from '@/lib/useAccess';
 import {
   isGateOpen,
   progressText,
@@ -26,16 +28,17 @@ interface AppLayoutProps {
 // module-level one in authStore, so moving from page to page (each page wraps itself in this layout) never shows the
 // loading screen again, and no page reads the session on its own. Between the login screen and the app stands one more screen
 // for one kind of person: a user whose password is still the temporary one sees the change-password screen and nothing else (U11).
-// `epoch` goes up each time the gate is opened for a person and a role (a login, start-up, a change of role): the page body is
-// keyed on it, so that a role that changed in the middle of a shift starts the page afresh instead of keeping what the old role saw.
+// `epoch` goes up each time the gate is opened for a person and an access (a login, start-up, a change of role or of its ticks): the page
+// body is keyed on it, so that an access that changed in the middle of a shift starts the page afresh instead of keeping what the old one saw.
 // WEB04 (C4, C7): once the gate is open the poller (src/lib/cache/poll.ts, started by importing it through ConnectionBanner) brings in what other people changed, and the banner
 // at the top says when the server cannot be reached or is waking up.
-// WEB03 (C2): between the login and the app stands the data gate. A signed-in person sees no data page until the first full hydrate of THIS role in THIS
+// WEB03 (C2): between the login and the app stands the data gate. A signed-in person sees no data page until the first full hydrate of THIS access in THIS
 // epoch has finished (src/lib/cache/hydrate.ts): "3 of 8 tables" while it runs, the plain message and a retry button if it fails, never sample data and
 // never an empty list. The load lives at module level, so moving from page to page (each page wraps itself in this layout) never loads again.
 export default function AppLayout({ children }: AppLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const { status, session, role, notice, error, epoch } = useSession();
+  const sessionState = useSession();
+  const { status, session, access, notice, error, epoch } = sessionState;
   const hydrate = useHydrate();
   const pathname = usePathname();
   // FB-A1: the phone menu (under 1024 px the desktop sidebar is hidden, so the ☰ opens the same Sidebar as a drawer). It is open for the page and the session it was opened on: a
@@ -61,10 +64,11 @@ export default function AppLayout({ children }: AppLayoutProps) {
     };
   }, [mobileMenuOpen, closeMenu]);
 
-  // asked again by every page that mounts, answered once: a load of the same role and epoch is not started twice
+  // asked again by every page that mounts, answered once: a load of the same access and epoch is not started twice
+  const reads = session?.reads;
   useEffect(() => {
-    if (status === 'signedIn' && role) startHydrate(role, epoch);
-  }, [status, role, epoch]);
+    if (status === 'signedIn' && access && reads) startHydrate({ access, reads }, epoch);
+  }, [status, access, reads, epoch]);
 
   if (status === 'error') {
     return (
@@ -97,11 +101,11 @@ export default function AppLayout({ children }: AppLayoutProps) {
   if (status === 'signedOut' || !session) return <LoginScreen notice={notice} />;
   if (status === 'mustChangePassword') return <ChangePasswordScreen session={session} />;
   // a preview build has no API: its stores hold sample data (src/lib/previewMode.ts) and the gate is open
-  if (!PREVIEW_MODE && !isGateOpen(hydrate, role, epoch)) {
+  if (!PREVIEW_MODE && !isGateOpen(hydrate, access, epoch)) {
     return <DataGate failed={hydrate.status === 'error' ? hydrate.error : null} state={hydrate} />;
   }
 
-  const allowed = canAccessPath(role, pathname || '/');
+  const allowed = canAccessPath(holderOf(sessionState), pathname || '/');
 
   // WEB13 (QA UI-03): the print shell. On screen the shell is as tall as the window and `main` scrolls inside it; on paper that would cut a page at the window's height and print the bars.
   // The names app-shell, app-main-column, app-scroll, app-page and app-chrome are the hooks of the print rules in src/styles/tailwind.css (@media print): the bars are not printed, the
@@ -196,7 +200,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
   );
 }
 
-/** C2: the loading screen of the data. The numbers are those of the load that is running; before it has started the count is that of the role's tables. */
+/** C2: the loading screen of the data. The numbers are those of the load that is running; before it has started the count is that of the person's tables. */
 function DataGate({
   failed,
   state,
@@ -204,7 +208,7 @@ function DataGate({
   failed: string | null;
   state: ReturnType<typeof useHydrate>;
 }) {
-  const { role } = useSession();
+  const { session } = useSession();
   if (failed !== null) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center px-4">
@@ -225,7 +229,7 @@ function DataGate({
       </div>
     );
   }
-  const total = state.tablesTotal || (role ? resourcesFor(role).length : 0);
+  const total = state.tablesTotal || (session ? resourcesFor(session.reads).length : 0);
   const done = state.tablesTotal ? state.tablesDone : 0;
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4">

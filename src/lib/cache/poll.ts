@@ -2,7 +2,7 @@
 
 // The poller: how a screen learns what other people did (spec C3, C4, C7, C17, C18, U6). Task WEB04.
 //
-// After the first hydrate (hydrate.ts) one request, `POST /v1/sync/poll`, carries a cursor for each resource the role may read and brings back the rows that changed. It runs
+// After the first hydrate (hydrate.ts) one request, `POST /v1/sync/poll`, carries a cursor for each resource the person may read and brings back the rows that changed. It runs
 //   - every 8 seconds (a setting, 5 to 10), counted from the start of one poll to the start of the next, never two at once;
 //   - at once after any write the screen made (the client says when a write is over, `onWriteFinished`; a write that ends while a poll is on its way is followed by exactly one more);
 //   - every 30 seconds while the tab is hidden, and at once when it is shown again (and at once when the browser says the network is back);
@@ -18,11 +18,12 @@
 // The overlap does not cover bulk work outside the API (an import, a repair script): that work ends with one statement that re-stamps what it changed and a new value of the setting
 // `data_epoch` (IM1). A screen that sees `data_epoch` change hydrates again from the start (`hydrator.reset()` then `start()`), behind the loading gate.
 //
-// WHO IS ASKING (U6, C18). Every answer carries the caller's role as the database says it now. When it is not the role of the session, or when the poll is refused with a 403 (a role
-// that lost a resource it was reading), the poller asks `reviewRole()` ONCE: 'changed' means memory has been emptied (the owner-only data, `sku_private` and the audit data included)
-// and the gate has opened again with the new role, so this poller ends and a new one starts with the new hydrate; 'ended' means the login screen is up; 'same' means the person is who
-// they were: the error is shown once, polling backs off and the next 403 does not ask `me` again until a poll works; 'unknown' (`me` could not be asked) is a failed poll, and the next
-// 403 asks again. A 401 needs nothing from here: the client's hook ends the session, runs the logout hooks and this poller stops with them.
+// WHO IS ASKING (U6, C18, R15). Every answer carries the caller's access text as the database says it now (and the role key, which is not compared: the same key with other ticks is
+// another access). When it is not the access of the session, or when the poll is refused with a 403 (a role that lost a resource it was reading), the poller asks `reviewRole()` ONCE:
+// 'changed' means memory has been emptied (`sku_private`, the money side and the audit data included) and the gate has opened again with the new access, so this poller ends and a
+// new one starts with the new hydrate; 'ended' means the login screen is up; 'same' means the person is who they were: the error is shown once, polling backs off and the next 403
+// (or the next answer with another access text, whose rows are not merged) does not ask `me` again until a poll works; 'unknown' (`me` could not be asked) is a failed poll, and the
+// next one asks again. A 401 needs nothing from here: the client's hook ends the session, runs the logout hooks and this poller stops with them.
 //
 // THE BANNER (C7). The client owns it: a network failure or JV_UNAVAILABLE is 'offline' ("Offline: changes cannot be saved"), a gateway error or a reply that is not JSON is 'waking'
 // ("Waking up…") and is retried by the client for up to 30 seconds, and any answer from the API clears it. Reads go on from memory; every Save control is off while there is a banner
@@ -42,17 +43,11 @@ import {
   getSessionState,
   registerLogoutHook,
   reviewRole as siteReviewRole,
-  type AuthRole,
   type RoleReview,
   type SessionStore,
 } from '@/lib/authStore';
 import { CacheDataError, KEY_FIELD, rowCache, type RowCache } from './cache';
-import {
-  hydrator as siteHydrator,
-  resourcesFor,
-  type HydrateState,
-  type Hydrator,
-} from './hydrate';
+import { hydrator as siteHydrator, type HydrateState, type Hydrator } from './hydrate';
 import { StampError, stampMicros, stampMinusSeconds } from './stamp';
 
 /** C4: a poll asks for rows from the cursor minus this many seconds. */
@@ -153,7 +148,8 @@ interface Stamp {
 }
 
 interface Job {
-  role: AuthRole;
+  access: string;
+  resources: readonly SyncResource[];
   epoch: number;
   pollFrom: string;
   controller: AbortController;
@@ -166,8 +162,10 @@ interface Job {
   running: boolean;
   /** A write ended during the poll: one more follows it. */
   again: boolean;
-  /** A 403 for a role that had not changed has been looked at; do not ask `me` again until a poll works. */
+  /** A 403 for an access that had not changed has been looked at; do not ask `me` again until a poll works. */
   forbiddenSettled: boolean;
+  /** An answer with another access text was looked at and `me` said the access had not changed; do not ask `me` again until a poll works. */
+  accessSettled: boolean;
   timer: ReturnType<typeof setTimeout> | null;
   /** When the last poll started (ms). */
   startedAt: number;
@@ -222,8 +220,8 @@ export function createPoller(deps: PollerDeps): Poller {
     const open =
       h.status === 'ready' &&
       s.status === 'signedIn' &&
-      s.role !== null &&
-      h.role === s.role &&
+      s.access !== null &&
+      h.access === s.access &&
       h.epoch === s.epoch &&
       h.pollFrom !== null &&
       h.firstServerTime !== null;
@@ -234,7 +232,7 @@ export function createPoller(deps: PollerDeps): Poller {
     if (
       job &&
       !job.stopped &&
-      job.role === h.role &&
+      job.access === h.access &&
       job.epoch === h.epoch &&
       job.pollFrom === h.pollFrom
     )
@@ -244,21 +242,29 @@ export function createPoller(deps: PollerDeps): Poller {
 
   function startJob(h: HydrateState): void {
     stopJob();
-    if (h.role === null || h.epoch === null || h.pollFrom === null || h.firstServerTime === null)
+    if (
+      h.access === null ||
+      h.resources === null ||
+      h.epoch === null ||
+      h.pollFrom === null ||
+      h.firstServerTime === null
+    )
       return;
     const first: Stamp = { micros: stampMicros(h.firstServerTime), text: h.firstServerTime };
     const mine: Job = {
-      role: h.role,
+      access: h.access,
+      resources: h.resources,
       epoch: h.epoch,
       pollFrom: h.pollFrom,
       controller: new AbortController(),
       stopped: false,
-      high: new Map(resourcesFor(h.role).map((resource) => [resource, first])),
+      high: new Map(h.resources.map((resource) => [resource, first])),
       epochToken: epochTokenOf(cache),
       failures: 0,
       running: false,
       again: false,
       forbiddenSettled: false,
+      accessSettled: false,
       timer: null,
       startedAt: 0,
       inflight: Promise.resolve(),
@@ -349,6 +355,7 @@ export function createPoller(deps: PollerDeps): Poller {
       if (outcome.kind === 'ok') {
         mine.failures = 0;
         mine.forbiddenSettled = false;
+        mine.accessSettled = false;
         setState({ status: 'idle', failures: 0, notice: null });
       } else if (outcome.kind === 'failed') {
         mine.failures += 1;
@@ -368,7 +375,7 @@ export function createPoller(deps: PollerDeps): Poller {
 
   // ---- one poll: every page, then the merge, then the cursors
   async function pollOnce(mine: Job): Promise<Outcome> {
-    const resources = resourcesFor(mine.role);
+    const resources = mine.resources;
     const staged = new Map<SyncResource, object[]>(resources.map((r) => [r, []]));
     let ask: PollRequest['cursors'] = {};
     for (const resource of resources) {
@@ -391,8 +398,11 @@ export function createPoller(deps: PollerDeps): Poller {
         stampMicros(answer.server_time); // a StampError when the API's clock is not the exact text
         serverTime = answer.server_time;
       }
-      // U6, C4, C18: every answer carries the caller's role as the database says it now
-      if (answer.role !== session.getState().role) return review(mine, null);
+      // U6, C4, C18, R15: every answer carries the caller's access text as the database says it now; rows read for another access are not merged
+      if (answer.access !== session.getState().access) {
+        if (mine.accessSettled) return { kind: 'failed', notice: null };
+        return review(mine, null);
+      }
       const nextAsk: PollRequest['cursors'] = {};
       for (const resource of Object.keys(ask) as SyncResource[]) {
         const result = (answer.results as Record<string, { rows?: unknown; next?: unknown }>)[
@@ -455,9 +465,9 @@ export function createPoller(deps: PollerDeps): Poller {
     setState({ polls: state.polls + 1, lastServerTime: serverTime });
     if (epochTokenOf(cache) !== mine.epochToken) {
       // IM1: bulk work outside the API ended with a new data_epoch: what the cursors cannot be trusted to bring is loaded again from the start, behind the loading gate
-      const { role, epoch } = mine;
+      const { access, resources, epoch } = mine;
       hydrator.reset();
-      hydrator.start(role, epoch);
+      hydrator.start({ access, reads: resources }, epoch);
       return { kind: 'stopped' };
     }
     return { kind: 'ok' };
@@ -486,7 +496,7 @@ export function createPoller(deps: PollerDeps): Poller {
     return { kind: 'failed', notice: COULD_NOT_REFRESH };
   }
 
-  /** Asks the session whether the role changed (once) and says what the poll does next. `refusal` is the sentence of the 403, when there was one. */
+  /** Asks the session whether the access changed (once) and says what the poll does next. `refusal` is the sentence of the 403, or null for an answer with another access text. */
   async function review(mine: Job, refusal: string | null): Promise<Outcome> {
     let result: RoleReview;
     try {
@@ -496,11 +506,13 @@ export function createPoller(deps: PollerDeps): Poller {
     }
     if (mine.stopped) return { kind: 'stopped' };
     switch (result) {
-      case 'changed': // memory is empty, the gate is open again with the new role: this poller ends with the hydrate and a new one starts with the next
+      case 'changed': // memory is empty, the gate is open again with the new access: this poller ends with the hydrate and a new one starts with the next
       case 'ended': // the login screen is up
         return { kind: 'stopped' };
       case 'same':
-        mine.forbiddenSettled = refusal !== null; // show the error once; do not ask `me` for every 403
+        // show the error once; do not ask `me` for every 403, nor for every answer with another access text
+        if (refusal !== null) mine.forbiddenSettled = true;
+        else mine.accessSettled = true;
         return { kind: 'failed', notice: refusal };
       default:
         return { kind: 'failed', notice: null }; // `me` could not be asked: nothing was learnt, the next 403 asks again

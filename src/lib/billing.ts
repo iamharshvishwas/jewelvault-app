@@ -9,8 +9,11 @@
 //     same Idempotency-Key, see moneyServer.createBill).
 //   - THE ANSWER. `savedBillFrom` turns the rows X1 returned into the figures the screen shows after the save, and says where the preview was not the same (C12).
 //   - THE WORDS. `billSaveFailure` gives the plain sentence for each error code of the save (C13), with the pieces named for JV_PIECE_UNAVAILABLE.
+//   - THE REASON FOR CASH. `cashReasonFor` is what the screen sends as the reason for cash over the limit: what was typed for a person who holds "Take cash over the limit" (`cash_over_limit`),
+//     and nothing for anybody else (Z1; the API refuses the reason from a caller without the tick).
 //
 // This file makes no network call and keeps nothing between calls.
+import { can, type Holder } from './access';
 import type { BillWarning, CreateBillResponse } from './api/types';
 import type { Sku } from './mockData';
 import {
@@ -403,7 +406,7 @@ export interface BillRequestInput {
   additionalCharges: string;
   notes: string;
   payments: readonly PaymentEntry[];
-  /** Z1: the owner's reason for cash over the limit; blank is none. Only the owner's screen sends it (a biller who sends it is refused). */
+  /** Z1: the reason for cash over the limit; blank is none. Only a person with the cash-over-limit tick sends one (`cashReasonFor`); the API refuses it from anybody else. */
   cashOverrideReason: string;
 }
 
@@ -591,13 +594,18 @@ function differencesFromPreview(
   return found;
 }
 
+/** Z1: the reason for cash over the limit that this person's screen sends: what they typed when they hold `cash_over_limit`, and nothing when they do not (the API refuses the field from them). */
+export function cashReasonFor(who: Holder | null, typed: string): string {
+  return can(who, 'cash_over_limit') ? typed : '';
+}
+
 // ------------------------------------------------------------------------------------------------ the words of a failed save (C13)
 
 export interface SaveFailure {
   /** The plain sentence for the person. */
   message: string;
-  /** JV_CASH_LIMIT: the screen offers the owner the field for a reason. */
-  cashLimit: { ownerMayGiveReason: boolean } | null;
+  /** JV_CASH_LIMIT: the screen offers the field for a reason to a person who may give one (`cash_over_limit`). */
+  cashLimit: { mayGiveReason: boolean } | null;
   /** JV_PIECE_UNAVAILABLE: the pieces (ids) that cannot be billed, to mark their lines. */
   pieceIds: string[];
   /** The outcome is not known: the same bill can be saved again with the same key (L5). */
@@ -630,8 +638,8 @@ const rupeesDetail = (details: Record<string, unknown> | undefined, key: string)
 };
 
 export interface FailureContext {
-  /** The signed-in role. Only the owner may give a reason for cash over the limit (Z1). */
-  role: string | null;
+  /** The signed-in person. Only a person who holds "Take cash over the limit" (`cash_over_limit`: the owner among today's roles) may give a reason for cash over the limit (Z1). */
+  who: Holder | null;
   /** No customer was chosen: the bill is the walk-in's (K5). */
   walkIn: boolean;
 }
@@ -660,15 +668,15 @@ export function billSaveFailure(error: unknown, context: FailureContext): SaveFa
       }
       const today = rupeesDetail(details, 'cash_today');
       const thisBill = rupeesDetail(details, 'this_call');
-      const owner = context.role === 'owner';
+      const mayGiveReason = can(context.who, 'cash_over_limit');
       return {
         ...none,
-        cashLimit: { ownerMayGiveReason: owner },
+        cashLimit: { mayGiveReason },
         message:
           `Cash from this customer today would reach the limit of ${limit}` +
           (today && thisBill ? ` (${today} already today, ${thisBill} on this bill)` : '') +
           '. ' +
-          (owner
+          (mayGiveReason
             ? `Give a reason of at least ${CASH_REASON_MIN} characters and save again, or take part of it by UPI, card or bank transfer.`
             : 'The owner enters this payment.') +
           ' Nothing was changed.',

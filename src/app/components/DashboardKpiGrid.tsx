@@ -12,17 +12,22 @@ import {
   IndianRupee,
   BarChart3,
 } from 'lucide-react';
-import type { AuthRole } from '@/lib/authStore';
 import { billsShown, cancelledShown, paiseShown } from '@/lib/ledgerView';
+import { canAccessPath, type Holder } from '@/lib/access';
+import { dashboardAccess } from '@/lib/dashboardAccess';
 
 // The sales, the cancelled line and the outstanding are the selectors' figures over V1 and V2 (spec C14, V5; src/lib/selectors.ts through computeDashboardStats), written in whole paise the
 // way the customer card writes them (src/lib/ledgerView.ts): ₹12,900, not ₹12.9K. A cancelled bill is on a line of its own and is not in the sales.
+// Which tiles a person gets follows their ticks (src/lib/dashboardAccess.ts): the five stock tiles (designs and pieces are read by everybody) are for everybody; Today's Sales and Month Sales show
+// the bills and need the bills and the Reports tick, Outstanding also the customers (it opens their ledger); On Approval needs the Reports tick and the billing screen it opens. The Ageing tile
+// opens Reports for a person who may open it, else the Inventory.
 
 function fmtWt(n: number) {
   return `${n.toFixed(3)} g`;
 }
 
-export default function DashboardKpiGrid({ role = 'owner' }: { role?: AuthRole }) {
+export default function DashboardKpiGrid({ holder }: { holder: Holder | null }) {
+  const { salesTiles, outstandingTile, onApprovalTile } = dashboardAccess(holder);
   const [s, setS] = useState(computeDashboardStats());
 
   useEffect(() => {
@@ -34,7 +39,7 @@ export default function DashboardKpiGrid({ role = 'owner' }: { role?: AuthRole }
     <div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 gap-4">
         {/* HERO: Today's Sales */}
-        {role === 'owner' && (
+        {salesTiles && (
           <Link
             href="/reports"
             className="xl:col-span-2 jewel-card kpi-hero p-5 cursor-pointer hover:shadow-jewel-lg transition-shadow fade-in"
@@ -82,7 +87,7 @@ export default function DashboardKpiGrid({ role = 'owner' }: { role?: AuthRole }
         )}
 
         {/* Total Outstanding */}
-        {role === 'owner' && (
+        {outstandingTile && (
           <Link
             href="/customer-ledger"
             className="jewel-card p-4 border-l-4 border-l-amber-500 cursor-pointer hover:shadow-jewel-md transition-shadow fade-in"
@@ -106,7 +111,7 @@ export default function DashboardKpiGrid({ role = 'owner' }: { role?: AuthRole }
         )}
 
         {/* On Approval */}
-        {role === 'owner' && (
+        {onApprovalTile && (
           <Link
             href="/billing-pos"
             className="jewel-card p-4 cursor-pointer hover:shadow-jewel-md transition-shadow fade-in"
@@ -202,7 +207,7 @@ export default function DashboardKpiGrid({ role = 'owner' }: { role?: AuthRole }
 
         {/* Ageing 90+ days */}
         <Link
-          href={role === 'owner' ? '/reports' : '/inventory-management'}
+          href={canAccessPath(holder, '/reports') ? '/reports' : '/inventory-management'}
           className="jewel-card p-4 border-l-4 border-l-red-400 cursor-pointer hover:shadow-jewel-md transition-shadow fade-in"
         >
           <div className="flex items-start justify-between mb-3">
@@ -218,7 +223,7 @@ export default function DashboardKpiGrid({ role = 'owner' }: { role?: AuthRole }
         </Link>
 
         {/* Month Sales */}
-        {role === 'owner' && (
+        {salesTiles && (
           <Link
             href="/reports"
             className="jewel-card p-4 cursor-pointer hover:shadow-jewel-md transition-shadow fade-in"

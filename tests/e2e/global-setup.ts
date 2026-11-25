@@ -1,24 +1,29 @@
 import { assertLane } from '../../scripts/e2e-ports.cjs';
 
 // The global setup of the end-to-end tests (WEB00). It starts the lane (scripts/e2e-lane.mjs): a MariaDB container, the API built from
-// JV_API_DIR, and an owner, a biller and a staff user made through the admin door. Its teardown stops the API and removes the container
-// (`docker rm -fv`, no volume), also when a test failed.
+// JV_API_DIR, and four logins made through the admin door: an owner, a biller and a staff user, and the Super Admin (a login with the role
+// owner and the Super Admin flag, with an e-mail address of its own; `npm run admin -- make-super-admin`). Its teardown stops the API and
+// removes the container (`docker rm -fv`, no volume), also when a test failed.
 //
 // Nothing starts unless E2E=1 says so, because it starts Docker containers and a server:
 //   LANE=b JV_API_DIR=<checkout of jewelvault-api> E2E=1 npx playwright test tests/e2e/harness.spec.ts
 //
 // The lane's e-mail addresses, passwords and admin token reach the tests through process.env of this run only (Playwright starts its
 // workers after the global setup, so they see what is set here); the file the lane writes, .lanes/<lane>/.env.local, is local and never
-// committed. In a test: `e2eLogin('owner')` gives a login, `e2eLane()` the addresses and the admin token (to make a user of its own
-// through the admin door).
+// committed. In a test: `e2eLogin('owner')` gives a login (also 'biller', 'staff' and 'super'), `e2eLane()` the addresses and the admin token
+// (to make a user of its own through the admin door).
 
+/** The three built-in roles: their keys are what the admin door's `add-user` takes, so a test that makes a user of a role loops over these. */
 export const ROLES = ['owner', 'biller', 'staff'] as const;
 export type E2eRole = (typeof ROLES)[number];
+/** The four logins the lane makes: the three roles and the Super Admin (`super`: the role owner and the Super Admin flag, no role key of its own). */
+export const LOGINS = [...ROLES, 'super'] as const;
+export type E2eLoginName = (typeof LOGINS)[number];
 
 export interface E2eLogin {
   email: string;
   password: string;
-  /** The name on the user (the admin door was given "Test <role>"). */
+  /** The name on the user (the admin door was given "Test <login>": "Test owner", ..., "Test super"). */
   fullName: string;
 }
 
@@ -41,13 +46,16 @@ function fromEnv(name: string): string {
   return value;
 }
 
-/** The login of a role that the lane made through the admin door. Fails with a plain message when the lane did not start. */
-export function e2eLogin(role: E2eRole): E2eLogin {
-  const name = role.toUpperCase();
+/**
+ * One of the four logins that the lane made through the admin door. Fails with a plain message when the lane did not start. The password is read from the environment of the run and is
+ * meant to be typed into the form, never printed.
+ */
+export function e2eLogin(login: E2eLoginName): E2eLogin {
+  const name = login.toUpperCase();
   return {
     email: fromEnv(`JV_E2E_${name}_EMAIL`),
     password: fromEnv(`JV_E2E_${name}_PASSWORD`),
-    fullName: `Test ${role}`,
+    fullName: `Test ${login}`,
   };
 }
 

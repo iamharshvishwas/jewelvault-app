@@ -13,12 +13,17 @@
 //   - a JV_BUSY is retried ONCE, with the same key, after the Retry-After the API names (S8);
 //   - a gateway error, or any reply that is not JSON (an idle app being started, H7), is "Waking up": the call is retried 1, 2, 4, 8 and 15 seconds later, 30 seconds in all,
 //     with the same key (C7). A network failure is "Offline" at once and is not retried here; the poller backs off 8, 16, then 30 seconds (`nextPollDelayMs`);
+//   - except a call that says `retry: false` (`RequestOptions`): the first answer is its answer, a gateway error, a page that is not JSON and a JV_BUSY end it at once with "Could not
+//     confirm that this was saved." and the re-read hook. The nine writes of People & Roles are such calls: they have no Idempotency-Key, so a try after a write that had gone through
+//     would be a second write (final review of the website, Ruling AB);
 //   - `me` carries the SHA-256 of the API's pricing.ts; it is compared with the build's own, and a mismatch means Save on bills stays off (C12);
 //   - a 401 runs the hook of the session gate (U6), except the wrong password of the login screen;
 //   - a call that saves data tells, when it is over (it worked or it did not), whoever asked to hear it (`onWriteFinished`): the poller of WEB04 polls at once after any write
 //     the screen made (C4);
 //   - a photo goes up as the raw bytes of a file (`upload`, WEB06): the body is the Blob and `Content-Type` is its picture type, never JSON; the address of a photo to show is
-//     `photoUrl`, on the API's origin (P2, P3).
+//     `photoUrl`, on the API's origin (P2, P3);
+//   - the twelve calls of the Super Admin's People & Roles screen (`superTicks` to `superSetRoleActive`) are ordinary calls of this client: the nine writes carry her password again
+//     in the body (R9), never in an address or a header, are refused in the words of `confirmsPassword` in errorMap.ts, and are never tried again by the client (`retry: false`).
 //
 // The module keeps no state of its own besides the connection banner and the pricing check; the session itself (who is signed in) is authStore's (WEB02).
 import { NOTHING_WRITTEN, NOT_ACTIVE_MESSAGE, plainMessage, type MessageOptions } from './errorMap';
@@ -31,6 +36,22 @@ import {
   type OkResponse,
   type PollRequest,
   type PollResponse,
+  type SuperAddPersonBody,
+  type SuperCreateRoleBody,
+  type SuperEditPersonBody,
+  type SuperEditRoleBody,
+  type SuperNewPersonAnswer,
+  type SuperPeopleResponse,
+  type SuperPersonActiveBody,
+  type SuperPersonAnswer,
+  type SuperPersonRoleBody,
+  type SuperResetAnswer,
+  type SuperResetPasswordBody,
+  type SuperRoleActiveBody,
+  type SuperRoleAnswer,
+  type SuperRoleTicksBody,
+  type SuperRolesResponse,
+  type SuperTicksResponse,
   type SyncPage,
   type SyncResource,
   type SyncRows,
@@ -332,6 +353,14 @@ export interface RequestOptions {
   readOnly?: boolean;
   /** The call is a function of section 10 (X1 to X12 except X7): it carries an Idempotency-Key, made here once. */
   idempotent?: boolean;
+  /** The call is one of the Super Admin's People & Roles writes: its body carries her password again (R9), and a refusal of that has the words of errorMap.ts (`plainMessage`). */
+  confirmsPassword?: boolean;
+  /**
+   * Whether the client may try the call again by itself (default: it may). With `false` the first answer is the answer: a gateway error or a reply that is not JSON ("Waking up", C7) and a
+   * JV_BUSY (S8) are not waited for and not retried. They end the call at once: "Could not confirm that this was saved." for a write (and the re-read hook), the plain "busy" or "not
+   * answering" for a read. It is for a write that has no Idempotency-Key: a second try of a write that had gone through would be a second write, refused for a clash with its own work.
+   */
+  retry?: boolean;
   /** The key of an earlier try of the same user action (`error.idempotencyKey`): the retry by hand sends it again. Implies `idempotent`. */
   idempotencyKey?: string;
   /** What to read again if the outcome cannot be confirmed. */
@@ -492,6 +521,8 @@ export function createApiClient(config: ApiClientConfig = {}) {
           write,
           serverMessage: init.serverMessage,
           details: init.details,
+          confirmsPassword: options.confirmsPassword,
+          retryAfterS: init.retryAfterS,
         }),
         write,
         idempotencyKey: key,
@@ -584,7 +615,7 @@ export function createApiClient(config: ApiClientConfig = {}) {
         apiError === null && (reply.kind !== 'json' || GATEWAY_STATUSES.has(status));
       if (notFromTheApi) {
         setConnection('waking');
-        if (wakingTries < WAKING_BACKOFF_MS.length) {
+        if (options.retry !== false && wakingTries < WAKING_BACKOFF_MS.length) {
           await sleep(WAKING_BACKOFF_MS[wakingTries], options.signal);
           wakingTries += 1;
           continue;
@@ -600,7 +631,7 @@ export function createApiClient(config: ApiClientConfig = {}) {
       // ---- the API answered with an S8 body
       const { code, message, details } = apiError.error;
       setConnection(code === 'JV_UNAVAILABLE' ? 'offline' : 'ok');
-      if (code === 'JV_BUSY' && !busyRetried) {
+      if (code === 'JV_BUSY' && !busyRetried && options.retry !== false) {
         busyRetried = true;
         await sleep(retryDelayMs(response.headers.get('retry-after')), options.signal);
         continue;
@@ -621,6 +652,12 @@ export function createApiClient(config: ApiClientConfig = {}) {
       throw error;
     }
   }
+
+  /**
+   * The options of the Super Admin's nine writes: her password again in the body (R9), and no automatic retry. They carry no Idempotency-Key (the API offers none for them), so a try after a
+   * write that had gone through would be a second write, refused for a clash with its own work ("email is already used by another user" for the person just made).
+   */
+  const superWrite = { confirmsPassword: true, retry: false } as const;
 
   const client = {
     request,
@@ -671,6 +708,53 @@ export function createApiClient(config: ApiClientConfig = {}) {
     changePassword: (currentPassword: string, newPassword: string) =>
       request<LoginResponse>('POST', '/v1/auth/change-password', {
         body: { current_password: currentPassword, new_password: newPassword },
+      }),
+
+    // ---- the Super Admin's People & Roles calls (plan: access and roles, Tasks 12 to 14 and 22). Only her session passes the API's gate. The three reads change nothing. Each write
+    // carries her password in the body (R9) and says so with `confirmsPassword`; a role write names the `updated_at` it was made from, and is refused as stale when it is old.
+    // An id or a key is one part of the address (`encodeURIComponent`), so it cannot lead to another route.
+    superTicks: () => request<SuperTicksResponse>('GET', '/v1/super/ticks'),
+    superPeople: () => request<SuperPeopleResponse>('GET', '/v1/super/people'),
+    superRoles: () => request<SuperRolesResponse>('GET', '/v1/super/roles'),
+    superAddPerson: (body: SuperAddPersonBody) =>
+      request<SuperNewPersonAnswer>('POST', '/v1/super/people', { body, ...superWrite }),
+    superEditPerson: (id: string, body: SuperEditPersonBody) =>
+      request<SuperPersonAnswer>('PATCH', `/v1/super/people/${encodeURIComponent(id)}`, {
+        body,
+        ...superWrite,
+      }),
+    superSetPersonRole: (id: string, body: SuperPersonRoleBody) =>
+      request<SuperPersonAnswer>('POST', `/v1/super/people/${encodeURIComponent(id)}/role`, {
+        body,
+        ...superWrite,
+      }),
+    superSetPersonActive: (id: string, body: SuperPersonActiveBody) =>
+      request<SuperPersonAnswer>('POST', `/v1/super/people/${encodeURIComponent(id)}/active`, {
+        body,
+        ...superWrite,
+      }),
+    superResetPassword: (id: string, body: SuperResetPasswordBody) =>
+      request<SuperResetAnswer>(
+        'POST',
+        `/v1/super/people/${encodeURIComponent(id)}/reset-password`,
+        { body, ...superWrite }
+      ),
+    superCreateRole: (body: SuperCreateRoleBody) =>
+      request<SuperRoleAnswer>('POST', '/v1/super/roles', { body, ...superWrite }),
+    superEditRole: (key: string, body: SuperEditRoleBody) =>
+      request<SuperRoleAnswer>('PATCH', `/v1/super/roles/${encodeURIComponent(key)}`, {
+        body,
+        ...superWrite,
+      }),
+    superSetRoleTicks: (key: string, body: SuperRoleTicksBody) =>
+      request<SuperRoleAnswer>('PUT', `/v1/super/roles/${encodeURIComponent(key)}/ticks`, {
+        body,
+        ...superWrite,
+      }),
+    superSetRoleActive: (key: string, body: SuperRoleActiveBody) =>
+      request<SuperRoleAnswer>('POST', `/v1/super/roles/${encodeURIComponent(key)}/active`, {
+        body,
+        ...superWrite,
       }),
 
     // ---- the read side (C3, C4)

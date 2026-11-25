@@ -18,6 +18,7 @@ import {
   savedFineFrom,
   savedPaymentFrom,
 } from '@/lib/payments';
+import { holderFor } from './support/access';
 import { allocationRow, billRow, id, receiptRow } from './support/money-rows';
 
 const BILL = '00000000-0000-4000-8000-0000000b0001';
@@ -370,8 +371,8 @@ describe('PT-W9 (unit half; X3, SF2): the parts of a fine settlement, from the r
 // ------------------------------------------------------------------------------------------------ the words
 
 describe('T-E04 (clause) and Z1, Z2 (screen half): the words of a refused payment', () => {
-  const biller = { role: 'biller', walkIn: false, kind: 'payment' as const };
-  const owner = { role: 'owner', walkIn: false, kind: 'payment' as const };
+  const biller = { who: holderFor('biller'), walkIn: false, kind: 'payment' as const };
+  const owner = { who: holderFor('owner'), walkIn: false, kind: 'payment' as const };
   const limit = {
     limit: '200000.00',
     cash_today: '150000.00',
@@ -386,7 +387,7 @@ describe('T-E04 (clause) and Z1, Z2 (screen half): the words of a refused paymen
     expect(found.message).toContain('₹60,000.00 in this payment');
     expect(found.message).toContain('The owner enters this payment.');
     expect(found.message).toContain('Nothing was changed.');
-    expect(found.cashLimit).toEqual({ ownerMayGiveReason: false });
+    expect(found.cashLimit).toEqual({ mayGiveReason: false });
     expect(found.unconfirmed).toBe(false);
   });
 
@@ -394,7 +395,28 @@ describe('T-E04 (clause) and Z1, Z2 (screen half): the words of a refused paymen
     const found = paymentSaveFailure(apiError('JV_CASH_LIMIT', limit), owner);
     expect(found.message).toMatch(/reason of at least 10 characters/);
     expect(found.message).not.toContain('The owner enters this payment');
-    expect(found.cashLimit).toEqual({ ownerMayGiveReason: true });
+    expect(found.cashLimit).toEqual({ mayGiveReason: true });
+  });
+
+  it('JV_CASH_LIMIT follows the tick, not the role: a role with only the cash-over-limit tick is asked for a reason, a role that takes payments without it is told the owner enters the payment', () => {
+    const manager = {
+      who: holderFor({ ticks: ['cash_over_limit'] }),
+      walkIn: false,
+      kind: 'payment' as const,
+    };
+    const asked = paymentSaveFailure(apiError('JV_CASH_LIMIT', limit), manager);
+    expect(asked.cashLimit).toEqual({ mayGiveReason: true });
+    expect(asked.message).toMatch(/reason of at least 10 characters/);
+    const withoutTick = {
+      who: holderFor({ ticks: ['customer_view', 'bill_view', 'payment_receive'] }),
+      walkIn: false,
+      kind: 'payment' as const,
+    };
+    const refused = paymentSaveFailure(apiError('JV_CASH_LIMIT', limit), withoutTick);
+    expect(refused.cashLimit).toEqual({ mayGiveReason: false });
+    expect(refused.message).toContain('The owner enters this payment.');
+    const nobody = paymentSaveFailure(apiError('JV_CASH_LIMIT', limit), { ...biller, who: null });
+    expect(nobody.cashLimit).toEqual({ mayGiveReason: false });
   });
 
   it('JV_CASH_LIMIT for a fine settled in cash names the settlement, not a payment', () => {
@@ -405,9 +427,9 @@ describe('T-E04 (clause) and Z1, Z2 (screen half): the words of a refused paymen
 
   it('JV_CASH_LIMIT for the walk-in: "Select or create the customer", for everybody, no field for a reason', () => {
     const details = { limit: '200000.00', this_call: '200000.00', date: '2026-10-15' };
-    for (const role of ['biller', 'owner']) {
+    for (const role of ['biller', 'owner'] as const) {
       const found = paymentSaveFailure(apiError('JV_CASH_LIMIT', details), {
-        role,
+        who: holderFor(role),
         walkIn: true,
         kind: 'payment',
       });
@@ -419,7 +441,7 @@ describe('T-E04 (clause) and Z1, Z2 (screen half): the words of a refused paymen
 
   it("JV_OVERPAYMENT for the walk-in: an unnamed bill, and more than the named bill's pending (with that figure)", () => {
     const noBill = paymentSaveFailure(apiError('JV_OVERPAYMENT', { field: 'bill_id' }), {
-      role: 'biller',
+      who: holderFor('biller'),
       walkIn: true,
       kind: 'payment',
     });
@@ -427,14 +449,14 @@ describe('T-E04 (clause) and Z1, Z2 (screen half): the words of a refused paymen
     expect(noBill.message).toContain('Nothing was changed.');
     const tooMuch = paymentSaveFailure(
       apiError('JV_OVERPAYMENT', { field: 'amount', pending: '400.00' }),
-      { role: 'biller', walkIn: true, kind: 'payment' }
+      { who: holderFor('biller'), walkIn: true, kind: 'payment' }
     );
     expect(tooMuch.message).toContain('₹400.00');
     expect(tooMuch.message).toContain('Nothing was changed.');
   });
 
   it("JV_FINE_EXCEEDS names the maximum, in grams; for the walk-in it is that bill's maximum; with no bill named it asks for one", () => {
-    const fine = { role: 'biller', walkIn: false, kind: 'fine' as const };
+    const fine = { who: holderFor('biller'), walkIn: false, kind: 'fine' as const };
     const named = paymentSaveFailure(
       apiError('JV_FINE_EXCEEDS', { field: 'grams', max_grams: '15.000' }),
       fine
@@ -500,12 +522,14 @@ describe('T-E04 (clause) and Z1, Z2 (screen half): the words of a refused paymen
     expect(grams.message).not.toMatch(/\bgrams is\b/);
   });
 
-  it('a biller who is somehow refused the reason is told the owner enters the payment', () => {
+  it('a person whose role cannot give the reason, and is somehow refused it, is told the owner enters the payment (rule E: the words say the role, not the owner)', () => {
     const found = paymentSaveFailure(
       apiError('JV_FORBIDDEN', { field: 'cash_override_reason' }, { status: 403 }),
       biller
     );
-    expect(found.message).toContain('Only the owner can give a reason');
+    expect(found.message).toContain('Your role cannot give a reason for cash over the limit');
+    expect(found.message).toContain('the owner enters this payment');
+    expect(found.message).not.toContain('Only the owner');
     expect(found.message).toContain('Nothing was changed.');
   });
 

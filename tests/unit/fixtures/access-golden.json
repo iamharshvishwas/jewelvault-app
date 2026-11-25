@@ -1,0 +1,119 @@
+{
+  "note": "What each built-in role opens and loads, recorded on 19 Nov 2026 from the old canAccessPath (src/lib/authStore.ts) and resourcesFor (src/lib/cache/hydrate.ts) at 4f9c1b3, before the change to ticks. Never edited afterwards (plan rule P1).",
+  "roles": {
+    "owner": {
+      "screens": {
+        "/": true,
+        "/billing-pos": true,
+        "/estimate": true,
+        "/customer-ledger": true,
+        "/inventory-management": true,
+        "/design-detail": true,
+        "/print-tags": true,
+        "/stock-catalogue": true,
+        "/order-book": true,
+        "/add-design": true,
+        "/edit-stock": true,
+        "/reports": true,
+        "/settings": true,
+        "/activity-log": true,
+        "/scan-detail": true,
+        "/billing-pos/x": true,
+        "/billing-pos?a=1": true,
+        "/nope": false,
+        "/people-roles": false
+      },
+      "resources": [
+        "settings",
+        "daily-rates",
+        "categories",
+        "subcategories",
+        "designs",
+        "skus",
+        "sku-private",
+        "users",
+        "customers",
+        "bills",
+        "bill-summary",
+        "bill-items",
+        "receipts",
+        "receipt-allocations",
+        "customer-balances",
+        "orders"
+      ]
+    },
+    "biller": {
+      "screens": {
+        "/": true,
+        "/billing-pos": true,
+        "/estimate": true,
+        "/customer-ledger": true,
+        "/inventory-management": true,
+        "/design-detail": true,
+        "/print-tags": true,
+        "/stock-catalogue": true,
+        "/order-book": true,
+        "/add-design": false,
+        "/edit-stock": false,
+        "/reports": false,
+        "/settings": false,
+        "/activity-log": false,
+        "/scan-detail": false,
+        "/billing-pos/x": true,
+        "/billing-pos?a=1": true,
+        "/nope": false,
+        "/people-roles": false
+      },
+      "resources": [
+        "settings",
+        "daily-rates",
+        "categories",
+        "subcategories",
+        "designs",
+        "skus",
+        "users",
+        "customers",
+        "bills",
+        "bill-summary",
+        "bill-items",
+        "receipts",
+        "receipt-allocations",
+        "customer-balances",
+        "orders"
+      ]
+    },
+    "staff": {
+      "screens": {
+        "/": true,
+        "/billing-pos": false,
+        "/estimate": false,
+        "/customer-ledger": false,
+        "/inventory-management": true,
+        "/design-detail": true,
+        "/print-tags": true,
+        "/stock-catalogue": true,
+        "/order-book": true,
+        "/add-design": true,
+        "/edit-stock": true,
+        "/reports": false,
+        "/settings": false,
+        "/activity-log": false,
+        "/scan-detail": false,
+        "/billing-pos/x": false,
+        "/billing-pos?a=1": false,
+        "/nope": false,
+        "/people-roles": false
+      },
+      "resources": [
+        "settings",
+        "daily-rates",
+        "categories",
+        "subcategories",
+        "designs",
+        "skus",
+        "users",
+        "orders"
+      ]
+    }
+  }
+}

@@ -4,8 +4,8 @@
 // keeps fresh (src/lib/cache); this file reads them from memory and makes the shapes the screens know. Nothing is kept in browser storage: the old prototype key is neither read nor written
 // nor wiped, and there is no copy of the orders outside memory.
 //
-//   - the list (`getOrders`) and the dashboard's "Orders due" (`ordersDue`) are read from memory. The customer's name and mobile are looked up for the owner and the biller only: staff are
-//     never told who an order is for (ruling A4, F-extra-1), so for them the customer is not even looked up;
+//   - the list (`getOrders`) and the dashboard's "Orders due" (`ordersDue`) are read from memory. The customer's name and mobile are looked up only for a person who may see customers
+//     (`customer_view`: the owner and the biller): staff are never told who an order is for (ruling A4, F-extra-1), so for them the customer is not even looked up;
 //   - a NEW order (`createOrder`) uploads its photos first under the order's id, which the page makes (P2, C11), then makes ONE call with an Idempotency-Key; nothing is shown until the API
 //     has answered with ITS number (`ORD-2026-0001`) and status (`open`);
 //   - a change of status (`setOrderStatus`) and a photo added later (`addOrderPhoto`) are ordinary edits (src/lib/cache/edit.ts): shown at once, one PATCH with the exact stamp of the row,
@@ -37,7 +37,7 @@ export interface OrderView {
   /** `ORD-2026-0001`. */
   orderNo: string;
   customerId: string;
-  /** Null for staff (never looked up), or when the customer is not in memory. */
+  /** Null for a person who may not see customers (never looked up), or when the customer is not in memory. */
   customerName: string | null;
   customerMobile: string | null;
   description: string;
@@ -57,7 +57,7 @@ export interface DueOrder extends OrderView {
 }
 
 export interface ReadOptions {
-  /** The owner and the biller: true. Staff: false (the default), and the customer is not looked up at all. */
+  /** A person who may see customers (`customer_view`): true. Anybody else: false (the default), and the customer is not looked up at all. */
   withCustomers?: boolean;
 }
 

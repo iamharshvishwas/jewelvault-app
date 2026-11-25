@@ -11,6 +11,8 @@
 // Wire format of values (S3, S5): money and weight are DECIMAL TEXT ("257612.00", "35.420"), never a JSON number; ids are lower-case UUID text; a
 // timestamp is UTC text with six decimals ("2026-10-15T09:41:12.123456Z"), kept and sent back as the exact text; a business date is "YYYY-MM-DD".
 
+import type { TickKey } from '../access';
+
 /** Rupees or a rate as text: "257612.00". */
 export type MoneyText = string;
 /** Grams as text: "35.420". */
@@ -20,8 +22,6 @@ export type UuidText = string;
 export type TimestampText = string;
 /** A business date in Asia/Kolkata: "2026-10-15". */
 export type DateText = string;
-
-export type Role = 'owner' | 'biller' | 'staff';
 
 // ------------------------------------------------------------------------------------------------ errors (S8, NODE-DESIGN 4.5)
 
@@ -69,12 +69,27 @@ export interface ErrorBody {
 
 // ------------------------------------------------------------------------------------------------ session calls (NODE-DESIGN 2.5; handoff API05)
 
+/** The person as the login and the password change answer: `me` says more (`MeUser`). */
 export interface SessionUser {
   id: UuidText;
   email: string;
   full_name: string;
-  role: Role;
+  /** The key of the role (`owner`, `biller`, `staff`, or a role the Super Admin made). For display: what the person may do is `permissions`. */
+  role: string;
   must_change_password: boolean;
+}
+
+/** The person as `GET /v1/auth/me` says them (plan: access and roles, R6). */
+export interface MeUser extends SessionUser {
+  /** The name of the role, as the People & Roles screen shows it. */
+  role_name: string;
+  /** The ticks of the role, in catalogue order. A key this code does not know is ignored. */
+  permissions: string[];
+  is_super_admin: boolean;
+  /** An opaque text that changes whenever the role, its ticks or the Super Admin flag change (R5). The screen only compares it. */
+  access: string;
+  /** The sync resources the person may read, named as the poll names them. */
+  reads: string[];
 }
 
 export interface SessionLife {
@@ -90,13 +105,142 @@ export interface LoginResponse extends SessionLife {
 }
 
 /** `GET /v1/auth/me`. `pricing_sha256` is the SHA-256 of the API's copy of pricing.ts (C12). */
-export interface MeResponse extends LoginResponse {
+export interface MeResponse extends SessionLife {
+  user: MeUser;
   pricing_sha256: string | null;
 }
 
 /** `logout` and `activity`. */
 export interface OkResponse {
   ok: true;
+}
+
+// ------------------------------------------------------------------------------------------------ People & Roles (the Super Admin's calls, `/v1/super/...`; plan: access and roles, Tasks 12 to 14 and 22)
+
+// Shapes from the text of the plan (the API of Tasks 12 to 14 is built beside this site; Task 26 runs the real calls and corrects any drift). Only the Super Admin's session passes the
+// gate of any of them. Each write carries `password`: the Super Admin's own, asked again for this write (R9).
+
+/** One tick of the catalogue as `GET /v1/super/ticks` sends it. `label` is the same text as `TICK_LABELS` of access.ts; `help` is the plain help text under the tick, or null. */
+export interface TickInfo {
+  key: TickKey;
+  /** The group of the screen: Stock, Photos, Money, Orders, Records or Shop. */
+  group: string;
+  label: string;
+  help: string | null;
+  /** A sensitive tick needs a second confirm when it is turned on. */
+  sensitive: boolean;
+  /** The ticks this one needs directly (the screen closes them over their own needs). */
+  needs: TickKey[];
+}
+
+/** `GET /v1/super/ticks`: the groups in screen order and the 32 ticks in catalogue order. */
+export interface SuperTicksResponse {
+  groups: string[];
+  ticks: TickInfo[];
+}
+
+/** A login as the People & Roles list shows it. */
+export interface SuperPerson {
+  id: UuidText;
+  full_name: string;
+  email: string;
+  /** The key of the person's role. */
+  role: string;
+  /** The name of that role now. */
+  role_name: string;
+  active: boolean;
+  is_super_admin: boolean;
+  last_login_at: TimestampText | null;
+  /** The exact text of the row's `updated_at`. */
+  updated_at: TimestampText;
+}
+
+/** A role as the People & Roles list shows it. */
+export interface SuperRole {
+  /** The key never changes (a rename changes `name` only). */
+  key: string;
+  name: string;
+  description: string;
+  active: boolean;
+  /** True for the Owner only: that role cannot be changed. */
+  fixed: boolean;
+  /** The ticks of the role, in catalogue order (the Owner's are all 32). */
+  ticks: TickKey[];
+  /** How many ACTIVE logins hold the role. */
+  people: number;
+  /** The exact text a write names as `expected_updated_at`: a write on an older copy is refused as stale. */
+  updated_at: TimestampText;
+}
+
+/** `GET /v1/super/people`, ordered by when the logins were made. */
+export interface SuperPeopleResponse {
+  people: SuperPerson[];
+}
+
+/** `GET /v1/super/roles`. */
+export interface SuperRolesResponse {
+  roles: SuperRole[];
+}
+
+export interface SuperAddPersonBody {
+  full_name: string;
+  email: string;
+  role: string;
+  password: string;
+}
+export interface SuperEditPersonBody {
+  changes: { full_name?: string; email?: string };
+  password: string;
+}
+export interface SuperPersonRoleBody {
+  role: string;
+  password: string;
+}
+export interface SuperPersonActiveBody {
+  active: boolean;
+  password: string;
+}
+export interface SuperResetPasswordBody {
+  password: string;
+}
+export interface SuperCreateRoleBody {
+  /** The key of the role to start from. */
+  copy_of: string;
+  name: string;
+  description?: string;
+  password: string;
+}
+export interface SuperEditRoleBody {
+  expected_updated_at: TimestampText;
+  changes: { name?: string; description?: string };
+  password: string;
+}
+export interface SuperRoleTicksBody {
+  expected_updated_at: TimestampText;
+  ticks: TickKey[];
+  password: string;
+}
+export interface SuperRoleActiveBody {
+  expected_updated_at: TimestampText;
+  active: boolean;
+  password: string;
+}
+
+/** What the people writes answer: the person as listed. */
+export interface SuperPersonAnswer {
+  person: SuperPerson;
+}
+/** Adding a person answers with the temporary password too: shown once, never kept. */
+export interface SuperNewPersonAnswer extends SuperPersonAnswer {
+  temporary_password: string;
+}
+/** Resetting a password answers with a new temporary password (shown once) and how many sessions of the person ended. */
+export interface SuperResetAnswer extends SuperNewPersonAnswer {
+  sessions_ended: number;
+}
+/** What the role writes answer: the role as listed. */
+export interface SuperRoleAnswer {
+  role: SuperRole;
 }
 
 // ------------------------------------------------------------------------------------------------ rows of the sync resources (A4, C3; READ_COLUMNS of the API)
@@ -126,7 +270,8 @@ export type SkuStatus =
 export interface UserRow {
   id: UuidText;
   full_name: string;
-  role: Role;
+  /** The role key (see `SessionUser.role`). */
+  role: string;
   active: boolean;
   updated_at: TimestampText;
 }
@@ -443,8 +588,10 @@ export interface PollRequest {
 export interface PollResponse {
   results: { [R in SyncResource]?: { rows: SyncRows[R][]; next: SyncNext | null } };
   server_time: TimestampText;
-  /** The caller's role as the database says it now (C4, C18). */
-  role: Role;
+  /** The caller's role key as the database says it now (C4, C18). */
+  role: string;
+  /** The caller's access text as the database says it now (R5): the poller compares it with the session's. */
+  access: string;
 }
 
 // ------------------------------------------------------------------------------------------------ the writing functions (NODE-DESIGN 4.3; only X7 is built)

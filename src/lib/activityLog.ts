@@ -1,13 +1,16 @@
-// FB-D4 (Siddhi #12): the owner's activity log. `GET /v1/audit-log` gives the audit rows newest first, 200 to a page (src/lib/cache/booksServer.ts `readAuditPage`); this file turns a row into the
-// words the owner reads and holds the pages the screen has drawn.
+// FB-D4 (Siddhi #12): the Activity Log. `GET /v1/audit-log` gives the audit rows newest first, 200 to a page (src/lib/cache/booksServer.ts `readAuditPage`) to a person whose role holds "See the Activity
+// Log and health checks" (`activity_log`; among today's roles the owner alone); this file turns a row into the words that person reads and holds the pages the screen has drawn.
 //
 //   - `describeAudit`: when (India, `14 Nov 2026, 7:05 pm`), who (the user's name, `System` for an actor that is not a known user) and what, in plain words. A login, a logout and a change of
 //     password are `event` rows of the table `users`; a new bill is "New estimate <bill_no>" (dues brought forward, `doc_type` opening_balance: "Opening balance <bill_no>"), a receipt is worded by
 //     its `kind` ("Payment <amount>", "Money handed back <amount>", "Silver paid in cash <amount>", "Silver received <grams> g": a refund is never read as a payment), an update of a piece or a
-//     design is "Stock edited <number>"; anything else is "<Action> <table>". The amount is the receipt's own text, written as the rest of the app writes rupees, the grams the receipt's
-//     own text through `formatGrams`.
+//     design is "Stock edited <number>"; the Super Admin's changes in People & Roles are `event` rows of the tables `roles` and `users` whose facts give the words ("New role Sales", "Role Sales:
+//     turned on <the ticks in words>", "Asha Verma now has the role Sales", "Password reset for Asha Verma"), and the plain insert and update of a role are "New role <name>" and "Role <name>
+//     changed"; anything else is "<Action> <table>". The amount is the receipt's own text, written as the rest of the app writes rupees, the grams the receipt's own text through `formatGrams`.
+//     A fact that is missing leaves its words out ("Role changed", "Person edited"): the line never says `undefined`.
 //   - `createAuditFeed`: the pages. It reads ONE page when the screen opens and one more for each press of "Load more", never ahead of the person (a shop that has logged 10,000 rows draws 200 until
 //     it is asked for more). A page that fails keeps the rows already drawn and can be asked again.
+import { TICK_LABELS, type TickKey } from './access';
 import { PricingError, formatGrams, parseGrams, parseRupees } from './pricing';
 import { paiseShown } from './ledgerView';
 import type { AuditPageResponse, AuditRow, OrderStatus } from './api/types';
@@ -108,11 +111,98 @@ function orderWords(row: AuditRow): string {
   return `${joined('Order', number)} edited`;
 }
 
+/** A tick key in the words of the screen. A key with no words (one a later release dropped, or a hand edit) is shown as it is. */
+function tickWords(key: string): string {
+  return Object.hasOwn(TICK_LABELS, key) ? TICK_LABELS[key as TickKey] : key;
+}
+
+/** The ticks of a `turned_on` or `turned_off` fact in words, with commas between. Nothing when the fact is no list or holds no key. */
+function ticksWords(list: unknown): string {
+  if (!Array.isArray(list)) return '';
+  return list
+    .map(textOf)
+    .filter((key) => key !== '')
+    .map(tickWords)
+    .join(', ');
+}
+
+/** "Role Sales: turned on <ticks>; turned off <ticks>", a part with nothing left out. An event that names no tick at all is "Role Sales changed". */
+function ticksChangedWords(role: string, turnedOn: unknown, turnedOff: unknown): string {
+  const on = ticksWords(turnedOn);
+  const off = ticksWords(turnedOff);
+  const parts: string[] = [];
+  if (on !== '') parts.push(`turned on ${on}`);
+  if (off !== '') parts.push(`turned off ${off}`);
+  return parts.length === 0 ? `${role} changed` : `${role}: ${parts.join('; ')}`;
+}
+
+/** What the Super Admin's change of a role says, by the `event` of its row. A role the row does not name is just "Role". Null for an event this screen has no words for. */
+function roleEventWords(facts: Record<string, unknown> | null): string | null {
+  const name = textOf(facts?.name);
+  const role = joined('Role', name);
+  switch (textOf(facts?.event)) {
+    case 'role_created':
+      return joined('New role', name);
+    case 'role_renamed': {
+      const from = textOf(facts?.from);
+      const to = textOf(facts?.to);
+      return from !== '' && to !== '' ? `Role renamed ${from} to ${to}` : `${role} renamed`;
+    }
+    case 'role_described':
+      return `${role}: description changed`;
+    case 'role_ticks_changed':
+      return ticksChangedWords(role, facts?.turned_on, facts?.turned_off);
+    case 'role_switched_off':
+      return `${role} switched off`;
+    case 'role_switched_on':
+      return `${role} switched on`;
+    default:
+      return null;
+  }
+}
+
+/** A row of the table `roles`: the plain insert and update that its trigger writes, and the Super Admin's events. Null for an event this screen has no words for. */
+function roleWords(row: AuditRow): string | null {
+  if (row.action === 'insert') return joined('New role', textOf(row.new_row?.name));
+  if (row.action === 'update') return `${joined('Role', textOf(row.new_row?.name))} changed`;
+  return row.action === 'event' ? roleEventWords(row.new_row) : null;
+}
+
+/** What the Super Admin's change of a person says, by the `event` of its row (a login, a logout and a change of password are worded by `EVENT_WORDS`). A person the row does not name is just "Person". Null for an event this screen has no words for. */
+function personEventWords(facts: Record<string, unknown> | null): string | null {
+  const name = textOf(facts?.name);
+  const person = name === '' ? 'Person' : name;
+  switch (textOf(facts?.event)) {
+    case 'person_added':
+      return joined('Person added', name);
+    case 'person_edited':
+      return `${joined('Person', name)} edited`;
+    case 'person_role_changed': {
+      const role = textOf(facts?.to_name);
+      return `${person} now has ${role === '' ? 'a new role' : `the role ${role}`}`;
+    }
+    case 'person_switched_off':
+      return `${person} switched off`;
+    case 'person_switched_on':
+      return `${person} switched on`;
+    case 'person_password_reset':
+      return name === '' ? 'Password reset' : `Password reset for ${name}`;
+    default:
+      return null;
+  }
+}
+
 function whatShown(row: AuditRow): string {
   const facts = row.new_row;
   if (row.action === 'event' && row.table_name === 'users') {
     const named = EVENT_WORDS[textOf(facts?.event)];
     if (named !== undefined) return named;
+    const person = personEventWords(facts);
+    if (person !== null) return person;
+  }
+  if (row.table_name === 'roles') {
+    const role = roleWords(row);
+    if (role !== null) return role;
   }
   if (row.action === 'insert' && row.table_name === 'bills') {
     return joined(
