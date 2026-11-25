@@ -7,8 +7,9 @@
 // Both are public: no session and no cookie is needed, and both go through the one API client of the site (src/lib/api/client.ts), so the address, the headers and the plain
 // messages of every failure are the ones of every other call. Like `login` they save no business data (`readOnly`): a failure never says "saved".
 // The token is a secret. It travels in the body of the one call that uses it, and nowhere else: it is not in an address, a header, a message or a log line made here.
+// A saved password also makes the session store look at this browser's session again (see `resetPassword`).
 import { api as siteApi, isApiError, type ApiClient } from '@/lib/api/client';
-import { newPasswordReason } from '@/lib/authStore';
+import { newPasswordReason, reviewRole } from '@/lib/authStore';
 
 // ------------------------------------------------------------------------------------------------ the words of the screens
 
@@ -68,11 +69,16 @@ export async function requestResetLink(
 /**
  * Saves the new password with the link's token. A refused token is the screen's own sentence and `field: 'token'` (the link is no good, so the form goes); a refused new password is
  * the API's reason, said the way the change-password screen says it, and `field: 'new_password'`. Any other failure is the plain message of the client's map, with no field.
+ *
+ * Once it is saved the API has ended every session of that login, and this browser may hold one of them (the person opened the link while signed in as that login). So on the 200 the
+ * session store is made to look at its session at once (`recheckSession`, by default the store's `reviewRole`: it asks `me`): a 401 shows sign-in, as it would at the next poll but
+ * without the minutes in between, and a browser signed in as another login gets that login's own answer and keeps it. Nothing is waited for: the screen says "changed" at once.
  */
 export async function resetPassword(
   token: string,
   newPassword: string,
-  client: ApiClient = siteApi
+  client: ApiClient = siteApi,
+  recheckSession: () => unknown = reviewRole
 ): Promise<{ ok: true } | { error: string; field?: 'token' | 'new_password' }> {
   try {
     await client.post(
@@ -80,7 +86,6 @@ export async function resetPassword(
       { token, new_password: newPassword },
       { readOnly: true }
     );
-    return { ok: true };
   } catch (error) {
     if (!isApiError(error)) return { error: 'Could not change the password. Try again.' };
     if (error.code === 'JV_INVALID_INPUT') {
@@ -90,4 +95,6 @@ export async function resetPassword(
     }
     return { error: error.message };
   }
+  void recheckSession();
+  return { ok: true };
 }

@@ -2,7 +2,9 @@
 //   - the two pages open whatever the session state: the layout decides on the path, before its loading / sign-in / role checks (Review Focus 3);
 //   - the reset page never shows a blank or broken form: no token, a short or a damaged one is the bad-link sentence with a link to ask again (Review Focus 2),
 //     and the token is read from `#t=` once, kept in state and never drawn on the page;
-//   - the two calls map the API's answers to the words of the screens, with a stubbed `fetch`.
+//   - the two calls map the API's answers to the words of the screens, with a stubbed `fetch`;
+//   - after the password is saved the session store looks at the session at once (Review Focus 3): a browser signed in as the login that was reset shows sign-in, one signed in as
+//     another login keeps its session. That part runs the real client and the real session store over a stubbed `fetch`.
 //
 // The screens are drawn with renderToStaticMarkup (a node test: no effects run, no browser). What happens after a click (the success sentence, the error under
 // the fields) is the e2e lane's job (tests/e2e/forgot-password.spec.ts).
@@ -18,6 +20,7 @@ import ResetPasswordScreen from '@/components/ResetPasswordScreen';
 import { SCREENS, canAccessPath } from '@/lib/access';
 import { createApiClient, type ApiClient } from '@/lib/api/client';
 import { plainMessage } from '@/lib/api/errorMap';
+import { createSessionStore } from '@/lib/authStore';
 import {
   BAD_LINK_MESSAGE,
   LINK_SENT_MESSAGE,
@@ -28,6 +31,7 @@ import {
   standalonePathScreen,
   tokenFromHash,
 } from '@/lib/passwordReset';
+import { accessFor } from './support/access';
 
 // ------------------------------------------------------------------------------------------------ what the layout reads (its path and its session)
 
@@ -35,6 +39,8 @@ const layoutInput = vi.hoisted(() => ({
   pathname: '/',
   state: { status: 'signedOut' } as Record<string, unknown>,
 }));
+/** The store's own `reviewRole` (the re-check after a reset) is replaced by a spy, to see that `resetPassword` calls it by default. */
+const sessionCheck = vi.hoisted(() => ({ reviewRole: vi.fn(async () => 'same' as const) }));
 
 vi.mock('next/navigation', async (importOriginal) => ({
   ...(await importOriginal<typeof import('next/navigation')>()),
@@ -44,6 +50,7 @@ vi.mock('next/navigation', async (importOriginal) => ({
 vi.mock('@/lib/authStore', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/authStore')>()),
   useSession: () => layoutInput.state,
+  reviewRole: sessionCheck.reviewRole,
 }));
 
 // ------------------------------------------------------------------------------------------------ helpers
@@ -427,5 +434,155 @@ describe('resetPassword', () => {
       expect(text).not.toContain('a long new phrase 77');
       expect(text).not.toMatch(/JV_/);
     }
+  });
+});
+
+describe('after the password is saved the session store looks at the session again (Review Focus 3)', () => {
+  const MINE = accessFor('biller');
+  const LIFE = { idle_timeout_s: 43200, absolute_expires_at: '2026-10-30T00:00:00.000000Z' };
+  const LOGIN_ID = '00000000-0000-4000-8000-000000000001';
+  const person = {
+    id: LOGIN_ID,
+    email: 'biller@jv.test',
+    full_name: 'Test biller',
+    role: 'biller',
+    must_change_password: false,
+    role_name: MINE.roleName,
+    permissions: MINE.permissions,
+    is_super_admin: MINE.isSuperAdmin,
+    access: MINE.access,
+    reads: MINE.reads,
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ now: Date.UTC(2026, 10, 26, 9, 0, 0) });
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** One browser: the real client and the real session store over a fake server. `me` and the reset route answer as the test says. */
+  function browser() {
+    const sent: string[] = [];
+    const answers = {
+      me: () => json(200, { user: person, ...LIFE, pricing_sha256: null }) as Response,
+      reset: () => json(200, { ok: true }) as Response,
+    };
+    const stubbed = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const path = new URL(String(input)).pathname;
+      sent.push(`${init.method ?? 'GET'} ${path}`);
+      if (path === '/v1/auth/login') {
+        const { id, email, full_name, role, must_change_password } = person;
+        return json(200, { user: { id, email, full_name, role, must_change_password }, ...LIFE });
+      }
+      if (path === '/v1/auth/me') return answers.me();
+      if (path === '/v1/auth/reset-password') return answers.reset();
+      if (path === '/v1/auth/logout' || path === '/v1/auth/activity')
+        return json(200, { ok: true });
+      throw new TypeError('fetch failed');
+    });
+    const api = createApiClient({
+      baseUrl: BASE,
+      fetch: stubbed as unknown as typeof globalThis.fetch,
+      sleep: async () => undefined,
+    });
+    const host = {
+      input: new EventTarget(),
+      visibility: Object.assign(new EventTarget(), { visibilityState: 'visible' }),
+    };
+    const store = createSessionStore({ api, host, preview: false });
+    const asked = () => sent.filter((call) => call === 'GET /v1/auth/me').length;
+    return { api, store, answers, sent, asked };
+  }
+  const NEW_PASSWORD = 'a long new phrase 77';
+  /** The API's answer once every session of the login is ended. */
+  const sessionGone = () => refusal(401, 'JV_SESSION_EXPIRED', 'Your session has ended.');
+
+  it('a browser signed in as the login that was reset shows sign-in as soon as the password is saved', async () => {
+    const t = browser();
+    await expect(t.store.signIn(person.email, 'the-old-one-for-the-test')).resolves.toEqual({
+      error: null,
+    });
+    expect(t.store.getState().status).toBe('signedIn');
+    expect(t.asked()).toBe(1);
+
+    // the API ends every session of the login when the new password is saved
+    t.answers.me = sessionGone;
+    await expect(resetPassword(TOKEN, NEW_PASSWORD, t.api, t.store.reviewRole)).resolves.toEqual({
+      ok: true,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(t.asked()).toBe(2); // asked at once, not at the next poll
+    expect(t.store.getState().status).toBe('signedOut');
+    expect(t.store.getState().session).toBeNull();
+  });
+
+  it('a browser signed in as another login keeps its session (the reset ended only the sessions of the login of the link)', async () => {
+    const t = browser();
+    await t.store.signIn(person.email, 'the-old-one-for-the-test');
+    const before = t.store.getState();
+
+    await expect(resetPassword(TOKEN, NEW_PASSWORD, t.api, t.store.reviewRole)).resolves.toEqual({
+      ok: true,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(t.asked()).toBe(2); // it did look
+    expect(t.store.getState()).toBe(before); // and nothing changed
+    expect(t.store.getState().status).toBe('signedIn');
+  });
+
+  it('a refused link or password looks at nothing: the session is as it was', async () => {
+    const t = browser();
+    await t.store.signIn(person.email, 'the-old-one-for-the-test');
+    t.answers.me = sessionGone; // had it looked, sign-in would show
+    for (const field of ['token', 'new_password']) {
+      t.answers.reset = () =>
+        refusal(422, 'JV_INVALID_INPUT', `${field} is refused`, { field }) as Response;
+      await expect(
+        resetPassword(TOKEN, NEW_PASSWORD, t.api, t.store.reviewRole)
+      ).resolves.toMatchObject({
+        field,
+      });
+    }
+    t.answers.reset = () => refusal(500, 'JV_INTERNAL', 'boom') as Response;
+    await resetPassword(TOKEN, NEW_PASSWORD, t.api, t.store.reviewRole);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(t.asked()).toBe(1);
+    expect(t.store.getState().status).toBe('signedIn');
+  });
+
+  it('a browser with nobody signed in makes no extra call', async () => {
+    const t = browser();
+    t.answers.me = sessionGone;
+    t.store.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.store.getState().status).toBe('signedOut');
+    const before = t.sent.length;
+
+    await resetPassword(TOKEN, NEW_PASSWORD, t.api, t.store.reviewRole);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(t.sent.slice(before)).toEqual(['POST /v1/auth/reset-password']);
+  });
+
+  it("by default it is the site's own store that is asked, once, after the 200 and not after a refusal", async () => {
+    sessionCheck.reviewRole.mockClear();
+    await resetPassword(
+      TOKEN,
+      NEW_PASSWORD,
+      make(refusal(422, 'JV_INVALID_INPUT', 'x', { field: 'token' })).client
+    );
+    await resetPassword(TOKEN, NEW_PASSWORD, make(new TypeError('Failed to fetch')).client);
+    expect(sessionCheck.reviewRole).not.toHaveBeenCalled();
+
+    const { client, calls } = make(json(200, { ok: true }));
+    await resetPassword(TOKEN, NEW_PASSWORD, client);
+    expect(calls).toHaveLength(1);
+    expect(sessionCheck.reviewRole).toHaveBeenCalledTimes(1);
   });
 });
