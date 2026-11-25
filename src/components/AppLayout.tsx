@@ -10,6 +10,7 @@ import ChangePasswordScreen from './ChangePasswordScreen';
 import ConnectionBanner from './ConnectionBanner';
 import { canAccessPath } from '@/lib/access';
 import { PREVIEW_MODE, retrySession, signOut, useSession } from '@/lib/authStore';
+import { standalonePathScreen } from '@/lib/passwordReset';
 import { holderOf } from '@/lib/useAccess';
 import {
   isGateOpen,
@@ -35,6 +36,8 @@ interface AppLayoutProps {
 // WEB03 (C2): between the login and the app stands the data gate. A signed-in person sees no data page until the first full hydrate of THIS access in THIS
 // epoch has finished (src/lib/cache/hydrate.ts): "3 of 8 tables" while it runs, the plain message and a retry button if it fails, never sample data and
 // never an empty list. The load lives at module level, so moving from page to page (each page wraps itself in this layout) never loads again.
+// Password help (DESIGN part 2): two pages stand before all of this, /forgot-password and /reset-password. A person who forgot the password has no session, and one who is signed in on
+// this browser and opens the link of a mail must still see the page of the link, so the layout shows the page and nothing else, whatever the session state (standalonePathScreen).
 export default function AppLayout({ children }: AppLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const sessionState = useSession();
@@ -69,6 +72,9 @@ export default function AppLayout({ children }: AppLayoutProps) {
   useEffect(() => {
     if (status === 'signedIn' && access && reads) startHydrate({ access, reads }, epoch);
   }, [status, access, reads, epoch]);
+
+  // before the checks of the session below, and not part of the role check of paths (src/lib/access.ts: neither path is a screen of the access table)
+  if (standalonePathScreen(pathname || '/') !== null) return <>{children}</>;
 
   if (status === 'error') {
     return (

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import AppLogo from '@/components/ui/AppLogo';
 import PasswordField from '@/components/ui/PasswordField';
 import { signIn } from '@/lib/authStore';
@@ -65,7 +66,16 @@ export default function LoginScreen({ notice }: { notice: string | null }) {
             onChange={(event) => setPassword(event.target.value)}
             autoComplete="current-password"
             required
-          />
+          >
+            <div className="mt-1 text-right">
+              <Link
+                href="/forgot-password"
+                className="text-xs font-semibold text-primary hover:underline"
+              >
+                Forgot password?
+              </Link>
+            </div>
+          </PasswordField>
           {error && (
             <p role="alert" className="text-xs font-semibold text-red-600">
               {error}
