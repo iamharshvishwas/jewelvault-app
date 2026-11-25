@@ -72,7 +72,8 @@ export async function requestResetLink(
  *
  * Once it is saved the API has ended every session of that login, and this browser may hold one of them (the person opened the link while signed in as that login). So on the 200 the
  * session store is made to look at its session at once (`recheckSession`, by default the store's `reviewRole`: it asks `me`): a 401 shows sign-in, as it would at the next poll but
- * without the minutes in between, and a browser signed in as another login gets that login's own answer and keeps it. Nothing is waited for: the screen says "changed" at once.
+ * without the minutes in between, and a browser signed in as another login gets that login's own answer and keeps it. Nothing is waited for: the screen says "changed" at once, and a
+ * re-check that throws or fails changes nothing about that: the password is saved.
  */
 export async function resetPassword(
   token: string,
@@ -95,6 +96,11 @@ export async function resetPassword(
     }
     return { error: error.message };
   }
-  void recheckSession();
+  // The password is saved, whatever the re-check does: a throw at once or a rejection later must never turn this answer into an error (or an unhandled rejection).
+  try {
+    void Promise.resolve(recheckSession()).catch(() => undefined);
+  } catch {
+    /* the password is saved */
+  }
   return { ok: true };
 }

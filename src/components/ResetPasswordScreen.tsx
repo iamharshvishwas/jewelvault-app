@@ -159,7 +159,7 @@ export default function ResetPasswordScreen({ hash }: { hash?: string }) {
             <p role="status" className="text-sm text-foreground">
               {PASSWORD_CHANGED_MESSAGE}
             </p>
-            {/* a person whose session this reset ended is shown sign-in by the first call the store makes (its poll, or the first page it loads); the API decides, not this screen */}
+            {/* a person whose session this reset ended is shown sign-in at once: resetPassword makes the session store look at its session again as soon as the password is saved (the API decides, not this screen) */}
             <Link href="/" className="btn-primary w-full justify-center py-2.5">
               Sign in
             </Link>

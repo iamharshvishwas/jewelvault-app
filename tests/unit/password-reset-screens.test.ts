@@ -395,6 +395,47 @@ describe('resetPassword', () => {
     expect(rest).not.toContain('a long new phrase 77');
   });
 
+  it('a saved password stays "ok" however the session re-check goes: it throws at once, rejects later, or is slow', async () => {
+    const answer = { ok: true } as const;
+    const password = 'a long new phrase 77';
+    // a rejection nobody handles would surface here (and vitest would fail the run as well)
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const throwing = vi.fn(() => {
+        throw new Error('the store is gone');
+      });
+      await expect(
+        resetPassword(TOKEN, password, make(json(200, { ok: true })).client, throwing)
+      ).resolves.toEqual(answer);
+      expect(throwing).toHaveBeenCalledTimes(1);
+
+      // a plain function, not a vi.fn: a spy attaches handlers to the promises it returns, which would hide an unhandled rejection
+      let rejectedCalls = 0;
+      const rejecting = () => {
+        rejectedCalls += 1;
+        return Promise.reject(new Error('me failed'));
+      };
+      await expect(
+        resetPassword(TOKEN, password, make(json(200, { ok: true })).client, rejecting)
+      ).resolves.toEqual(answer);
+      expect(rejectedCalls).toBe(1);
+
+      // a slow check is not waited for
+      const slow = vi.fn(() => new Promise(() => undefined));
+      await expect(
+        resetPassword(TOKEN, password, make(json(200, { ok: true })).client, slow)
+      ).resolves.toEqual(answer);
+      expect(slow).toHaveBeenCalledTimes(1);
+
+      await new Promise((resolve) => setTimeout(resolve, 20)); // let a stray rejection reach the listener
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+    expect(unhandled).toEqual([]);
+  });
+
   it('maps 422 token to "This link has expired or was already used. Ask for a new one."', async () => {
     const { client } = make(
       refusal(422, 'JV_INVALID_INPUT', 'token is not valid', { field: 'token' })

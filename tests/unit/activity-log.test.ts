@@ -73,6 +73,43 @@ describe('FB-D4 describeAudit: the time in India, the person, the change in plai
     ).toBe('Changed password');
   });
 
+  it('the two events of forgot password by e-mail have words of their own, not "Event users"', () => {
+    // password_reset_requested is written with the LOGIN as the actor even when a stranger typed the e-mail, so the words must not say that the person did it
+    const asked = describeAudit(
+      row({
+        action: 'event',
+        table_name: 'users',
+        row_id: owner,
+        new_row: { event: 'password_reset_requested', link_id: 'a-link' },
+      }),
+      users
+    );
+    expect(asked).toEqual({
+      when: '14 Nov 2026, 7:05 pm',
+      who: 'Siddhi Jain',
+      what: 'A password reset link was asked for',
+    });
+    const changed = describeAudit(
+      row({
+        action: 'event',
+        table_name: 'users',
+        row_id: owner,
+        new_row: { event: 'password_reset_by_email', link_id: 'a-link', sessions_ended: 2 },
+      }),
+      users
+    );
+    expect(changed).toEqual({
+      when: '14 Nov 2026, 7:05 pm',
+      who: 'Siddhi Jain',
+      what: 'Password changed through the e-mail link',
+    });
+    // neither falls through to the generic line, and neither says "asked" of the person or shows the link's id
+    for (const shown of [asked.what, changed.what]) {
+      expect(shown).not.toMatch(/^Event /);
+      expect(shown).not.toContain('a-link');
+    }
+  });
+
   it('a new bill is "New estimate" with its number; a receipt is "Payment" with the amount in rupees', () => {
     expect(
       describeAudit(
