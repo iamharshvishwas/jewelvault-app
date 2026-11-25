@@ -49,3 +49,5 @@ const { apiUrl, webOrigin, adminToken } = e2eLane();
 - Specs run one at a time (`workers: 1`) on one database: a spec that changes shared data puts it back or makes its own.
 
 `harness.spec.ts` is PT-W0: the lane is up, a page of the site logs in as each role and reads `me`, the cookie is kept and sent, a logout ends the session, and a wrong password is refused. The Supabase-era `login.spec.ts` was removed together with the Supabase global setup it depended on; WEB02 writes the new one for the real login screen.
+
+The PDF files of the saved estimate and of the Stock Catalogue (Download PDF and Share): `PDF-S1` is at the end of `print.spec.ts`, `PDF-S2` at the end of `stock-catalogue.spec.ts`; both use `pdf-file.ts` (the share stub and the saved file), and the PDF is read back with `tests/unit/support/pdf-read.ts`.

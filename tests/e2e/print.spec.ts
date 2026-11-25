@@ -4,8 +4,10 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
+import { compact, readMadePdf } from '../unit/support/pdf-read';
 import { clearLoginCounters } from './clear-counters';
 import { e2eLogin, type E2eLogin } from './global-setup';
+import { pressDownloadPdf, sharedCalls, stubShare } from './pdf-file';
 import { PHONE, expectNoSidewaysScroll, expectTappable, shoot } from './phone';
 import { roomInTheMinute } from './pacing';
 import { countIn, readPdf, squash, type PdfPage } from './pdf-text';
@@ -23,6 +25,10 @@ import { countIn, readPdf, squash, type PdfPage } from './pdf-text';
 //
 //   FB-D1 (Siddhi #4): a customer's ledger of 1, 30 and 120 rows printed from the customer card: the customer's name on the first page, `Balance` with the right figure on the last, every row once,
 //        the header row on every page that holds rows, and no word of the side bar or the top bar on any page.
+//
+//   PDF-S1 (PDF-4): Download PDF on the saved estimate saves a real PDF file (made in the browser, src/lib/pdf), named after the bill and its customer, in which every row of the print's
+//        table and of its totals (read off the page) is found word for word; Share hands the share menu that same file; Stop, Send PDF and a share that fails; the fonts are fetched only
+//        after the tap; the buttons on a phone.
 //
 // Run: E2E=1 LANE=b JV_API_DIR=<checkout of jewelvault-api> npx playwright test tests/e2e/print.spec.ts
 
@@ -1216,5 +1222,223 @@ test.describe('FB-D fix: the customer ledger and its Print / Save PDF at 375 x 8
     expect(
       await page.evaluate(() => (window as unknown as { __printCalls: number }).__printCalls)
     ).toBe(1);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ PDF-S1: the estimate as a PDF file
+// (the share stub and Download PDF's file: ./pdf-file.ts, shared with the catalogue's PDF-S2)
+
+/**
+ * The print's table and totals as the page holds them, a row to an entry: every row of `.print-estimate-lines` (the words of its `th` or `td` cells) and every line of
+ * `.print-estimate-totals`, with the white space taken out. The table is hidden on the screen (it is the paper's), but it is in the page.
+ */
+async function printRows(page: Page): Promise<{ lines: string[]; totals: string[] }> {
+  const rows = await page.evaluate(() => ({
+    lines: [...document.querySelectorAll('.print-estimate-lines tr')].map((row) =>
+      [...row.querySelectorAll('th, td')].map((cell) => cell.textContent ?? '').join(' ')
+    ),
+    totals: [...document.querySelectorAll('.print-estimate-totals > div')].map(
+      (line) => line.textContent ?? ''
+    ),
+  }));
+  return { lines: rows.lines.map(compact), totals: rows.totals.map(compact) };
+}
+
+test.describe('PDF-S1: the estimate as a PDF file', () => {
+  test.describe.configure({ timeout: 240_000 });
+
+  test('Download PDF saves a PDF file named after the bill and its customer', async ({ page }) => {
+    await openEstimates(page, e2eLogin('owner'));
+    await openEstimate(page, 'W13-QTY3');
+    await expect(page.getByTestId('estimate-pdf-download')).toHaveText('Download PDF');
+    const { name, bytes } = await pressDownloadPdf(page, 'estimate-pdf');
+    expect(name).toBe(`W13-QTY3 - ${NAMES.retail}.pdf`);
+    expect(new TextDecoder('latin1').decode(bytes.slice(0, 5))).toBe('%PDF-');
+    // the buttons are back, and nothing went wrong
+    await expect(page.getByTestId('estimate-pdf-download')).toBeEnabled();
+    await expect(page.getByTestId('estimate-pdf-progress')).toHaveCount(0);
+    await expect(page.getByTestId('estimate-pdf-error')).toHaveCount(0);
+    // the screen's own print is still there, under its new name
+    await expect(page.getByRole('button', { name: 'Print', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Print / Save PDF' })).toHaveCount(0);
+  });
+
+  // The PDF is drawn again in code (src/lib/pdf/estimatePdf.ts), so it is held to the print: what the print shows of the lines and the totals, read off the page, is in the file.
+  // The PDF draws the table's headings in capitals, as the print's CSS does, while the page's own words are mixed case: the two are compared in capitals.
+  for (const number of ['W13-QTY3', 'W13-WS06']) {
+    test(`${number}: every row of the print's table and totals is in the PDF, word for word`, async ({
+      page,
+    }) => {
+      await openEstimates(page, e2eLogin('owner'));
+      await openEstimate(page, number);
+      const print = await printRows(page);
+      const fine = number === 'W13-WS06' ? 2 : 0;
+      expect(print.lines, 'the header row and every line').toHaveLength(
+        1 + bill(number).lines.length
+      );
+      expect(print.totals, 'the totals block').toHaveLength(TOTALS.length + fine);
+
+      const { bytes } = await pressDownloadPdf(page, 'estimate-pdf');
+      const pdf = await readMadePdf(bytes);
+      const text = compact(pdf.pages.join('\n')).toUpperCase();
+      for (const row of [...print.lines, ...print.totals]) {
+        expect(text, `the PDF holds "${row}"`).toContain(row.toUpperCase());
+      }
+      // the bill's own columns are among them: the Qty of the Per Piece line, the two labour columns of the Wholesale table
+      if (number === 'W13-QTY3') expect(print.lines[0].toUpperCase()).toContain('QTY');
+      if (number === 'W13-WS06') {
+        expect(print.lines[0].toUpperCase()).toContain('LABOUR/GLABOURTOTAL');
+        expect(print.totals.some((row) => row.startsWith('FineDue'))).toBe(true);
+      }
+    });
+  }
+
+  test('Share hands the share menu one PDF file, with the same name', async ({ page }) => {
+    await stubShare(page);
+    await openEstimates(page, e2eLogin('owner'));
+    await openEstimate(page, 'W13-QTY3');
+    const share = page.getByTestId('estimate-pdf-share');
+    await expect(share).toHaveText('Share');
+    await share.click();
+    await expect.poll(async () => (await sharedCalls(page)).length, { timeout: 120_000 }).toBe(1);
+    const [call] = await sharedCalls(page);
+    expect(call.title).toBe('Estimate W13-QTY3');
+    expect(call.files).toHaveLength(1);
+    expect(call.files[0].name).toBe(`W13-QTY3 - ${NAMES.retail}.pdf`);
+    expect(call.files[0].type).toBe('application/pdf');
+    expect(call.files[0].size).toBeGreaterThan(1000);
+    // shared: the buttons are as they were
+    await expect(share).toBeVisible();
+    await expect(page.getByTestId('estimate-pdf-send')).toHaveCount(0);
+    await expect(page.getByTestId('estimate-pdf-error')).toHaveCount(0);
+  });
+
+  test('where the browser cannot share a file there is no Share button, and Download PDF still works', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const proto = Navigator.prototype as unknown as Record<string, unknown>;
+      delete proto.share;
+      delete proto.canShare;
+    });
+    await openEstimates(page, e2eLogin('owner'));
+    await openEstimate(page, 'W13-QTY3');
+    expect(await page.evaluate(() => 'share' in navigator || 'canShare' in navigator)).toBe(false);
+    await expect(page.getByTestId('estimate-pdf-download')).toBeVisible();
+    await expect(page.getByTestId('estimate-pdf-share')).toHaveCount(0);
+    const { name } = await pressDownloadPdf(page, 'estimate-pdf');
+    expect(name).toBe(`W13-QTY3 - ${NAMES.retail}.pdf`);
+    await expect(page.getByTestId('estimate-pdf-share')).toHaveCount(0);
+  });
+
+  test('the fonts are fetched only after the tap: none with the page, the Latin pair with the first PDF', async ({
+    page,
+  }) => {
+    const fonts: string[] = [];
+    page.on('request', (request) => {
+      const { pathname } = new URL(request.url());
+      if (pathname.startsWith('/fonts/')) fonts.push(pathname);
+    });
+    await openEstimates(page, e2eLogin('owner'));
+    await openEstimate(page, 'W13-QTY3');
+    expect(fonts, 'no font before the tap').toEqual([]);
+    await pressDownloadPdf(page, 'estimate-pdf');
+    expect(fonts).toContain('/fonts/NotoSans-Regular.ttf');
+    expect(fonts).toContain('/fonts/NotoSans-Bold.ttf');
+    // nothing on this bill is Hindi, so the Hindi pair is not fetched
+    expect(fonts.filter((font) => font.includes('Devanagari'))).toEqual([]);
+  });
+
+  test('Stop while the PDF is being made: the buttons come back and nothing is saved', async ({
+    page,
+  }) => {
+    let downloads = 0;
+    page.on('download', () => (downloads += 1));
+    // the fonts are held, so the PDF stays in the making until the test lets them go
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route('**/fonts/*.ttf', async (route) => {
+      await held;
+      await route.continue();
+    });
+    await openEstimates(page, e2eLogin('owner'));
+    await openEstimate(page, 'W13-QTY3');
+
+    await page.getByTestId('estimate-pdf-download').click();
+    await expect(page.getByTestId('estimate-pdf-progress')).toHaveText('Making PDF…');
+    await expect(page.getByTestId('estimate-pdf-progress')).toHaveAttribute('role', 'status');
+    const stop = page.getByTestId('estimate-pdf-stop');
+    await expect(stop).toHaveText('Stop');
+    await stop.click();
+    await expect(page.getByTestId('estimate-pdf-progress')).toHaveCount(0);
+    await expect(stop).toHaveCount(0);
+    await expect(page.getByTestId('estimate-pdf-download')).toBeEnabled();
+
+    // the fonts arrive after Stop: the stopped PDF is not saved, and the next tap saves one file
+    release();
+    const { name } = await pressDownloadPdf(page, 'estimate-pdf');
+    expect(name).toBe(`W13-QTY3 - ${NAMES.retail}.pdf`);
+    await page.waitForTimeout(1_500);
+    expect(downloads, 'one file: the stopped PDF was never saved').toBe(1);
+  });
+
+  test('a share the browser refuses (a slow make) leaves Send PDF, and one more tap shares; a share that fails says so', async ({
+    page,
+  }) => {
+    await stubShare(page, ['NotAllowedError', 'ok', 'DataError']);
+    await openEstimates(page, e2eLogin('owner'));
+    await openEstimate(page, 'W13-QTY3');
+
+    await page.getByTestId('estimate-pdf-share').click();
+    const send = page.getByTestId('estimate-pdf-send');
+    await expect(send).toHaveText('Send PDF', { timeout: 120_000 });
+    await expect(page.getByTestId('estimate-pdf-share')).toHaveCount(0);
+    await send.click();
+    await expect.poll(async () => (await sharedCalls(page)).length).toBe(2);
+    await expect(send).toHaveCount(0);
+    await expect(page.getByTestId('estimate-pdf-share')).toBeVisible();
+    const calls = await sharedCalls(page);
+    expect(calls[1].files.map((file) => file.name)).toEqual([`W13-QTY3 - ${NAMES.retail}.pdf`]);
+    expect(calls[1].files[0].size).toBe(calls[0].files[0].size);
+
+    // the third share fails for a reason of its own: the person is told, and Download PDF is still there
+    await page.getByTestId('estimate-pdf-share').click();
+    const error = page.getByTestId('estimate-pdf-error');
+    await expect(error).toHaveText('The PDF could not be shared. Please use Download PDF.', {
+      timeout: 120_000,
+    });
+    await expect(error).toHaveAttribute('role', 'alert');
+    await expect(page.getByTestId('estimate-pdf-download')).toBeEnabled();
+    // a new PDF takes the message away
+    await pressDownloadPdf(page, 'estimate-pdf');
+    await expect(error).toHaveCount(0);
+  });
+
+  test.describe('at 375 x 812', () => {
+    test.use({ viewport: PHONE });
+
+    test('Download PDF, Share, Print and the bar beside them take a tap, no sideways scroll', async ({
+      page,
+    }) => {
+      await stubShare(page);
+      await openEstimates(page, e2eLogin('owner'));
+      await openEstimate(page, 'W13-QTY3');
+      const controls = [
+        page.getByTestId('estimate-pdf-download'),
+        page.getByTestId('estimate-pdf-share'),
+        page.getByRole('button', { name: 'Print', exact: true }),
+        page.getByRole('main').getByRole('link', { name: 'Saved Estimates' }),
+        page.getByTestId('reissue-bill'),
+        page.getByTestId('cancel-bill'),
+      ];
+      for (const control of controls) {
+        await expectTappable(control);
+        // a button stays one line (FB-A2): squeezed into a row, words used to wrap onto two and three lines
+        expect((await control.boundingBox())!.height).toBeLessThanOrEqual(44);
+      }
+      await expectNoSidewaysScroll(page);
+      await page.evaluate(() => document.querySelector('main')?.scrollTo(0, 0));
+      await shoot(page, 'estimate-pdf-buttons');
+    });
   });
 });

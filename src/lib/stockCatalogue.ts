@@ -4,6 +4,8 @@
 // A row is what a customer may be shown on paper and no more: the design, its first photo, the purity, how many pieces are In Stock and the range of their GROSS weights (whole milligrams read
 // exactly from the weights the store holds, the pieces of the other statuses leave the range alone). A row has no key for the owner's original weight (`originalNetWeight` of a piece), none for the customer's net weight and none for any
 // price, labour or rate: the keys are listed, so a field added to a piece does not reach the paper by itself.
+// PDF-5: the words of the sheet, `grossShown` and `dayShown`, are here too (moved from the screen, unchanged), so the screen and the PDF (src/lib/pdf/cataloguePdf.ts) write the same.
+import { mgShown } from './ledgerView';
 import type { Design } from './mockData';
 import { parseGrams } from './pricing';
 
@@ -60,4 +62,16 @@ export function catalogueRows(
   return rows.sort(
     (a, b) => before(a.category, b.category) || before(a.designNumber, b.designNumber)
   );
+}
+
+/** The gross weights of a row as the sheet writes them: `4.200 - 5.500 g`, or `3.100 g` when the pieces in stock weigh the same. */
+export function grossShown(row: CatalogueRow): string {
+  return row.grossMinMg === row.grossMaxMg
+    ? mgShown(row.grossMinMg)
+    : `${mgShown(row.grossMinMg).replace(/ g$/, '')} - ${mgShown(row.grossMaxMg)}`;
+}
+
+/** The business date (`YYYY-MM-DD`) as the sheet writes it: 24/11/2026. */
+export function dayShown(businessDate: string): string {
+  return new Date(`${businessDate}T12:00:00.000Z`).toLocaleDateString('en-IN');
 }
