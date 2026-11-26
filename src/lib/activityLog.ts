@@ -48,6 +48,9 @@ const EVENT_WORDS: Readonly<Record<string, string>> = {
   login: 'Logged in',
   logout: 'Logged out',
   change_password: 'Changed password',
+  // written with the login as the actor even when a stranger typed that login's e-mail, so the words do not say the person asked
+  password_reset_requested: 'A password reset link was asked for',
+  password_reset_by_email: 'Password changed through the e-mail link',
 };
 
 const capitalised = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);

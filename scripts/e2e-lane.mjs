@@ -17,6 +17,8 @@
 //      (the must-change gate of U11), so the test logins are ordinary ones;
 //   5. writes their e-mail addresses and passwords (JV_E2E_OWNER_*, JV_E2E_BILLER_*, JV_E2E_STAFF_*, JV_E2E_SUPER_*), and the token, to .lanes/<lane>/.env.local (mode 0600, git-ignored, rewritten on every
 //      run). Nothing secret goes anywhere else.
+// The API's mail does not go out: the API starts with the "outbox" mailer (JV_MAIL_OUTBOX_DIR, JV_MAIL_FROM, JV_RESET_LINK_BASE), which writes each mail it would send as a JSON file into
+// .lanes/<lane>/outbox (emptied at every `up`; the path reaches the tests as JV_E2E_OUTBOX), so a test can read the link of a "Forgot password?" mail. The link opens the lane's own site.
 // `down` is safe to repeat. If `up` fails half way it takes down what it started.
 //
 // PORTS. The site (the Next.js dev server of Playwright's webServer) listens on PORT, else on the lane's port (main 4028, a 4128, b 4228, c 4328), else 4028; the API on that port + 1.
@@ -108,12 +110,17 @@ export const isLaneApiCommand = (commandLine, lane) =>
 
 const KEPT_FROM_SHELL = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ'];
 
+/** The sender of the mails of a lane (the outbox keeps no sender; the API only needs one to be set). */
+export const LANE_MAIL_FROM = 'JewelVault test <test@jv.test>';
+
 /**
- * The whole environment of the API process: the program path, the variables the API requires (spec A3, A12, U3) and nothing else from the shell.
- * @param {{ base: Record<string, string | undefined>, db: { host: string, port: number, name: string, user: string, password: string }, apiPort: number, webOrigin: string, adminTokenHash: string }} input
+ * The whole environment of the API process: the program path, the variables the API requires (spec A3, A12, U3) and nothing else from the shell. With `outboxDir` the API also gets the three
+ * mail variables that turn on its outbox mailer (a JSON file per mail in that folder, no SMTP; the API refuses the outbox together with any JV_SMTP_* variable, and none is ever passed on from
+ * the shell), and a reset link opens `<site origin>/reset-password`.
+ * @param {{ base: Record<string, string | undefined>, db: { host: string, port: number, name: string, user: string, password: string }, apiPort: number, webOrigin: string, adminTokenHash: string, outboxDir?: string }} input
  * @returns {Record<string, string>}
  */
-export function apiProcessEnv({ base, db, apiPort, webOrigin, adminTokenHash }) {
+export function apiProcessEnv({ base, db, apiPort, webOrigin, adminTokenHash, outboxDir }) {
   /** @type {Record<string, string>} */
   const env = {};
   for (const name of KEPT_FROM_SHELL) if (base[name] !== undefined) env[name] = String(base[name]);
@@ -128,6 +135,13 @@ export function apiProcessEnv({ base, db, apiPort, webOrigin, adminTokenHash }) 
     JV_ADMIN_TOKEN_HASH: adminTokenHash,
     PORT: String(apiPort),
     LOG_LEVEL: 'info',
+    ...(outboxDir === undefined
+      ? {}
+      : {
+          JV_MAIL_OUTBOX_DIR: outboxDir,
+          JV_MAIL_FROM: LANE_MAIL_FROM,
+          JV_RESET_LINK_BASE: `${webOrigin}/reset-password`,
+        }),
   };
 }
 
@@ -180,6 +194,9 @@ export const ENV_MARKER =
  * @param {string} [root]
  */
 export const laneDir = (lane, root = ROOT) => path.join(root, '.lanes', assertLane(lane));
+
+/** Where the API of the lane writes its mails (the outbox mailer): one JSON file each, `<ISO time>-<12 hex>.json` with to, subject, text and html. @param {string} lane @param {string} [root] */
+export const outboxDir = (lane, root = ROOT) => path.join(laneDir(lane, root), 'outbox');
 
 /**
  * The text of a lane env file. A name must be an upper-case variable name and a value must be one line: nothing can add a line of its own.
@@ -533,6 +550,9 @@ export async function laneUp(lane, { env = process.env } = {}) {
   const buildLog = path.join(logs, 'api-build.log');
   const apiLog = path.join(logs, 'api.log');
   for (const file of [dbLog, buildLog, apiLog]) rmSync(file, { force: true });
+  const outbox = outboxDir(lane);
+  rmSync(outbox, { recursive: true, force: true }); // the mails of an earlier run (their links belong to a database that is gone)
+  mkdirSync(outbox, { recursive: true });
 
   /** @param {NodeJS.Signals} signal */
   const onSignal = (signal) => {
@@ -582,6 +602,7 @@ export async function laneUp(lane, { env = process.env } = {}) {
         apiPort: ports.api,
         webOrigin: ports.webOrigin,
         adminTokenHash: tokenHash(token),
+        outboxDir: outbox,
       }),
       detached: true,
       stdio: ['ignore', fd, fd],
@@ -601,6 +622,7 @@ export async function laneUp(lane, { env = process.env } = {}) {
       JV_E2E_WEB_ORIGIN: ports.webOrigin,
       JV_E2E_API_URL: ports.apiOrigin,
       JV_E2E_ADMIN_TOKEN: token,
+      JV_E2E_OUTBOX: outbox,
     };
     for (const one of testLogins(run)) {
       const input =

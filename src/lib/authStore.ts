@@ -203,7 +203,7 @@ const messageOf = (error: unknown, fallback: string) =>
   isApiError(error) ? error.message : fallback;
 
 /** The reason the API gave for a refused new password, as a sentence of its own ("new_password must be at least 10 characters"). */
-function newPasswordReason(message: string): string {
+export function newPasswordReason(message: string): string {
   const match = /^new_password (.+?)\.?(?: Nothing was changed\.)?$/.exec(message.trim());
   return match ? `The new password ${match[1]}.` : 'The new password is not accepted.';
 }

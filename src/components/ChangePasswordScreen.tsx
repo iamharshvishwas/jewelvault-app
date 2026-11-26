@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import AppLogo from '@/components/ui/AppLogo';
+import PasswordField from '@/components/ui/PasswordField';
 import { changePassword, signOut, type AuthSession } from '@/lib/authStore';
 import { BUSINESS_NAME } from '@/lib/businessConfig';
 
@@ -52,39 +53,33 @@ export default function ChangePasswordScreen({ session }: { session: AuthSession
         </p>
 
         <div className="space-y-3">
-          <label className="text-xs font-semibold text-muted-foreground block">
-            Current password
-            <input
-              type="password"
-              value={current}
-              onChange={(event) => setCurrent(event.target.value)}
-              className="input-field mt-1"
-              autoComplete="current-password"
-              required
-            />
-          </label>
-          <label className="text-xs font-semibold text-muted-foreground block">
-            New password
-            <input
-              type="password"
-              value={next}
-              onChange={(event) => setNext(event.target.value)}
-              className="input-field mt-1"
-              autoComplete="new-password"
-              required
-            />
-          </label>
-          <label className="text-xs font-semibold text-muted-foreground block">
-            Repeat the new password
-            <input
-              type="password"
-              value={repeat}
-              onChange={(event) => setRepeat(event.target.value)}
-              className="input-field mt-1"
-              autoComplete="new-password"
-              required
-            />
-          </label>
+          <PasswordField
+            label="Current password"
+            labelClassName="text-xs font-semibold text-muted-foreground block"
+            inputClassName="input-field"
+            value={current}
+            onChange={(event) => setCurrent(event.target.value)}
+            autoComplete="current-password"
+            required
+          />
+          <PasswordField
+            label="New password"
+            labelClassName="text-xs font-semibold text-muted-foreground block"
+            inputClassName="input-field"
+            value={next}
+            onChange={(event) => setNext(event.target.value)}
+            autoComplete="new-password"
+            required
+          />
+          <PasswordField
+            label="Repeat the new password"
+            labelClassName="text-xs font-semibold text-muted-foreground block"
+            inputClassName="input-field"
+            value={repeat}
+            onChange={(event) => setRepeat(event.target.value)}
+            autoComplete="new-password"
+            required
+          />
           {error && (
             <p role="alert" className="text-xs font-semibold text-red-600">
               {error}

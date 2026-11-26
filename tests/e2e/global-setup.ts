@@ -11,7 +11,7 @@ import { assertLane } from '../../scripts/e2e-ports.cjs';
 // The lane's e-mail addresses, passwords and admin token reach the tests through process.env of this run only (Playwright starts its
 // workers after the global setup, so they see what is set here); the file the lane writes, .lanes/<lane>/.env.local, is local and never
 // committed. In a test: `e2eLogin('owner')` gives a login (also 'biller', 'staff' and 'super'), `e2eLane()` the addresses and the admin token
-// (to make a user of its own through the admin door).
+// (to make a user of its own through the admin door), `e2eOutbox()` the folder the API writes its mails to (one JSON file each: the link of a "Forgot password?" mail is read from there).
 
 /** The three built-in roles: their keys are what the admin door's `add-user` takes, so a test that makes a user of a role loops over these. */
 export const ROLES = ['owner', 'biller', 'staff'] as const;
@@ -66,6 +66,11 @@ export function e2eLane(): E2eLane {
     webOrigin: fromEnv('JV_E2E_WEB_ORIGIN'),
     adminToken: fromEnv('JV_E2E_ADMIN_TOKEN'),
   };
+}
+
+/** The folder where the lane's API writes the mails it would send (the outbox mailer, `.lanes/<lane>/outbox`): one `<ISO time>-<12 hex>.json` with to, subject, text and html for each. */
+export function e2eOutbox(): string {
+  return fromEnv('JV_E2E_OUTBOX');
 }
 
 export default async function globalSetup(): Promise<() => Promise<void>> {
